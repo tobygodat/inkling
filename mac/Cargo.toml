@@ -1,9 +1,7 @@
 [package]
-name = "inkling-gpui-kit"
+name = "inkling-mac"
 version = "0.1.0"
 edition = "2024"
-
-[workspace]
 
 [[bin]]
 name = "inkling"
@@ -13,8 +11,6 @@ path = "src/main.rs"
 snap = ["gpui-kit/test-support"]
 
 [dependencies]
-gpui-kit = "=0.9.1"
-inkling-core = { path = "../../core" }
-
-[profile.release]
-strip = true
+gpui-kit = { workspace = true, features = ["gpui-fast"] }
+inkling-core.workspace = true
+inkling-ui.workspace = true

@@ -12,10 +12,14 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
 ## Layout
 
-- `core/` is `inkling-core`: the AI request, the providers, settings and key storage. No UI framework
-  may be a dependency of it.
-- `apps/gpui-kit/` (Mac) and `apps/gpui-kit-ios-spike/` (iPhone) are prototypes kept as seeds. Each is
-  its own Cargo workspace. The losing prototypes are at tag `prototypes-tob-428`.
+- The root `Cargo.toml` is a workspace of `core`, `ui` and `mac`.
+- `core/` is `inkling-core`: the requests, the providers, the review model, settings and key storage.
+  No UI framework may be a dependency of it.
+- `ui/` is `inkling-ui`: every view, shared by the Mac app and the iPhone host. It takes its form
+  factor as a value and never reads the platform.
+- `mac/` is the Mac app, on GPUI Kit's `gpui-fast` feature.
+- `apps/gpui-kit-ios-spike/` (iPhone) is a prototype kept as the seed for the iPhone host, in its own
+  Cargo workspace. The losing prototypes are at tag `prototypes-tob-428`.
 - `docs/screenshots/<app>/` holds each app's proof.
 
 ## Commands
@@ -23,11 +27,13 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/opt/rustup/bin:$PATH` first.
 `rust-toolchain.toml` pins Rust 1.99.1, which Rune needs.
 
-- `cargo test --manifest-path core/Cargo.toml` must pass before any PR.
-- `cargo clippy --manifest-path core/Cargo.toml -- -D warnings` must pass before any PR.
-- `apps/gpui-kit/snap.sh` rebuilds the Mac prototype's screenshots headless.
-- `INKLING_KEY=<key> cargo run --manifest-path core/Cargo.toml --example ask -- <claude|gemini|chatgpt> "<instruction>" "<text>"`
-  streams one live answer. It calls a paid API, so only Toby runs it.
+- `cargo test --workspace` must pass before any PR.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` must pass before any PR.
+- `mac/snap.sh` rebuilds `docs/screenshots/mac/` headless and asserts the app's behaviour. Any change
+  under `ui/` or `mac/` reruns it.
+- `cargo run --release -p inkling-mac` opens the Mac app. It takes focus, so only Toby runs it.
+- `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
+  streams one live answer and prints its changes. It calls a paid API, so only Toby runs it.
 
 ## Rules
 

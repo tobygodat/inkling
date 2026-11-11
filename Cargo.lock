@@ -2608,6 +2608,7 @@ dependencies = [
  "gpui-component",
  "gpui-fast",
  "gpui-fast-platform",
+ "gpui-fast-web",
  "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-macros",
@@ -2622,6 +2623,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb5abe0bbd8f9226170c8726e529f6574519e297e9ed1bde86d5fd4d3536079a"
 dependencies = [
  "anyhow",
+ "gpui-fast",
  "gpui-pre",
  "gpui-pre-reqwest",
  "log",
@@ -3664,14 +3666,26 @@ dependencies = [
 name = "inkling-core"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "security-framework",
  "serde",
  "serde_json",
+ "similar",
+ "unicode-segmentation",
  "ureq",
 ]
 
 [[package]]
-name = "inkling-gpui-kit"
+name = "inkling-mac"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "inkling-core",
+ "inkling-ui",
+]
+
+[[package]]
+name = "inkling-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",

@@ -36,54 +36,9 @@ impl Provider {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Action {
-    /// Keep writing from the cursor.
-    Continue,
-    /// Rewrite the selection as the instruction says.
-    Rewrite(String),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AiRequest {
-    pub action: Action,
-    pub before: String,
-    pub selection: String,
-    pub after: String,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct Prompt {
     pub system: String,
     pub user: String,
-}
-
-impl AiRequest {
-    pub fn prompt(&self) -> Prompt {
-        const SYSTEM: &str = "You are the writing partner inside a minimal writing app. \
-            Match the author's voice, tense and formatting. Reply with only the text that goes \
-            into the document: no preamble, no quotation marks around it, no commentary.";
-        let user = match &self.action {
-            Action::Continue => format!(
-                "Continue this draft from where it stops. Write one to three sentences.\n\n\
-                 <draft_before_cursor>\n{}\n</draft_before_cursor>\n\n\
-                 <draft_after_cursor>\n{}\n</draft_after_cursor>",
-                self.before, self.after
-            ),
-            Action::Rewrite(instruction) => format!(
-                "Rewrite the selected passage. Instruction: {instruction}\n\n\
-                 <before>\n{}\n</before>\n\n<selected>\n{}\n</selected>\n\n<after>\n{}\n</after>\n\n\
-                 Reply with only the replacement for the selected passage.",
-                self.before, self.selection, self.after
-            ),
-        };
-        Prompt { system: SYSTEM.into(), user }
-    }
-}
-
-impl From<AiRequest> for Prompt {
-    fn from(request: AiRequest) -> Self {
-        request.prompt()
-    }
 }
 
 impl From<&crate::ask::Request> for Prompt {
@@ -161,8 +116,8 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    fn request() -> AiRequest {
-        AiRequest { action: Action::Continue, before: "Once".into(), selection: String::new(), after: String::new() }
+    fn request() -> Prompt {
+        Prompt { system: String::new(), user: "Once".into() }
     }
 
     #[test]
@@ -174,11 +129,5 @@ mod tests {
         let text: String = events.iter().filter_map(|e| if let AiEvent::Delta(t) = e { Some(t.as_str()) } else { None }).collect();
         assert_eq!(text, "upon a time");
         assert_eq!(events.last(), Some(&AiEvent::Done));
-    }
-
-    #[test]
-    fn a_rewrite_prompt_carries_the_instruction_and_the_selection() {
-        let p = AiRequest { action: Action::Rewrite("tighten".into()), selection: "very big".into(), ..request() }.prompt();
-        assert!(p.user.contains("tighten") && p.user.contains("<selected>\nvery big\n</selected>"));
     }
 }

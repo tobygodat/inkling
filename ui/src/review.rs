@@ -1,0 +1,396 @@
+//! The page during review: the draft with each change drawn inline. On Mac every change carries
+//! its own controls. On iPhone a tap selects a change and a sheet below the page acts on it.
+
+use crate::app::{Inkling, ghost_button, primary_button};
+use crate::inline::{InlineText, ROOM, room_for, width_of};
+use crate::{FormFactor, SANS, SERIF, color};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+use inkling_core::{Change, ChangeId, Decision, Segment};
+use std::ops::Range;
+
+const PENDING_CONTROLS: f32 = 70.;
+const MORE_BUTTON: f32 = 56.;
+/// The page's text sits this far inside the kit's text area, which also stops wrapping
+/// `TEXTAREA_RIGHT` short of its right edge. The review matches both so nothing moves.
+const TEXTAREA_INSET: Pixels = px(10.);
+const TEXTAREA_TOP: Pixels = px(8.);
+const TEXTAREA_RIGHT: Pixels = px(20.);
+
+fn removed() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(rgb(color::REMOVED_TEXT).into()),
+        background_color: Some(rgb(color::REMOVED_FILL).into()),
+        strikethrough: Some(StrikethroughStyle { thickness: px(1.5), color: Some(rgb(color::REMOVED_LINE).into()) }),
+        ..Default::default()
+    }
+}
+
+fn added() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(rgb(color::ADDED_TEXT).into()),
+        background_color: Some(rgb(color::ADDED_FILL).into()),
+        ..Default::default()
+    }
+}
+
+fn kept() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(rgb(color::ADDED_TEXT).into()),
+        underline: Some(UnderlineStyle { thickness: px(2.), color: Some(rgb(color::ADDED_LINE).into()), wavy: false }),
+        ..Default::default()
+    }
+}
+
+fn selected() -> HighlightStyle {
+    HighlightStyle {
+        underline: Some(UnderlineStyle { thickness: px(2.), color: Some(rgb(color::INK).into()), wavy: false }),
+        ..Default::default()
+    }
+}
+
+/// The review as one run of text, with the styles, the controls and where each change sits.
+#[derive(Default)]
+struct Composed {
+    text: String,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    controls: Vec<(usize, AnyElement)>,
+    changes: Vec<(Range<usize>, ChangeId)>,
+}
+
+impl Composed {
+    fn push(&mut self, s: &str, style: Option<HighlightStyle>) -> Range<usize> {
+        let range = self.text.len()..self.text.len() + s.len();
+        self.text.push_str(s);
+        if let Some(style) = style.filter(|_| !s.is_empty()) {
+            self.highlights.push((range.clone(), style));
+        }
+        range
+    }
+
+    /// Reserves room for a control of `width` after the text so far and places it there.
+    fn control(&mut self, width: Pixels, control: AnyElement, font: &Font, size: Pixels, window: &Window) {
+        let at = self.text.len();
+        let room: String = std::iter::repeat_n(ROOM, room_for(width, font, size, window)).collect();
+        self.text.push_str(&room);
+        self.controls.push((at, control));
+    }
+}
+
+impl Inkling {
+    pub(crate) fn render_review(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let m = self.metrics();
+        let font = font(SERIF);
+        if self.form == FormFactor::Phone && self.selected.is_none() {
+            self.selected = self.revision.review().and_then(|r| r.next_pending(None));
+        }
+        let Some(review) = self.revision.review() else { return div().into_any_element() };
+        let next = review.next_pending(None);
+        let mut out = Composed::default();
+        for segment in review.segments() {
+            let change = match segment {
+                Segment::Unchanged(text) => {
+                    out.push(text, None);
+                    continue;
+                }
+                Segment::Change(change) => change,
+            };
+            let start = out.text.len();
+            let tapped = self.form == FormFactor::Phone && self.selected == Some(change.id);
+            let mark = |style: HighlightStyle| if tapped { HighlightStyle { underline: selected().underline, ..style } } else { style };
+            match change.decision {
+                Decision::Pending => {
+                    out.push(change.removed, Some(mark(removed())));
+                    if !change.removed.is_empty() && !change.added.is_empty() {
+                        out.push(" ", Some(mark(HighlightStyle::default())));
+                    }
+                    out.push(change.added, Some(mark(added())));
+                }
+                Decision::Accepted => {
+                    out.push(change.added, Some(mark(kept())));
+                }
+                Decision::Rejected => {
+                    out.push(change.removed, Some(mark(HighlightStyle::default())));
+                }
+            }
+            let range = start..out.text.len();
+            let ordinal = out.changes.len();
+            out.changes.push((range, change.id));
+            if self.form == FormFactor::Mac {
+                let (width, control) = self.change_controls(&change, ordinal, next == Some(change.id), window, cx);
+                out.control(width, control, &font, m.body, window);
+            }
+        }
+
+        let styled = StyledText::new(out.text).with_highlights(out.highlights);
+        let layout = styled.layout().clone();
+        let changes = out.changes;
+        div()
+            .id("review")
+            .size_full()
+            .overflow_y_scroll()
+            .font_family(SERIF)
+            .text_size(m.body)
+            .line_height(relative(m.line))
+            .text_color(rgb(color::INK))
+            .child(div().pl(TEXTAREA_INSET).pr(TEXTAREA_RIGHT).pt(TEXTAREA_TOP).child(InlineText::new(styled, out.controls)))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                if this.form != FormFactor::Phone {
+                    return;
+                }
+                let Ok(ix) = layout.index_for_position(event.position()) else { return };
+                if let Some((_, id)) = changes.iter().find(|(range, _)| range.start <= ix && ix < range.end) {
+                    this.select(Some(*id), cx);
+                }
+            }))
+            .test_support()
+            .into_any_element()
+    }
+
+    /// The controls after one change on Mac, and the room they take in the line. The accept
+    /// button is filled on the change Tab would accept.
+    fn change_controls(
+        &self,
+        change: &Change<'_>,
+        key: usize,
+        next: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> (Pixels, AnyElement) {
+        let id = change.id;
+        match change.decision {
+            Decision::Pending => {
+                let width = PENDING_CONTROLS + if change.more > 0 { MORE_BUTTON + 2. } else { 0. };
+                let mut cluster = div()
+                    .flex()
+                    .gap(px(2.))
+                    .p(px(2.))
+                    .bg(rgb(color::SURFACE))
+                    .border_1()
+                    .border_color(rgb(color::HAIRLINE))
+                    .rounded(px(8.))
+                    .child(
+                        icon_button(("accept", key), "✓", color::ADDED_TEXT, next.then_some(color::ADDED_FILL), self.metrics().control)
+                            .on_click(cx.listener(move |this, _, window, cx| this.accept(id, window, cx)))
+                            .test_support(),
+                    )
+                    .child(
+                        icon_button(("reject", key), "✕", color::REMOVED_TEXT, None, self.metrics().control)
+                            .on_click(cx.listener(move |this, _, window, cx| this.reject(id, window, cx)))
+                            .test_support(),
+                    );
+                if change.more > 0 {
+                    cluster = cluster.child(
+                        div()
+                            .id(("more", key))
+                            .w(px(MORE_BUTTON))
+                            .h(self.metrics().control)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.))
+                            .font_family(SANS)
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(color::MUTED))
+                            .cursor_pointer()
+                            .child(format!("{} more", change.more))
+                            .on_click(cx.listener(move |this, _, _, cx| this.toggle_wordings(id, cx)))
+                            .test_support(),
+                    );
+                }
+                let mut root = div().relative().pl(px(6.)).child(cluster);
+                if self.wordings_open == Some(id) {
+                    root = root.child(deferred(self.wordings_menu(change, cx)).with_priority(1));
+                }
+                (px(width), root.into_any_element())
+            }
+            decision => {
+                let (mark, ink) = match decision {
+                    Decision::Accepted => ("✓ kept", color::ADDED_COUNT),
+                    _ => ("✕ rejected", color::REMOVED_TEXT),
+                };
+                let ui = Font { weight: FontWeight::MEDIUM, ..font(SANS) };
+                let width = 4. + 6. + 8. + f32::from(width_of(mark, &ui, px(11.), window) + width_of("Undo", &ui, px(11.), window));
+                let control = div()
+                    .pl(px(4.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .font_family(SANS)
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .whitespace_nowrap()
+                    .child(div().text_color(rgb(ink)).child(mark))
+                    .child(
+                        div()
+                            .id(("undo", key))
+                            .px(px(4.))
+                            .rounded(px(4.))
+                            .text_color(rgb(color::MUTED))
+                            .underline()
+                            .cursor_pointer()
+                            .child("Undo")
+                            .on_click(cx.listener(move |this, _, window, cx| this.undo(id, window, cx)))
+                            .test_support(),
+                    );
+                (px(width), control.into_any_element())
+            }
+        }
+    }
+
+    /// Every wording of a change, the chosen one ticked.
+    fn wordings_menu(&self, change: &Change<'_>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let id = change.id;
+        div()
+            .absolute()
+            .top(px(36.))
+            .left(px(6.))
+            .min_w(px(180.))
+            .p(px(4.))
+            .flex()
+            .flex_col()
+            .bg(rgb(color::SURFACE))
+            .border_1()
+            .border_color(rgb(color::HAIRLINE))
+            .rounded(px(8.))
+            .shadow_md()
+            .font_family(SANS)
+            .text_size(px(13.))
+            .children(change.wordings.iter().enumerate().map(|(i, wording)| {
+                let chosen = i == change.chosen;
+                div()
+                    .id(("wording", i))
+                    .h(px(30.))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(chosen, |row| row.bg(rgb(color::ADDED_FILL)).text_color(rgb(color::ADDED_TEXT)))
+                    .child(div().w(px(12.)).child(if chosen { "✓" } else { "" }))
+                    .child(wording.clone())
+                    .on_click(cx.listener(move |this, _, window, cx| this.choose(id, i, window, cx)))
+                    .test_support()
+            }))
+    }
+
+    /// iPhone: the change that was tapped, with Keep and Use.
+    pub(crate) fn render_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.form != FormFactor::Phone {
+            return None;
+        }
+        let review = self.revision.review()?;
+        let change = review.change(self.selected?)?;
+        let m = self.metrics();
+        let total = review.stats().total;
+        let index = review.changes().position(|c| c.id == change.id).unwrap_or(0);
+        let id = change.id;
+        let step = move |delta: isize| {
+            move |this: &mut Inkling, _: &ClickEvent, _: &mut Window, cx: &mut Context<Inkling>| {
+                let Some(review) = this.revision.review() else { return };
+                let ids: Vec<ChangeId> = review.changes().map(|c| c.id).collect();
+                let at = ids.iter().position(|c| *c == id).unwrap_or(0) as isize;
+                let next = (at + delta).rem_euclid(ids.len() as isize) as usize;
+                this.select(Some(ids[next]), cx);
+            }
+        };
+        let quote = |s: &str| if s.is_empty() { "nothing".to_string() } else { format!("\u{201c}{s}\u{201d}") };
+        let sheet_button = |id: &'static str, label: String, ink: u32, fill: u32| {
+            div()
+                .id(id)
+                .flex_1()
+                .h(px(48.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(12.))
+                .border_1()
+                .border_color(rgb(color::HAIRLINE))
+                .bg(rgb(fill))
+                .text_color(rgb(ink))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(label)
+        };
+        Some(
+            div()
+                .w_full()
+                .px(m.gutter)
+                .pt(px(14.))
+                .pb(px(12.))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .bg(rgb(color::SURFACE))
+                .border_t_1()
+                .border_color(rgb(color::HAIRLINE))
+                .rounded_t(px(18.))
+                .text_size(m.ui)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().pl_2().text_color(rgb(color::MUTED)).child(format!("Change {} of {total}", index + 1)))
+                        .child(
+                            div()
+                                .flex()
+                                .child(icon_button("previous", "‹", color::INK, None, m.control).on_click(cx.listener(step(-1))).test_support())
+                                .child(icon_button("next", "›", color::INK, None, m.control).on_click(cx.listener(step(1))).test_support()),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            sheet_button("keep", format!("✕ Keep {}", quote(change.removed)), color::REMOVED_TEXT, color::SURFACE)
+                                .on_click(cx.listener(move |this, _, window, cx| this.reject(id, window, cx)))
+                                .test_support(),
+                        )
+                        .child(
+                            sheet_button("use", format!("✓ Use {}", quote(change.added)), color::ADDED_TEXT, color::ADDED_FILL)
+                                .on_click(cx.listener(move |this, _, window, cx| this.accept(id, window, cx)))
+                                .test_support(),
+                        ),
+                )
+                .when(change.more > 0, |sheet| {
+                    sheet.child(
+                        ghost_button("more-words", "Other words")
+                            .h(m.control)
+                            .justify_center()
+                            .on_click(cx.listener(move |this, _, _, cx| this.toggle_wordings(id, cx)))
+                            .test_support(),
+                    )
+                })
+                .when(self.wordings_open == Some(id), |sheet| sheet.child(self.wordings_menu(&change, cx)))
+                .when(change.decision != Decision::Pending, |sheet| {
+                    sheet.child(
+                        primary_button("undo", "Undo", m)
+                            .justify_center()
+                            .on_click(cx.listener(move |this, _, window, cx| this.undo(id, window, cx)))
+                            .test_support(),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+}
+
+fn icon_button(id: impl Into<ElementId>, glyph: &'static str, ink: u32, fill: Option<u32>, size: Pixels) -> Stateful<Div> {
+    div()
+        .id(id)
+        .size(size)
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.))
+        .when_some(fill, |b, fill| b.bg(rgb(fill)))
+        .font_family(SANS)
+        .text_size(px(14.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(ink))
+        .cursor_pointer()
+        .child(glyph)
+}

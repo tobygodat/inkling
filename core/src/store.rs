@@ -183,21 +183,12 @@ fn keychain() -> Box<dyn KeyStore> {
 
 pub const FAKE_TEXT: &str = "The kettle clicked off in the next room, and for a moment the house held its breath with her.";
 
-/// The backend a request should use. `INKLING_FAKE_AI=1` forces the fake one, for headless runs.
-/// `Err` names the provider whose key is missing, so the UI can open settings.
-pub fn backend_for(settings: &Settings, keys: &dyn KeyStore) -> Result<Backend, Provider> {
-    backend_with(settings, keys, || FAKE_TEXT.into())
-}
-
-/// [`backend_for`] for a review request. Under `INKLING_FAKE_AI` the fake streams a canned
-/// answer made from the request's draft, so a headless run gets a real review to show.
+/// The backend a request should use. `Err` names the provider whose key is missing, so the UI
+/// can open the key screen. `INKLING_FAKE_AI=1` forces the fake one, for headless runs: it streams
+/// a canned answer made from the request's draft, so a headless run gets a real review to show.
 pub fn backend_for_request(settings: &Settings, keys: &dyn KeyStore, request: &Request) -> Result<Backend, Provider> {
-    backend_with(settings, keys, || request.fake_answer())
-}
-
-fn backend_with(settings: &Settings, keys: &dyn KeyStore, fake: impl FnOnce() -> String) -> Result<Backend, Provider> {
     if std::env::var_os("INKLING_FAKE_AI").is_some() {
-        return Ok(Backend::Fake { text: fake(), word_delay: Duration::from_millis(40) });
+        return Ok(Backend::Fake { text: request.fake_answer(), word_delay: Duration::from_millis(40) });
     }
     let provider = settings.provider;
     let key = keys.get(provider).filter(|k| !k.trim().is_empty()).ok_or(provider)?;
@@ -234,10 +225,11 @@ mod tests {
     fn a_missing_key_names_its_provider() {
         let keys = MemoryKeys::default();
         let settings = Settings::default();
+        let request = Request::new("Once", crate::ask::Ask::FixGrammar).unwrap();
         if std::env::var_os("INKLING_FAKE_AI").is_none() {
-            assert_eq!(backend_for(&settings, &keys), Err(Provider::Claude));
+            assert_eq!(backend_for_request(&settings, &keys, &request), Err(Provider::Claude));
             keys.set(Provider::Claude, "sk-test").unwrap();
-            assert!(matches!(backend_for(&settings, &keys), Ok(Backend::Live { .. })));
+            assert!(matches!(backend_for_request(&settings, &keys, &request), Ok(Backend::Live { .. })));
         }
     }
 }
