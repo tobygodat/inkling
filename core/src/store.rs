@@ -1,4 +1,5 @@
 use crate::ai::{Backend, Provider};
+use crate::ask::Request;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -70,7 +71,12 @@ impl Settings {
     }
 
     pub fn model(&self, provider: Provider) -> &str {
-        self.models.get(&provider).map(String::as_str).filter(|m| !m.trim().is_empty()).unwrap_or(provider.default_model())
+        self.typed_model(provider).unwrap_or(provider.default_model())
+    }
+
+    /// The model the writer typed for `provider`, or `None` when they left the default.
+    pub fn typed_model(&self, provider: Provider) -> Option<&str> {
+        self.models.get(&provider).map(String::as_str).filter(|m| !m.trim().is_empty())
     }
 
     pub fn set_model(&mut self, provider: Provider, model: &str) {
@@ -83,6 +89,12 @@ pub trait KeyStore: Send + Sync {
     fn get(&self, provider: Provider) -> Option<String>;
     fn set(&self, provider: Provider, key: &str) -> Result<(), String>;
     fn remove(&self, provider: Provider) -> Result<(), String>;
+
+    /// Whether a key is saved for `provider`. Stores that can answer without reading the
+    /// secret do, so a settings screen can show "saved" without unlocking anything.
+    fn has(&self, provider: Provider) -> bool {
+        self.get(provider).is_some_and(|k| !k.trim().is_empty())
+    }
 }
 
 #[derive(Default)]
@@ -127,6 +139,17 @@ impl KeyStore for KeychainKeys {
             .map_err(|e| format!("Couldn't save the {} key to the Keychain ({e}).", provider.label()))
     }
 
+    /// Asks the Keychain whether the item exists without loading its data or attributes.
+    fn has(&self, provider: Provider) -> bool {
+        use security_framework::item::{ItemClass, ItemSearchOptions};
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(Self::SERVICE)
+            .account(provider.id())
+            .search()
+            .is_ok()
+    }
+
     fn remove(&self, provider: Provider) -> Result<(), String> {
         const NOT_FOUND: i32 = -25300; // errSecItemNotFound
         match security_framework::passwords::delete_generic_password(Self::SERVICE, provider.id()) {
@@ -163,8 +186,18 @@ pub const FAKE_TEXT: &str = "The kettle clicked off in the next room, and for a 
 /// The backend a request should use. `INKLING_FAKE_AI=1` forces the fake one, for headless runs.
 /// `Err` names the provider whose key is missing, so the UI can open settings.
 pub fn backend_for(settings: &Settings, keys: &dyn KeyStore) -> Result<Backend, Provider> {
+    backend_with(settings, keys, || FAKE_TEXT.into())
+}
+
+/// [`backend_for`] for a review request. Under `INKLING_FAKE_AI` the fake streams a canned
+/// answer made from the request's draft, so a headless run gets a real review to show.
+pub fn backend_for_request(settings: &Settings, keys: &dyn KeyStore, request: &Request) -> Result<Backend, Provider> {
+    backend_with(settings, keys, || request.fake_answer())
+}
+
+fn backend_with(settings: &Settings, keys: &dyn KeyStore, fake: impl FnOnce() -> String) -> Result<Backend, Provider> {
     if std::env::var_os("INKLING_FAKE_AI").is_some() {
-        return Ok(Backend::Fake { text: FAKE_TEXT.into(), word_delay: Duration::from_millis(40) });
+        return Ok(Backend::Fake { text: fake(), word_delay: Duration::from_millis(40) });
     }
     let provider = settings.provider;
     let key = keys.get(provider).filter(|k| !k.trim().is_empty()).ok_or(provider)?;

@@ -4,12 +4,16 @@
 //! A UI that counts in UTF-16 converts at its own edge.
 
 pub mod ai;
+pub mod ask;
 pub mod assist;
 pub mod providers;
+pub mod review;
 pub mod store;
 
 pub use ai::{Action, AiEvent, AiRequest, Backend, Cancel, Prompt, Provider, start};
+pub use ask::{AnswerError, Ask, BadRequest, Request, Revision, parse_alternatives};
 pub use assist::{Assist, Proposal};
-pub use store::{KeyStore, MemoryKeys, Paths, Settings, backend_for, default_keys};
+pub use review::{Change, ChangeId, Decision, Edit, Review, Segment, Stats};
+pub use store::{KeyStore, MemoryKeys, Paths, Settings, backend_for, backend_for_request, default_keys};
 #[cfg(target_vendor = "apple")]
 pub use store::KeychainKeys;

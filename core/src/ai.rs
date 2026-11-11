@@ -80,6 +80,18 @@ impl AiRequest {
     }
 }
 
+impl From<AiRequest> for Prompt {
+    fn from(request: AiRequest) -> Self {
+        request.prompt()
+    }
+}
+
+impl From<&crate::ask::Request> for Prompt {
+    fn from(request: &crate::ask::Request) -> Self {
+        request.prompt()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum AiEvent {
     Delta(String),
@@ -109,7 +121,8 @@ impl Cancel {
 
 /// Runs the request on its own thread. `sink` gets zero or more `Delta`s, then exactly one
 /// `Done` or `Failed`, unless the request is cancelled, after which it gets nothing more.
-pub fn start(request: AiRequest, backend: Backend, mut sink: impl FnMut(AiEvent) + Send + 'static) -> Cancel {
+pub fn start(request: impl Into<Prompt>, backend: Backend, mut sink: impl FnMut(AiEvent) + Send + 'static) -> Cancel {
+    let prompt = request.into();
     let cancel = Cancel::default();
     let seen = cancel.clone();
     std::thread::spawn(move || {
@@ -130,7 +143,6 @@ pub fn start(request: AiRequest, backend: Backend, mut sink: impl FnMut(AiEvent)
                 Ok(())
             }
             Backend::Live { provider, model, key } => {
-                let prompt = request.prompt();
                 crate::providers::stream(provider, &model, &key, &prompt, &seen, &mut |text| {
                     emit(AiEvent::Delta(text))
                 })
