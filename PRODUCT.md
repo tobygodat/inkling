@@ -1,0 +1,23 @@
+# Product
+
+## Users
+One writer, first Toby, who drafts on a Mac and an iPhone and already pays for an AI API key.
+
+## Purpose
+A place to write that stays out of the way, with an AI editor that proposes changes the writer accepts
+or rejects one at a time.
+
+## Positioning
+Not a chat window beside a document and not a subscription. The AI is bring-your-own-key: Claude,
+Gemini or ChatGPT. There is no account and no server. Keys live in the Keychain and writing goes only
+to the provider the writer picked.
+
+## Principles
+- The page comes first. Nothing shows that the writer didn't ask for.
+- The AI never changes the draft on its own. Every change is shown and is the writer's to accept.
+- Rejecting is as cheap as accepting.
+- It should be fun to use, not just quiet.
+
+## Accessibility
+Text and labels meet 4.5:1 contrast. Touch targets on iPhone are at least 44 pt. Accepted and rejected
+changes differ by more than colour.

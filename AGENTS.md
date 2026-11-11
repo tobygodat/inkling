@@ -1,6 +1,6 @@
 # Inkling
 
-Work is tracked in Linear project Inkling, team TOB. The current issue is TOB-428.
+Work is tracked in Linear project Inkling, team TOB. Repo: https://github.com/tobygodat/inkling
 Research and plans that don't belong in the repo are on the Notion page `eudaimonia/projects/inkling`:
 https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
@@ -8,15 +8,15 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
 1. This file.
 2. The Linear issue.
-3. `docs/prototype-slice.md` for what every prototype must do and how it is proved.
+3. `PRODUCT.md`, `DESIGN.md` and `docs/ARCHITECTURE.md`. `docs/adr/` holds the decisions and why.
 
 ## Layout
 
-- `core/` is `inkling-core`: the AI request, the streaming proposal and its accept or reject, settings,
-  key storage and the three providers. No UI framework may be a dependency of it.
-- `apps/<stack>/` is one prototype per UI stack. Each is its own Cargo workspace with its own lockfile
-  and depends on `core` by path. They share no code with each other.
-- `docs/screenshots/<stack>/` holds each prototype's proof.
+- `core/` is `inkling-core`: the AI request, the providers, settings and key storage. No UI framework
+  may be a dependency of it.
+- `apps/gpui-kit/` (Mac) and `apps/gpui-kit-ios-spike/` (iPhone) are prototypes kept as seeds. Each is
+  its own Cargo workspace. The losing prototypes are at tag `prototypes-tob-428`.
+- `docs/screenshots/<app>/` holds each app's proof.
 
 ## Commands
 
@@ -25,7 +25,7 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 
 - `cargo test --manifest-path core/Cargo.toml` must pass before any PR.
 - `cargo clippy --manifest-path core/Cargo.toml -- -D warnings` must pass before any PR.
-- Each `apps/<stack>/snap.sh` rebuilds that prototype's screenshots headless.
+- `apps/gpui-kit/snap.sh` rebuilds the Mac prototype's screenshots headless.
 - `INKLING_KEY=<key> cargo run --manifest-path core/Cargo.toml --example ask -- <claude|gemini|chatgpt> "<instruction>" "<text>"`
   streams one live answer. It calls a paid API, so only Toby runs it.
 
@@ -37,4 +37,5 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - Headless runs set `INKLING_FAKE_AI=1` and `INKLING_DATA_DIR` to a temp folder. They never read or
   write the real Keychain and never call a paid API.
 - API keys live only in the Keychain. Never write one to a file, a log, a screenshot or a commit.
-- The prototypes are throwaway. Don't polish them past what `docs/prototype-slice.md` asks.
+- On the Simulator, use the T3 device tools and call `device_close` when done. A session left open
+  blocks the next agent.
