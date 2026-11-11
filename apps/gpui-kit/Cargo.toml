@@ -1,0 +1,20 @@
+[package]
+name = "inkling-gpui-kit"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[[bin]]
+name = "inkling"
+path = "src/main.rs"
+
+[features]
+snap = ["gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit = "=0.9.1"
+inkling-core = { path = "../../core" }
+
+[profile.release]
+strip = true
