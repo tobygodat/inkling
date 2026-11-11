@@ -4,8 +4,7 @@ A minimal writing app for Mac and iPhone, in Rust, with bring-your-own-key AI (C
 "Inkling" is a working name.
 
 The UI is GPUI Kit on both devices (see `docs/adr/0001-gpui-kit-on-mac-and-iphone.md`) and the design
-is in `DESIGN.md`. The Mac app is built. The iPhone app will mount the same views (`ui/`); its seed
-is `apps/gpui-kit-ios-spike`.
+is in `DESIGN.md`. The Mac app and the iPhone app mount the same views (`ui/`).
 
 ## Run the Mac app
 
@@ -25,6 +24,16 @@ Keychain (service `com.tobygodat.inkling`), never to a file. The draft lives in
   only what you accepted. Cmd-Z undoes each applied change.
 
 `INKLING_FAKE_AI=1` answers with canned text instead of calling a model.
+
+## Run the iPhone app
+
+```
+ios/run.sh <agent-device> --fake-ai
+```
+
+It builds for the iPhone Simulator, installs and launches the app; see `ios/README.md`. The header
+on the page opens the key screen, and Done puts the keyboard away. In a version, tap a change, then
+Keep or Use, or Accept the rest.
 
 ## Check
 

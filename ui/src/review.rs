@@ -1,7 +1,7 @@
 //! The page during review: the draft with each change drawn inline. On Mac every change carries
 //! its own controls. On iPhone a tap selects a change and a sheet below the page acts on it.
 
-use crate::app::{Inkling, ghost_button, primary_button};
+use crate::app::{Inkling, ghost_button};
 use crate::inline::{InlineText, ROOM, room_for, width_of};
 use crate::{FormFactor, SANS, SERIF, color};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -239,14 +239,13 @@ impl Inkling {
         }
     }
 
-    /// Every wording of a change, the chosen one ticked.
+    /// Every wording of a change, the chosen one ticked. A menu under the change on Mac, a
+    /// list inside the sheet on iPhone.
     fn wordings_menu(&self, change: &Change<'_>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let id = change.id;
+        let phone = self.form == FormFactor::Phone;
         div()
-            .absolute()
-            .top(px(36.))
-            .left(px(6.))
-            .min_w(px(180.))
+            .when(!phone, |menu| menu.absolute().top(px(36.)).left(px(6.)).min_w(px(180.)).shadow_md())
             .p(px(4.))
             .flex()
             .flex_col()
@@ -254,14 +253,13 @@ impl Inkling {
             .border_1()
             .border_color(rgb(color::HAIRLINE))
             .rounded(px(8.))
-            .shadow_md()
             .font_family(SANS)
-            .text_size(px(13.))
+            .text_size(if phone { px(15.) } else { px(13.) })
             .children(change.wordings.iter().enumerate().map(|(i, wording)| {
                 let chosen = i == change.chosen;
                 div()
                     .id(("wording", i))
-                    .h(px(30.))
+                    .h(if phone { self.metrics().control } else { px(30.) })
                     .px_2()
                     .flex()
                     .items_center()
@@ -296,12 +294,17 @@ impl Inkling {
                 this.select(Some(ids[next]), cx);
             }
         };
-        let quote = |s: &str| if s.is_empty() { "nothing".to_string() } else { format!("\u{201c}{s}\u{201d}") };
+        let quote = |s: &str| format!("\u{201c}{}\u{201d}", s.trim());
+        let (removed, added) = (change.removed.trim(), change.added.trim());
+        let keep = if removed.is_empty() { "✕ Leave it out".to_string() } else { format!("✕ Keep {}", quote(removed)) };
+        let take = if added.is_empty() { format!("✓ Cut {}", quote(removed)) } else { format!("✓ Use {}", quote(added)) };
         let sheet_button = |id: &'static str, label: String, ink: u32, fill: u32| {
             div()
                 .id(id)
                 .flex_1()
+                .min_w_0()
                 .h(px(48.))
+                .px_3()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -311,7 +314,7 @@ impl Inkling {
                 .bg(rgb(fill))
                 .text_color(rgb(ink))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(label)
+                .child(div().min_w_0().truncate().child(label))
         };
         Some(
             div()
@@ -332,7 +335,14 @@ impl Inkling {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .child(div().pl_2().text_color(rgb(color::MUTED)).child(format!("Change {} of {total}", index + 1)))
+                        .child(
+                            div()
+                                .pl_2()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(color::MUTED))
+                                .child(format!("Change {} of {total}", index + 1)),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -345,19 +355,21 @@ impl Inkling {
                         .flex()
                         .gap_2()
                         .child(
-                            sheet_button("keep", format!("✕ Keep {}", quote(change.removed)), color::REMOVED_TEXT, color::SURFACE)
+                            sheet_button("keep", keep, color::REMOVED_TEXT, color::SURFACE)
                                 .on_click(cx.listener(move |this, _, window, cx| this.reject(id, window, cx)))
                                 .test_support(),
                         )
                         .child(
-                            sheet_button("use", format!("✓ Use {}", quote(change.added)), color::ADDED_TEXT, color::ADDED_FILL)
+                            sheet_button("use", take, color::ADDED_TEXT, color::ADDED_FILL)
                                 .on_click(cx.listener(move |this, _, window, cx| this.accept(id, window, cx)))
                                 .test_support(),
                         ),
                 )
                 .when(change.more > 0, |sheet| {
+                    let more = if change.more == 1 { "1 more word".to_string() } else { format!("{} more words", change.more) };
                     sheet.child(
-                        ghost_button("more-words", "Other words")
+                        ghost_button("more-words", "")
+                            .child(more)
                             .h(m.control)
                             .justify_center()
                             .on_click(cx.listener(move |this, _, _, cx| this.toggle_wordings(id, cx)))
@@ -367,7 +379,8 @@ impl Inkling {
                 .when(self.wordings_open == Some(id), |sheet| sheet.child(self.wordings_menu(&change, cx)))
                 .when(change.decision != Decision::Pending, |sheet| {
                     sheet.child(
-                        primary_button("undo", "Undo", m)
+                        ghost_button("undo", "Undo")
+                            .h(m.control)
                             .justify_center()
                             .on_click(cx.listener(move |this, _, window, cx| this.undo(id, window, cx)))
                             .test_support(),

@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "inkling-ios"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+test = false
+doctest = false
+
+[dependencies]
+gpui-kit = "=0.9.1"
+gpui-mobile = { package = "gpui-pre-mobile", path = "target/gpui-mobile", default-features = false, features = ["video_player", "camera"] }
+inkling-core = { path = "../core" }
+inkling-ui = { path = "../ui" }
+log = "0.4"
+objc2 = "0.6"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.release]
+strip = true

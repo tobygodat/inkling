@@ -70,7 +70,13 @@ impl Inkling {
         let settings = Settings::load(&paths);
         let draft = paths.load_draft();
         let page = cx.new(|cx| {
-            let mut page = TextareaState::new(window, cx).soft_wrap(true);
+            let mut page = TextareaState::new(window, cx)
+                .soft_wrap(true)
+                .autocorrect(true)
+                .autocapitalize(Autocapitalize::Sentences);
+            if form == FormFactor::Phone {
+                page = page.placeholder("Start writing");
+            }
             page.set_value(draft, window, cx);
             page
         });
@@ -92,7 +98,9 @@ impl Inkling {
                 cx.stop_propagation();
             }
         });
-        page.read(cx).focus_handle(cx).focus(window, cx);
+        if form == FormFactor::Mac {
+            page.read(cx).focus_handle(cx).focus(window, cx);
+        }
         let key_saved = keys.has(settings.provider);
         Inkling {
             form,
@@ -291,6 +299,7 @@ impl Inkling {
         self.revision = Revision::asking(request);
         self.running = Some(Running { cancel, events, _pump: pump });
         self.focus.focus(window, cx);
+        window.dismiss_virtual_keyboard();
         cx.notify();
     }
 
@@ -308,10 +317,22 @@ impl Inkling {
 
     pub fn accept(&mut self, id: ChangeId, window: &mut Window, cx: &mut Context<Self>) {
         self.decide(window, cx, |review| review.accept(id));
+        self.select_next_from(id);
     }
 
     pub fn reject(&mut self, id: ChangeId, window: &mut Window, cx: &mut Context<Self>) {
         self.decide(window, cx, |review| review.reject(id));
+        self.select_next_from(id);
+    }
+
+    /// iPhone: after a decision the sheet moves on to the next change still pending.
+    fn select_next_from(&mut self, id: ChangeId) {
+        if self.form != FormFactor::Phone {
+            return;
+        }
+        if let Some(review) = self.revision.review() {
+            self.selected = review.next_pending(Some(id)).or(Some(id));
+        }
     }
 
     pub fn undo(&mut self, id: ChangeId, window: &mut Window, cx: &mut Context<Self>) {
@@ -321,6 +342,7 @@ impl Inkling {
     pub fn choose(&mut self, id: ChangeId, wording: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.wordings_open = None;
         self.decide(window, cx, |review| review.choose(id, wording));
+        self.select_next_from(id);
     }
 
     pub fn accept_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -372,8 +394,27 @@ impl Inkling {
     fn back_to_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.wordings_open = None;
         self.selected = None;
-        self.page.read(cx).focus_handle(cx).focus(window, cx);
+        self.focus_page(window, cx);
         cx.notify();
+    }
+
+    /// On Mac the page takes focus back. On iPhone the page waits for a tap, which also
+    /// raises the keyboard.
+    fn focus_page(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.form == FormFactor::Mac {
+            self.page.read(cx).focus_handle(cx).focus(window, cx);
+        }
+    }
+
+    /// iPhone: puts the keyboard away and leaves no field focused.
+    pub fn done_typing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
+        window.dismiss_virtual_keyboard();
+        cx.notify();
+    }
+
+    fn typing(&self, window: &Window, cx: &App) -> bool {
+        self.page.read(cx).focus_handle(cx).is_focused(window) || self.ask_field.read(cx).focus_handle(cx).is_focused(window)
     }
 
     pub fn open_keys(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
@@ -385,9 +426,11 @@ impl Inkling {
 
     pub fn close_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.key_screen = None;
+        self.focus.focus(window, cx);
+        window.dismiss_virtual_keyboard();
         self.key_saved = self.keys.has(self.settings.provider);
         if self.revision.review().is_none() {
-            self.page.read(cx).focus_handle(cx).focus(window, cx);
+            self.focus_page(window, cx);
         }
         cx.notify();
     }
@@ -426,7 +469,7 @@ impl Inkling {
                 bar_row()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("Version {}", self.version.number)))
                     .child(div().flex_grow(1.).text_color(rgb(color::MUTED)).child(progress))
-                    .child(ghost_button("cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.cancel(cx))).test_support())
+                    .child(ghost_button("cancel", "Cancel").h(m.control.max(px(32.))).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))).test_support())
                     .into_any_element()
             }
             Revision::Reviewing(review) => {
@@ -434,16 +477,24 @@ impl Inkling {
                 let name = div().font_weight(FontWeight::SEMIBOLD).child(format!("Version {}", self.version.number));
                 let numbers = div()
                     .flex()
-                    .flex_wrap()
                     .gap_1()
                     .text_color(rgb(color::MUTED))
-                    .child(format!("from {source} ·"))
+                    .when(self.form == FormFactor::Mac, |numbers| numbers.flex_wrap().child(format!("from {source} ·")))
+                    .when(self.form == FormFactor::Phone, |numbers| numbers.whitespace_nowrap().child(format!("{source} ·")))
                     .child(div().text_color(rgb(color::ADDED_COUNT)).child(format!("+{}", s.words_added)))
                     .child(div().text_color(rgb(color::REMOVED_LINE)).child(format!("−{}", s.words_removed)))
                     .child(format!("· {} of {} accepted", s.accepted, s.total));
                 let label = match self.form {
                     FormFactor::Mac => div().flex_grow(1.).flex().items_center().gap(px(10.)).child(name).child(numbers),
-                    FormFactor::Phone => div().flex_grow(1.).min_w_0().flex().flex_col().child(name).child(numbers.text_size(px(13.))),
+                    FormFactor::Phone => div()
+                        .flex_grow(1.)
+                        .min_w_0()
+                        .pl_2()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(name.text_size(px(15.)))
+                        .child(numbers.text_size(px(13.))),
                 };
                 bar_row()
                     .child(label)
@@ -464,6 +515,9 @@ impl Inkling {
             }
             _ => return None,
         };
+        if self.form == FormFactor::Phone {
+            return Some(div().w_full().px(m.gutter).pt_2().pb_1().text_size(px(14.)).child(content).into_any_element());
+        }
         Some(
             div()
                 .w_full()
@@ -515,18 +569,21 @@ impl Inkling {
 
     fn render_asks(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let m = self.metrics();
+        let phone = self.form == FormFactor::Phone;
+        let chip = if phone { m.control } else { px(30.) };
         let quick = |id: &'static str, label: &'static str, f: fn(&mut Self, &mut Window, &mut Context<Self>)| {
             div()
                 .id(id)
-                .h(px(30.))
-                .px_3()
+                .flex_none()
+                .h(chip)
+                .map(|chip| if phone { chip.px(px(14.)) } else { chip.px_3() })
                 .flex()
                 .items_center()
                 .bg(rgb(color::SURFACE))
                 .border_1()
                 .border_color(rgb(color::HAIRLINE))
-                .rounded(px(15.))
-                .text_size(px(12.))
+                .rounded(chip / 2.)
+                .text_size(if phone { px(14.) } else { px(12.) })
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .child(label)
@@ -540,17 +597,19 @@ impl Inkling {
             .gap_2()
             .child(
                 div()
+                    .id("quick-actions")
                     .flex()
                     .gap(px(6.))
+                    .overflow_x_scroll()
                     .child(quick("fix-grammar", "Fix grammar", Self::fix_grammar))
                     .child(quick("find-word", "Find a word", Self::find_word))
                     .child(quick("next-line", "Next line", Self::next_line)),
             )
-            .child(
+            .when(!(phone && self.revision.review().is_some()), |asks| asks.child(
                 div()
-                    .h(px(46.))
+                    .h(if phone { m.control + px(8.) } else { px(46.) })
                     .pl(px(14.))
-                    .pr(px(6.))
+                    .pr(if phone { px(4.) } else { px(6.) })
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -560,7 +619,7 @@ impl Inkling {
                     .rounded(px(12.))
                     .child(div().flex_1().min_w_0().text_size(px(14.)).child(Input::new(&self.ask_field).id("ask").appearance(false)))
                     .child(primary_button("send", "Send", m).on_click(cx.listener(|this, _, window, cx| this.send(window, cx))).test_support()),
-            )
+            ))
     }
 
     fn render_footer(&self) -> impl IntoElement + use<> {
@@ -607,6 +666,9 @@ impl Render for Inkling {
         if let Some(screen) = &self.key_screen {
             return root.child(self.render_keys(screen, cx));
         }
+        if self.form == FormFactor::Phone {
+            return root.child(self.render_phone(window, cx));
+        }
         let page = self.render_page(window, cx);
         root.child(self.render_bar(cx))
             .child(
@@ -628,6 +690,87 @@ impl Render for Inkling {
                 ),
             )
             .child(self.render_footer())
+    }
+}
+
+impl Inkling {
+    /// iPhone, top to bottom: the version bar or a status row, the page, the sheet for the
+    /// tapped change, then the quick actions and the ask field, which the host keeps above the
+    /// keyboard.
+    fn render_phone(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let m = self.metrics();
+        let top = match self.render_version_bar(cx) {
+            Some(bar) => bar,
+            None => self.render_status_row(window, cx).into_any_element(),
+        };
+        let reviewing = self.revision.review().is_some();
+        let page = self.render_page(window, cx);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(top)
+            .child(div().flex_1().min_h_0().w_full().px(px(14.)).pt_2().child(page))
+            .children(self.render_sheet(cx))
+            .child(
+                div()
+                    .w_full()
+                    .px(m.gutter)
+                    .pt_2()
+                    .pb_2()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .when(reviewing, |bottom| bottom.bg(rgb(color::SURFACE)))
+                    .children(self.render_message())
+                    .child(self.render_asks(cx)),
+            )
+            .into_any_element()
+    }
+
+    /// iPhone, outside a review: whether the page is saved, the way to the key screen, and
+    /// Done while a field has the keyboard.
+    fn render_status_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let m = self.metrics();
+        let saved = match &self.saved {
+            Saved::Saved => "Saved".to_string(),
+            Saved::Pending => "Editing".to_string(),
+            Saved::Failed(e) => format!("Couldn't save ({e})"),
+        };
+        let provider = self.settings.provider.label();
+        let key = if self.key_saved { provider.to_string() } else { format!("{provider} · add a key") };
+        div()
+            .w_full()
+            .h(m.control)
+            .pl(px(24.))
+            .pr(px(8.))
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_size(px(14.))
+            .text_color(rgb(color::MUTED))
+            .child(div().flex_1().min_w_0().truncate().child(saved))
+            .child(
+                ghost_button("open-keys", "")
+                    .h(m.control)
+                    .child(key)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let provider = this.settings.provider;
+                        this.open_keys(provider, window, cx);
+                    }))
+                    .test_support(),
+            )
+            .when(self.typing(window, cx), |row| {
+                row.child(
+                    ghost_button("done", "Done")
+                        .h(m.control)
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(color::INK))
+                        .on_click(cx.listener(|this, _, window, cx| this.done_typing(window, cx)))
+                        .test_support(),
+                )
+            })
     }
 }
 

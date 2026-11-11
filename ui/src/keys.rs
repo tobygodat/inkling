@@ -3,7 +3,7 @@
 
 use crate::app::{Inkling, ghost_button, primary_button};
 use crate::{FormFactor, SANS, SERIF, color};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::Provider;
@@ -16,13 +16,20 @@ pub(crate) struct KeyScreen {
     pub has_key: bool,
     /// What the last Save did.
     pub status: Option<Result<(), String>>,
+    _save_on_enter: Subscription,
 }
 
 impl KeyScreen {
     pub fn new(provider: Provider, app: &Inkling, window: &mut Window, cx: &mut Context<Inkling>) -> Self {
         let key = cx.new(|cx| InputState::new(window, cx).masked(true));
         let model = cx.new(|cx| InputState::new(window, cx));
-        let mut screen = KeyScreen { provider, key, model, has_key: false, status: None };
+        let save_on_enter = cx.subscribe_in(&key, window, |this, _, event: &InputEvent, window, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                this.save_keys(window, cx);
+                window.dismiss_virtual_keyboard();
+            }
+        });
+        let mut screen = KeyScreen { provider, key, model, has_key: false, status: None, _save_on_enter: save_on_enter };
         screen.show(provider, app, window, cx);
         screen
     }
@@ -147,6 +154,7 @@ impl Inkling {
                 .child(
                     div().flex().child(
                         ghost_button("back-to-page", "‹ Back to the page")
+                            .h(m.control.max(px(32.)))
                             .on_click(cx.listener(|this, _, window, cx| this.close_keys(window, cx)))
                             .test_support(),
                     ),
@@ -185,6 +193,7 @@ impl Inkling {
                         .child(
                             div()
                                 .id("where")
+                                .when(self.form == FormFactor::Phone, |link| link.min_h(m.control).flex().items_center())
                                 .text_size(px(14.))
                                 .text_color(rgb(color::LINK))
                                 .cursor_pointer()
@@ -200,7 +209,7 @@ impl Inkling {
                         .gap_3()
                         .child(
                             primary_button("save-key", "Save key", m)
-                                .h(px(48.))
+                                .h(if self.form == FormFactor::Phone { px(52.) } else { px(48.) })
                                 .justify_center()
                                 .text_size(px(15.))
                                 .on_click(cx.listener(|this, _, window, cx| this.save_keys(window, cx)))

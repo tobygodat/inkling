@@ -18,8 +18,9 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 - `ui/` is `inkling-ui`: every view, shared by the Mac app and the iPhone host. It takes its form
   factor as a value and never reads the platform.
 - `mac/` is the Mac app, on GPUI Kit's `gpui-fast` feature.
-- `apps/gpui-kit-ios-spike/` (iPhone) is a prototype kept as the seed for the iPhone host, in its own
-  Cargo workspace. The losing prototypes are at tag `prototypes-tob-428`.
+- `ios/` is the iPhone app: a Swift UIKit host (`ios/app/`) over the static library `inkling-ios`,
+  in its own Cargo workspace, with gpui-mobile patched from `ios/patches/`. The prototypes are at
+  tag `prototypes-tob-428`.
 - `docs/screenshots/<app>/` holds each app's proof.
 
 ## Commands
@@ -32,6 +33,9 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `mac/snap.sh` rebuilds `docs/screenshots/mac/` headless and asserts the app's behaviour. Any change
   under `ui/` or `mac/` reruns it.
 - `cargo run --release -p inkling-mac` opens the Mac app. It takes focus, so only Toby runs it.
+- `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
+  launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
+  `device_open`. Any change under `ui/` or `ios/` reruns the iPhone proof by hand (`ios/README.md`).
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
   streams one live answer and prints its changes. It calls a paid API, so only Toby runs it.
 
