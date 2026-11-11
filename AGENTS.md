@@ -33,12 +33,19 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `mac/snap.sh` rebuilds `docs/screenshots/mac/` headless and asserts the app's behaviour. Any change
   under `ui/` or `mac/` reruns it.
 - `cargo run --release -p inkling-mac` opens the Mac app. It takes focus, so only Toby runs it.
+- `mac/install.sh` builds `Inkling.app` in release, signs it with the Developer ID identity and
+  installs it in `/Applications` (or the folder it is given) without opening it.
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
 - `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow on the Simulator,
   with 12 checked steps. Any change under `ui/` or `ios/` reruns it. `ios/README.md` lists what is
   still driven by hand.
+- `ios/testflight.sh` archives the iPhone app in Release for a real device, signs it for the App
+  Store with Xcode's signed-in account (team Q6NAWA42Y2) and uploads it to TestFlight. It sends a
+  build to Apple, so run it only when Toby asks for a TestFlight build.
+- `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
+  `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
   streams one live answer and prints its changes. It calls a paid API, so only Toby runs it.
 

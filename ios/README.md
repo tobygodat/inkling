@@ -26,6 +26,10 @@ Launch flags work in Debug builds only; Release ignores them:
 
 With neither flag the app reads keys from the Keychain through `inkling_core::default_keys()`.
 
+`testflight.sh [build number]` archives a Release build for a real iPhone and uploads it to
+TestFlight. The build number defaults to the UTC time (`20261111.2220`), so each upload is higher
+than the last. Release builds read keys from the Keychain and call the real providers.
+
 `snap.sh <agent-device>` (or `AGENT_DEVICE=<agent-device> snap.sh`) is the scripted proof; see
 [The scripted run](#the-scripted-run).
 
