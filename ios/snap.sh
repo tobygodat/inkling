@@ -87,6 +87,7 @@ expect_draft() {
 rm -rf "$shots"
 mkdir -p "$shots"
 "$ad" uninstall "$app" >/dev/null 2>&1 || true
+mkdir -p target
 ./run.sh "$ad" --fake-ai >target/snap-build.log 2>&1 || { tail -20 target/snap-build.log >&2; exit 1; }
 sleep 2
 
