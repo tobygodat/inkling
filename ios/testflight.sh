@@ -25,6 +25,9 @@ if security find-generic-password -s "$svc" -a p8 >/dev/null 2>&1; then
 fi
 
 ./fetch-mobile.sh
+# Build the library before Xcode reads the -force_load input; on a clean target/ the build phase
+# runs too late and the archive fails with "Build input file cannot be found".
+PLATFORM_NAME=iphoneos CONFIGURATION=Release ./cargo-ios.sh
 xcodegen generate --spec app/project.yml --project app --quiet
 rm -rf "$archive" "$export_dir"
 mkdir -p "$export_dir"
