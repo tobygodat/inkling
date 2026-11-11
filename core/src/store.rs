@@ -104,8 +104,57 @@ impl KeyStore for MemoryKeys {
     }
 }
 
-/// The key store an app should use. In memory for now; the Keychain replaces it.
+/// API keys in the Apple Keychain: generic passwords under service `com.tobygodat.inkling`,
+/// one account per `Provider::id()`.
+#[cfg(target_vendor = "apple")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KeychainKeys;
+
+#[cfg(target_vendor = "apple")]
+impl KeychainKeys {
+    pub const SERVICE: &'static str = "com.tobygodat.inkling";
+}
+
+#[cfg(target_vendor = "apple")]
+impl KeyStore for KeychainKeys {
+    fn get(&self, provider: Provider) -> Option<String> {
+        let bytes = security_framework::passwords::get_generic_password(Self::SERVICE, provider.id()).ok()?;
+        String::from_utf8(bytes).ok()
+    }
+
+    fn set(&self, provider: Provider, key: &str) -> Result<(), String> {
+        security_framework::passwords::set_generic_password(Self::SERVICE, provider.id(), key.trim().as_bytes())
+            .map_err(|e| format!("Couldn't save the {} key to the Keychain ({e}).", provider.label()))
+    }
+
+    fn remove(&self, provider: Provider) -> Result<(), String> {
+        const NOT_FOUND: i32 = -25300; // errSecItemNotFound
+        match security_framework::passwords::delete_generic_password(Self::SERVICE, provider.id()) {
+            Err(e) if e.code() != NOT_FOUND => {
+                Err(format!("Couldn't remove the {} key from the Keychain ({e}).", provider.label()))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The key store an app should use: the Keychain on Apple platforms. `INKLING_FAKE_AI` or
+/// `INKLING_MEMORY_KEYS` keeps keys in memory instead, so headless runs never touch the Keychain.
 pub fn default_keys() -> Box<dyn KeyStore> {
+    let in_memory = ["INKLING_FAKE_AI", "INKLING_MEMORY_KEYS"].iter().any(|v| std::env::var_os(v).is_some());
+    if in_memory || cfg!(not(target_vendor = "apple")) {
+        return Box::new(MemoryKeys::default());
+    }
+    keychain()
+}
+
+#[cfg(target_vendor = "apple")]
+fn keychain() -> Box<dyn KeyStore> {
+    Box::new(KeychainKeys)
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn keychain() -> Box<dyn KeyStore> {
     Box::new(MemoryKeys::default())
 }
 

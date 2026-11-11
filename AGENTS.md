@@ -1,6 +1,8 @@
 # Inkling
 
 Work is tracked in Linear project Inkling, team TOB. The current issue is TOB-428.
+Research and plans that don't belong in the repo are on the Notion page `eudaimonia/projects/inkling`:
+https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
 ## Read order
 
@@ -24,6 +26,8 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo test --manifest-path core/Cargo.toml` must pass before any PR.
 - `cargo clippy --manifest-path core/Cargo.toml -- -D warnings` must pass before any PR.
 - Each `apps/<stack>/snap.sh` rebuilds that prototype's screenshots headless.
+- `INKLING_KEY=<key> cargo run --manifest-path core/Cargo.toml --example ask -- <claude|gemini|chatgpt> "<instruction>" "<text>"`
+  streams one live answer. It calls a paid API, so only Toby runs it.
 
 ## Rules
 

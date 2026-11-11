@@ -11,3 +11,5 @@ pub mod store;
 pub use ai::{Action, AiEvent, AiRequest, Backend, Cancel, Prompt, Provider, start};
 pub use assist::{Assist, Proposal};
 pub use store::{KeyStore, MemoryKeys, Paths, Settings, backend_for, default_keys};
+#[cfg(target_vendor = "apple")]
+pub use store::KeychainKeys;
