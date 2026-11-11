@@ -32,9 +32,10 @@ than the last. Release builds read keys from the Keychain and call the real prov
 Before uploading it checks every framework symbol the binary imports against the public iPhoneOS
 SDK headers, because App Store Connect rejects private API use (ITMS-90338). Build 20261111.2229
 was rejected for `CGContextSetFontSmoothingStyle`, which core-graphics links through an unused
-wrapper. Fat LTO in the release profile drops it. The script signs in with the App Store Connect
-API key stored in the login Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and
-`p8`, the .p8 file in base64).
+wrapper. Fat LTO in the release profile drops it. Xcode's signed-in account signs the build, because only
+an account may use the cloud-managed distribution certificate; an API key gets `Cloud signing
+permission error`. `altool` then uploads it with the App Store Connect API key stored in the login
+Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and `p8`, the .p8 file in base64).
 
 `snap.sh <agent-device>` (or `AGENT_DEVICE=<agent-device> snap.sh`) is the scripted proof; see
 [The scripted run](#the-scripted-run).

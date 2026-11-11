@@ -43,9 +43,9 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   still driven by hand.
 - `ios/testflight.sh` archives the iPhone app in Release for a real device, signs it for the App
   Store (team Q6NAWA42Y2), refuses any build that imports a symbol missing from the public SDK
-  headers, and uploads it to TestFlight. It signs in with the App Store Connect API key in the login
-  Keychain (service `inkling-app-store-connect`), or Xcode's account when that is missing. It sends
-  a build to Apple, so run it only when Toby asks for a TestFlight build.
+  headers, and uploads it to TestFlight. Xcode's signed-in account signs it, and `altool` uploads it
+  with the App Store Connect API key in the login Keychain (service `inkling-app-store-connect`). It
+  sends a build to Apple, so run it only when Toby asks for a TestFlight build.
 - `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
   `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
