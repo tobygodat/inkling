@@ -26,6 +26,9 @@ Launch flags work in Debug builds only; Release ignores them:
 
 With neither flag the app reads keys from the Keychain through `inkling_core::default_keys()`.
 
+`snap.sh <agent-device>` (or `AGENT_DEVICE=<agent-device> snap.sh`) is the scripted proof; see
+[The scripted run](#the-scripted-run).
+
 `keys.sh <agent-device> "<text>"` types on the English on-screen keyboard by tapping keys (lowercase
 letters, space, `<` for delete, `/` for Return).
 
@@ -50,6 +53,8 @@ gpui-mobile is pinned to `7548ebc4b24f00494af9976af8852c7163ded9ce`. `fetch-mobi
   the keyboard's Return as GPUI's Enter key. Before it, Return arrived as `insertText:"\n"`, which a
   single-line kit `Input` drops, so Return in the ask field never sent and Return in the key field
   never saved.
+- `0004-paste-control.patch` puts a system `UIPasteControl` above the keyboard, so text copied in
+  another app pastes. See [Paste from another app](#paste-from-another-app).
 
 To change gpui-mobile, edit `target/gpui-mobile` in place, run `patches/refresh.sh` (it rewrites
 the last patch from the working tree), then build. `run.sh` re-fetches, so an edit not yet captured
@@ -104,6 +109,31 @@ GPUI view, so UIKit draws its handles and edit menu. Inkling leaves it off; see 
 Inline predictions (iOS's grey ghost text) are off (`inlinePredictionType = No`). UIKit would send
 them as marked text, which GPUI would draw as a real composition.
 
+## Paste from another app
+
+A writer copies their API key on the provider's site and pastes it. iOS lets an app read text
+another app copied only when the user asked for the paste through system UI: the edit menu's
+Paste, a `UIPasteControl`, or a hardware ⌘V. Any other read goes to the `pasted` daemon without an
+authentication message (`AuthenticationMessageMissing`), which prompts on a device and, on the
+Simulator, fails to show the prompt and refuses the read (`PBErrorDomain Code=13 "Operation not
+authorized."`, then `UserRecentlyDeniedItemAccess`, "Paste denied silently"). The kit draws its
+own Paste in GPUI and reads `UIPasteboard` from its action, so iOS never sees that tap as consent.
+
+Patch 0004 gives the bridge view a `UIPasteControl` as its `inputAccessoryView`. It shows above
+the keyboard for every GPUI input: the page, the ask field and the key field. Its tap calls the
+view's `pasteItemProviders:`, and the bridge runs the focused input's own Paste action right
+there (`ctrl-v`, the kit's binding off the Mac). That read carries the control's consent
+(`AuthMessageAuthentic`, "Paste allowed silently"), and the kit's rules still apply: a
+single-line input drops newlines, a read-only one ignores the paste.
+
+Why not UIKit's edit menu: attaching `UITextInteraction` and implementing `paste:` and
+`canPerformAction:withSender:` was tried again. UIKit asks about `paste:` only once the view
+answers `isEditable` (iOS 18), and still left Paste out of the caret menu, while a stock
+`UITextField` in the same app offered it for the same clipboard. `UIPasteboard.hasStrings` also
+answers NO for text another app copied. The same experiment crashed the app when UIKit's own
+cursor got an infinite caret rect (`CALayerInvalidGeometry`). Handing selection to UIKit is a
+larger change than paste needs, so it is not kept.
+
 ## Taps in the review
 
 GPUI's `InteractiveText::on_click` never fires on a touch screen. GPUI's gesture recognizer
@@ -140,21 +170,53 @@ the paint after it sees the mouse down. So `ui/src/review.rs` gives the review a
 | Return in the ask field sends; a long change truncates in the sheet | `24-return-sends` |
 | The draft survives a relaunch | `25-no-key-page` |
 | Asking with no key opens the key screen | `26-missing-key` |
-| Paste of text copied in another app: not offered (see Gaps) | `27-paste-from-other-app-missing` |
+| A key copied in Safari's address bar (fake) | `28-copy-in-safari` |
+| The system Paste control above the keyboard on the key screen | `29-key-field-paste-control` |
+| Paste puts the key copied in Safari into the key field, shown revealed | `30-key-pasted-from-safari` |
+| The same Paste works in the page | `31-page-pasted-from-safari` |
 
-Driven by hand with `agent-device` and `keys.sh`: every row above. There is no scripted run yet.
+Driven by hand with `agent-device` and `keys.sh`: every row above.
+
+## The scripted run
+
+`snap.sh <agent-device>` uninstalls the app, builds and installs it through `run.sh` with
+`--fake-ai`, drives the main flow through `agent-device` and saves each step to
+`docs/screenshots/ios/snap/`. It stops with a non-zero exit at the first failed check. A run takes
+about a minute.
+
+| Step | Checked | Screenshot only |
+| --- | --- | --- |
+| Launch on an empty page | the saved draft is empty | `01-empty` |
+| Type a line on the keyboard, paste a second part with the Paste control | the saved draft is exactly the typed and pasted text | `02-written` |
+| Done | | `03-keyboard-down` |
+| Fix grammar | | `04-review` |
+| Tap the "teh" change, Use it, Keep the next one | | `05-change-tapped`, `06-used`, `07-kept` |
+| Accept the rest | the saved draft has the used and accepted changes and not the kept one | `08-accepted` |
+| Open the key screen | | `09-keys` |
+| Paste a fake key with the Paste control, reveal it | | `10-key-pasted` |
+| Return saves | `settings.json` appears only now | `11-key-saved` |
+| Back to the page | | `12-back-with-key` |
+
+After every tap it also checks that Inkling is still the foreground app, so a crash fails the
+step. The pasted part carries the misspellings the fake Fix grammar corrects (`i`, `dont`,
+`wich`, `teh`), because the keyboard's autocorrect would fix them while typing. The script's
+clipboard is set with `agent-device clipboard write`, which iOS treats as another app's copy.
+GPUI draws everything inside one view, so the accessibility tree has no handles for the page,
+the chips or the review; those taps are coordinates, all in `point()` at the top of the script.
+The Paste control is pressed by its label.
+
 
 ## Gaps
 
-- **Paste from another app.** The kit draws its own Paste, which reads the clipboard through
-  `UIPasteboard` without user intent, and iOS refuses it for text another app copied
-  (`PBErrorDomain Code=13 "Operation not authorized"` in the log). A key copied from a browser or a
-  password manager cannot be pasted. Text copied inside Inkling pastes. Attaching UIKit's
-  `UITextInteraction` to the key field showed UIKit's own menu, but it offered only AutoFill. UIKit
-  asked the bridge about `cut:`, `copy:` and `selectAll:` and never about `paste:`, even with
-  `pasteConfiguration` and `pasteItemProviders:` implemented. That experiment is not kept. The
-  likely ways out are a `UIPasteControl` placed by the host over the key field, or finding what
-  UIKit needs before it offers Paste for a custom `UITextInput`.
+- **The kit's own Paste.** The Paste in the kit's long-press menu still reads the pasteboard
+  without consent, so it pastes only what Inkling copied. Text from another app goes through the
+  Paste control above the keyboard. Removing the kit's item needs a kit option.
+- **The masked key is readable by accessibility.** The bridge answers UIKit's `textInRange:` with
+  the document's real text, and the accessibility tree reads it back, so the key field's value
+  is visible there (and to VoiceOver) while the field shows dots. The bridge needs to know a field
+  is masked (`isSecureTextEntry`), which `TextInputConfiguration` does not carry yet.
+- **The Paste control shows for every input**, also when the clipboard holds nothing to paste,
+  where iOS dims it. It takes 52 pt above the keyboard.
 - **No Ideas action.** The phone reference shows a fourth quick action, Ideas. The core has no
   such ask yet, so the phone shows the Mac's three.
 - **Keyboard state.** The views know focus, not the keyboard. Done shows while the page or the ask
@@ -170,8 +232,9 @@ Driven by hand with `agent-device` and `keys.sh`: every row above. There is no s
   press gave UIKit's handles but no loupe in the screenshot. The capture may wait for the hold to
   end, so this is unproved either way.
 - **System selection UI is an experiment.** With `UITextInteraction` attached, UIKit's edit menu
-  lacks Cut, Copy and Paste, because the view does not implement `UIResponderStandardEditActions`
-  yet. One run also lost auto-capitalisation on the first letter, probably because UIKit's tap
+  lacks Cut, Copy and Paste, and implementing them did not bring Paste back (see
+  [Paste from another app](#paste-from-another-app)). A long press with it attached crashed the
+  app once: UIKit's cursor view got an infinite caret rect. One run also lost auto-capitalisation on the first letter, probably because UIKit's tap
   makes the view first responder before GPUI focuses the input. Both gesture systems see every
   touch (`cancelsTouchesInView = NO`), so GPUI keeps focus and its own taps.
 - **Text changes of the same length** (for example accepting a same-length AI change) do not tell

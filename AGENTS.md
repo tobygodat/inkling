@@ -26,7 +26,7 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 ## Commands
 
 Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/opt/rustup/bin:$PATH` first.
-`rust-toolchain.toml` pins Rust 1.99.1, which Rune needs.
+`rust-toolchain.toml` pins Rust 1.99.1.
 
 - `cargo test --workspace` must pass before any PR.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` must pass before any PR.
@@ -35,7 +35,10 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo run --release -p inkling-mac` opens the Mac app. It takes focus, so only Toby runs it.
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
-  `device_open`. Any change under `ui/` or `ios/` reruns the iPhone proof by hand (`ios/README.md`).
+  `device_open`.
+- `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow on the Simulator,
+  with 12 checked steps. Any change under `ui/` or `ios/` reruns it. `ios/README.md` lists what is
+  still driven by hand.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
   streams one live answer and prints its changes. It calls a paid API, so only Toby runs it.
 

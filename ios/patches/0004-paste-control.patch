@@ -1,0 +1,151 @@
+diff -ruN a/src/ios/window/text_input_view.rs b/src/ios/window/text_input_view.rs
+--- a/src/ios/window/text_input_view.rs
++++ b/src/ios/window/text_input_view.rs
+@@ -63,6 +63,8 @@
+     notifying: Cell<bool>,
+     /// UIKit's own selection UI (loupe, handles, edit menu), when attached.
+     interaction: Cell<*mut AnyObject>,
++    /// The bar above the keyboard that holds the system paste control.
++    paste_bar: *mut AnyObject,
+ }
+ 
+ impl TextInputSession {
+@@ -81,6 +83,13 @@
+         let clear: *mut AnyObject = msg_send![class!(UIColor), clearColor];
+         let _: () = msg_send![view, setBackgroundColor: clear];
+         let _: () = msg_send![parent, addSubview: view];
++        // What the paste control accepts. It calls `pasteItemProviders:` here.
++        let text: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c"public.text".as_ptr()];
++        let types: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: text];
++        let paste: *mut AnyObject = msg_send![class!(UIPasteConfiguration), alloc];
++        let paste: *mut AnyObject = msg_send![paste, initWithAcceptableTypeIdentifiers: types];
++        let _: () = msg_send![view, setPasteConfiguration: paste];
++        let _: () = msg_send![paste, release];
+         Self {
+             view,
+             delegate: Cell::new(ptr::null_mut()),
+@@ -90,6 +99,7 @@
+             drew: Cell::new(false),
+             notifying: Cell::new(false),
+             interaction: Cell::new(ptr::null_mut()),
++            paste_bar: paste_bar(view),
+         }
+     }
+ 
+@@ -472,6 +482,52 @@
+     matches!(direction, BACKWARD | LEFT | UP)
+ }
+ 
++/// A bar for the keyboard's accessory view with a system `UIPasteControl`
++/// on its trailing edge, pasting into `target`.
++///
++/// iOS refuses a programmatic read of text another app copied
++/// (`PBErrorDomain` 13, or a prompt on a device), so a paste button GPUI draws
++/// cannot paste a key copied in a browser. The system control's tap is the
++/// user's consent, so its paste needs no prompt.
++unsafe fn paste_bar(target: *mut AnyObject) -> *mut AnyObject {
++    unsafe {
++        let bar: *mut AnyObject = msg_send![class!(UIView), alloc];
++        let frame = ObjcCGRect::new(0.0, 0.0, 0.0, 52.0);
++        let bar: *mut AnyObject = msg_send![bar, initWithFrame: frame];
++        let _: () = msg_send![bar, setAutoresizingMask: 2_usize]; // flexible width
++
++        let configuration: *mut AnyObject = msg_send![class!(UIPasteControlConfiguration), new];
++        let _: () = msg_send![configuration, setDisplayMode: 0_usize]; // icon and label
++        let _: () = msg_send![configuration, setCornerStyle: 4_isize]; // capsule
++        let label: *mut AnyObject = msg_send![class!(UIColor), labelColor];
++        let background: *mut AnyObject = msg_send![class!(UIColor), systemBackgroundColor];
++        let _: () = msg_send![configuration, setBaseBackgroundColor: label];
++        let _: () = msg_send![configuration, setBaseForegroundColor: background];
++        let control: *mut AnyObject = msg_send![class!(UIPasteControl), alloc];
++        let control: *mut AnyObject = msg_send![control, initWithConfiguration: configuration];
++        let _: () = msg_send![configuration, release];
++        let _: () = msg_send![control, setTarget: target];
++        let _: () = msg_send![control, setTranslatesAutoresizingMaskIntoConstraints: false];
++        let _: () = msg_send![bar, addSubview: control];
++        let _: () = msg_send![control, release];
++
++        let pin = |a: *mut AnyObject, b: *mut AnyObject, constant: f64| {
++            let constraint: *mut AnyObject = msg_send![a, constraintEqualToAnchor: b, constant: constant];
++            let _: () = msg_send![constraint, setActive: true];
++        };
++        let control_trailing: *mut AnyObject = msg_send![control, trailingAnchor];
++        let bar_trailing: *mut AnyObject = msg_send![bar, trailingAnchor];
++        pin(control_trailing, bar_trailing, -16.0);
++        let control_center: *mut AnyObject = msg_send![control, centerYAnchor];
++        let bar_center: *mut AnyObject = msg_send![bar, centerYAnchor];
++        pin(control_center, bar_center, 0.0);
++        let height: *mut AnyObject = msg_send![control, heightAnchor];
++        let height: *mut AnyObject = msg_send![height, constraintEqualToConstant: 36.0_f64];
++        let _: () = msg_send![height, setActive: true];
++        bar
++    }
++}
++
+ unsafe fn register_input_view_class() {
+     let mut decl = ClassBuilder::new(c"GPUITextInputView", class!(UIView)).unwrap();
+     decl.add_ivar::<*mut c_void>(c"gpui_window_ptr");
+@@ -500,6 +556,20 @@
+         }
+     }
+ 
++    extern "C" fn input_accessory_view(this: Id, _: Sel) -> Id {
++        unsafe { window_of(this) }.map_or(ptr::null_mut(), |window| window.text_input.paste_bar)
++    }
++
++    // ── UIPasteConfigurationSupporting ───────────────────────────────────────
++
++    /// The paste control's tap. The read it authorizes is the one made here,
++    /// so the focused input's own Paste runs now, synchronously.
++    extern "C" fn paste_item_providers(this: Id, _: Sel, _providers: Id) {
++        if let Some(window) = unsafe { window_of(this) } {
++            window.handle_paste();
++        }
++    }
++
+     // ── UIKeyInput ───────────────────────────────────────────────────────────
+ 
+     extern "C" fn has_text(this: Id, _: Sel) -> Bool {
+@@ -1002,6 +1072,14 @@
+             reload_if_first_responder as extern "C" fn(_, _),
+         );
+ 
++        decl.add_method(
++            sel!(inputAccessoryView),
++            input_accessory_view as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(pasteItemProviders:),
++            paste_item_providers as extern "C" fn(_, _, _),
++        );
+         decl.add_method(sel!(hasText), has_text as extern "C" fn(_, _) -> _);
+         decl.add_method(sel!(insertText:), insert_text as extern "C" fn(_, _, _));
+         decl.add_method(sel!(deleteBackward), delete_backward as extern "C" fn(_, _));
+diff -ruN a/src/ios/window.rs b/src/ios/window.rs
+--- a/src/ios/window.rs
++++ b/src/ios/window.rs
+@@ -858,6 +858,24 @@
+         }
+     }
+ 
++    /// Paste into the focused input through its own Paste action, sent as GPUI's
++    /// standard shortcut for it (`ctrl-v` off the Mac), so the input's rules apply:
++    /// a single-line input drops a pasted newline, a read-only one ignores the paste.
++    pub fn handle_paste(&self) {
++        let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
++            keystroke: gpui::Keystroke {
++                modifiers: Modifiers { control: true, ..Modifiers::default() },
++                key: "v".to_string(),
++                key_char: None,
++            },
++            is_held: false,
++            prefer_character_input: false,
++        });
++        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
++            callback(event);
++        }
++    }
++
+     /// Handle a key event from an external keyboard
+     pub fn handle_key_event(&self, key_code: u32, modifier_flags: u32, is_key_down: bool) {
+         use super::text_input::{
