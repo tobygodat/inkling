@@ -5,7 +5,7 @@
 extern crate gpui_mobile;
 
 use gpui::{
-    App, Context, FontWeight, HighlightStyle, IntoElement, ParentElement, Render, StrikethroughStyle,
+    App, Autocapitalize, Context, FontWeight, HighlightStyle, IntoElement, ParentElement, Render, StrikethroughStyle,
     Styled, StyledText, Window, WindowOptions, div, prelude::*, px, relative, rgb, rgba,
 };
 use gpui_kit::component::input::{Textarea, TextareaState, set_native_touch_selection};
@@ -37,7 +37,13 @@ struct Spike {
 
 impl Spike {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let page = cx.new(|cx| TextareaState::new(window, cx).soft_wrap(true).placeholder("Start writing"));
+        let page = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .soft_wrap(true)
+                .placeholder("Start writing")
+                .autocorrect(true)
+                .autocapitalize(Autocapitalize::Sentences)
+        });
         Spike { page, native_selection: false, change: Change::Pending }
     }
 
@@ -145,6 +151,12 @@ impl Render for Spike {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.native_selection = !this.native_selection;
                         set_native_touch_selection(this.native_selection, cx);
+                        // The kit leaves native selection UI to the platform; UIKit
+                        // draws it through gpui-mobile's text input bridge.
+                        unsafe {
+                            let window = gpui_mobile::ios::ffi::gpui_ios_get_window();
+                            gpui_mobile::ios::ffi::gpui_ios_set_system_selection_ui(window, this.native_selection);
+                        }
                         log::info!("spike: native touch selection {}", this.native_selection);
                         cx.notify();
                     })),

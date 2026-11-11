@@ -1,0 +1,1727 @@
+diff -ruN a/src/ios/ffi.rs b/src/ios/ffi.rs
+--- a/src/ios/ffi.rs
++++ b/src/ios/ffi.rs
+@@ -338,6 +338,8 @@
+         // Restore the callback for the next frame
+         window.request_frame_callback.borrow_mut().replace(cb);
+     }
++    // After the frame, outside any GPUI update: UIKit reads the document back.
++    window.sync_text_input();
+ 
+     window.frame_demand.is_pending()
+         || crate::TEXT_INPUT_DIRTY.load(std::sync::atomic::Ordering::Acquire)
+@@ -609,6 +611,19 @@
+ #[unsafe(no_mangle)]
+ pub extern "C" fn gpui_ios_set_embedded() {
+     EMBEDDED.with(|value| value.set(true));
++}
++
++/// Let UIKit draw the text selection UI (loupe, handles, edit menu) for the
++/// window's focused GPUI input, instead of the app drawing its own.
++///
++/// # Safety
++/// `window` must come from `gpui_ios_get_window`, on the main thread.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn gpui_ios_set_system_selection_ui(window: *mut c_void, enabled: bool) {
++    if window.is_null() {
++        return;
++    }
++    unsafe { &*(window as *const super::window::IosWindow) }.set_system_selection_ui(enabled);
+ }
+ 
+ /// Borrow the GPUI controller for UIKit child-controller containment.
+diff -ruN a/src/ios/text_input.rs b/src/ios/text_input.rs
+--- a/src/ios/text_input.rs
++++ b/src/ios/text_input.rs
+@@ -1,36 +1,9 @@
+ //! iOS text input handling.
+ //!
+-//! This module provides keyboard input support for iOS.
+-//! The window uses a native UITextView as its composition buffer so UIKit
+-//! supplies the full UITextInput protocol, including multistage Chinese IME.
++//! Key and modifier conversion for hardware keyboards. Software keyboard input
++//! goes through the window's `UITextInput` view (`window/text_input_view.rs`).
+ 
+ use gpui::{KeyDownEvent, Keystroke, Modifiers, PlatformInput};
+-
+-/// Configure the public UITextInputTraits properties on the native text view.
+-///
+-/// UIKit can implement these selectors through Objective-C forwarding rather
+-/// than entries in UITextView's method table. objc2's debug msg_send! verifier
+-/// rejects those valid messages before the runtime can forward them. Restrict
+-/// direct dispatch to these three known setters with their exact ABI:
+-/// void (id, SEL, NSInteger).
+-///
+-/// # Safety
+-/// `view` must be a live UITextView, accessed on the UIKit main thread.
+-pub(super) unsafe fn configure_keyboard_traits(
+-    view: *mut objc2::runtime::AnyObject,
+-    keyboard_type: isize,
+-) {
+-    let send: unsafe extern "C-unwind" fn(
+-        *mut objc2::runtime::AnyObject,
+-        objc2::runtime::Sel,
+-        isize,
+-    ) = unsafe { std::mem::transmute(objc2::ffi::objc_msgSend as unsafe extern "C-unwind" fn()) };
+-    unsafe {
+-        send(view, objc2::sel!(setKeyboardType:), keyboard_type);
+-        send(view, objc2::sel!(setAutocorrectionType:), 1);
+-        send(view, objc2::sel!(setAutocapitalizationType:), 0);
+-    }
+-}
+ 
+ /// NSRange uses UTF-16 code units, matching GPUI's platform input handler.
+ #[repr(C)]
+diff -ruN a/src/ios/window/text_input_view.rs b/src/ios/window/text_input_view.rs
+--- a/src/ios/window/text_input_view.rs
++++ b/src/ios/window/text_input_view.rs
+@@ -0,0 +1,1158 @@
++//! A `UITextInput` view backed by GPUI's platform input handler.
++//!
++//! UIKit reads and edits the focused GPUI document through this view: the
++//! text around the caret, the selection, the marked range, and the geometry
++//! of each. That is what autocorrection, auto-capitalisation, predictive
++//! suggestions, marked text and dictation need. Every offset is a UTF-16
++//! index into the GPUI document, the same unit `PlatformInputHandler` uses.
++//!
++//! UIKit also has to hear about changes it did not make (a tap that moves the
++//! caret, a paste from GPUI's own menu, focus moving to another input), or it
++//! keeps suggesting against a stale document. [`IosWindow::sync_text_input`]
++//! compares the document with what UIKit last saw after each drawn frame and
++//! tells the keyboard's input delegate when they differ. Edits UIKit makes
++//! itself record what UIKit now sees, so they never echo back as outside
++//! changes; an echo would reset the keyboard and drop its corrections.
++
++use super::{IosWindow, GPUI_WINDOW_IVAR};
++use crate::ios::cg_types::{ObjcCGPoint, ObjcCGRect};
++use crate::ios::text_input::ObjcNSRange;
++use gpui::{
++    px, Autocapitalize, Bounds, FocusId, Pixels, PlatformInputHandler, TextInputAction,
++    TextInputConfiguration,
++};
++use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
++use objc2::{class, msg_send, sel};
++use std::cell::{Cell, RefCell};
++use std::ffi::c_void;
++use std::ops::Range;
++use std::ptr;
++
++const POSITION_OFFSET_IVAR: &str = "gpui_offset";
++const RANGE_START_IVAR: &str = "gpui_start";
++const RANGE_END_IVAR: &str = "gpui_end";
++const TOKENIZER_IVAR: &str = "gpui_tokenizer";
++
++/// What UIKit last saw of the focused document.
++#[derive(Clone, Debug, PartialEq)]
++pub(super) struct DocumentState {
++    focus: Option<FocusId>,
++    len: usize,
++    selection: Range<usize>,
++    marked: Option<Range<usize>>,
++}
++
++impl DocumentState {
++    /// A change UIKit must treat as new text rather than a moved caret.
++    fn text_differs(&self, other: &Self) -> bool {
++        self.focus != other.focus || self.len != other.len || self.marked != other.marked
++    }
++}
++
++/// The window's half of the bridge: the native view plus the state UIKit
++/// hands it. The view itself holds only a pointer back to the window.
++pub(super) struct TextInputSession {
++    pub(super) view: *mut AnyObject,
++    /// UIKit's `inputDelegate`. Weak, as UIKit expects; UIKit clears it.
++    delegate: Cell<*mut AnyObject>,
++    configuration: RefCell<TextInputConfiguration>,
++    keyboard_type: Cell<isize>,
++    seen: RefCell<Option<DocumentState>>,
++    drew: Cell<bool>,
++    /// Set while the input delegate hears about an outside change.
++    notifying: Cell<bool>,
++    /// UIKit's own selection UI (loupe, handles, edit menu), when attached.
++    interaction: Cell<*mut AnyObject>,
++}
++
++impl TextInputSession {
++    /// Create the view as a transparent, touch-transparent cover over `parent`,
++    /// so its coordinate space is GPUI's window space.
++    ///
++    /// # Safety
++    /// `parent` must be a live UIView, on the main thread.
++    pub(super) unsafe fn new(parent: *mut AnyObject) -> Self {
++        let class = register_view_class();
++        let view: *mut AnyObject = msg_send![class, alloc];
++        let frame: ObjcCGRect = msg_send![parent, bounds];
++        let view: *mut AnyObject = msg_send![view, initWithFrame: frame];
++        let _: () = msg_send![view, setAutoresizingMask: 18_usize];
++        let _: () = msg_send![view, setUserInteractionEnabled: false];
++        let clear: *mut AnyObject = msg_send![class!(UIColor), clearColor];
++        let _: () = msg_send![view, setBackgroundColor: clear];
++        let _: () = msg_send![parent, addSubview: view];
++        Self {
++            view,
++            delegate: Cell::new(ptr::null_mut()),
++            configuration: RefCell::new(TextInputConfiguration::default()),
++            keyboard_type: Cell::new(0),
++            seen: RefCell::new(None),
++            drew: Cell::new(false),
++            notifying: Cell::new(false),
++            interaction: Cell::new(ptr::null_mut()),
++        }
++    }
++
++    pub(super) fn set_keyboard_type(&self, keyboard_type: isize) {
++        self.keyboard_type.set(keyboard_type);
++    }
++
++    pub(super) fn set_configuration(&self, configuration: TextInputConfiguration) {
++        *self.configuration.borrow_mut() = configuration;
++        // Called from inside a GPUI frame. UIKit reads the document while it
++        // reloads, so let it reload once GPUI has returned.
++        self.after_this_turn(sel!(gpuiReloadIfFirstResponder));
++    }
++
++    pub(super) fn mark_drawn(&self) {
++        self.drew.set(true);
++    }
++
++    pub(super) fn become_first_responder(&self) {
++        self.after_this_turn(sel!(becomeFirstResponder));
++        self.after_this_turn(sel!(gpuiReloadIfFirstResponder));
++    }
++
++    /// Attach or detach UIKit's `UITextInteraction`, for apps that let the
++    /// system draw the selection UI instead of drawing their own.
++    pub(super) fn set_system_selection_ui(&self, enabled: bool) {
++        self.after_this_turn(if enabled {
++            sel!(gpuiAttachTextInteraction)
++        } else {
++            sel!(gpuiDetachTextInteraction)
++        });
++    }
++
++    pub(super) fn resign_first_responder(&self) {
++        self.after_this_turn(sel!(resignFirstResponder));
++    }
++
++    fn after_this_turn(&self, selector: Sel) {
++        unsafe {
++            let _: () = msg_send![self.view,
++                performSelector: selector,
++                withObject: ptr::null::<AnyObject>(),
++                afterDelay: 0.0_f64
++            ];
++        }
++    }
++}
++
++impl IosWindow {
++    /// Run `f` on the focused input's handler, or return `None` when nothing is
++    /// focused or GPUI is mid-update (the handler is lent out, or the app is
++    /// borrowed and the handler's own update would fail).
++    fn with_input_handler<R>(&self, f: impl FnOnce(&mut PlatformInputHandler) -> R) -> Option<R> {
++        let mut handler = self.input_handler.try_borrow_mut().ok()?;
++        handler.as_mut().map(f)
++    }
++
++    fn read_document_state(&self) -> Option<DocumentState> {
++        self.with_input_handler(|handler| {
++            let selection = handler.selected_text_range(false)?.range;
++            Some(DocumentState {
++                focus: handler.focus_id(),
++                len: document_len(handler),
++                selection,
++                marked: handler.marked_text_range(),
++            })
++        })
++        .flatten()
++    }
++
++    /// Apply an edit UIKit asked for, then record the result as seen by UIKit.
++    fn edit_from_uikit<R>(&self, f: impl FnOnce(&mut PlatformInputHandler) -> R) -> Option<R> {
++        let result = self.with_input_handler(f);
++        self.record_seen();
++        result
++    }
++
++    fn record_seen(&self) {
++        let state = self.read_document_state();
++        *self.text_input.seen.borrow_mut() = state;
++    }
++
++    /// Tell UIKit about document changes it did not make. Runs after a frame,
++    /// outside any GPUI update, because UIKit reads the document back
++    /// synchronously from inside these delegate calls.
++    pub(crate) fn sync_text_input(&self) {
++        if !self.text_input.drew.replace(false) {
++            return;
++        }
++        let now = self.read_document_state();
++        let before = self.text_input.seen.replace(now.clone());
++        if before == now {
++            return;
++        }
++        let delegate = self.text_input.delegate.get();
++        if delegate.is_null() {
++            return;
++        }
++        let text_changed = match (&before, &now) {
++            (Some(before), Some(now)) => before.text_differs(now),
++            _ => true,
++        };
++        let view = self.text_input.view;
++        self.text_input.notifying.set(true);
++        unsafe {
++            if text_changed {
++                let _: () = msg_send![delegate, textWillChange: view];
++                let _: () = msg_send![delegate, textDidChange: view];
++            } else {
++                let _: () = msg_send![delegate, selectionWillChange: view];
++                let _: () = msg_send![delegate, selectionDidChange: view];
++            }
++        }
++        self.text_input.notifying.set(false);
++    }
++
++    /// End any composition before a touch can move focus or the caret. UIKit
++    /// hears about it from the next [`Self::sync_text_input`].
++    pub(super) fn commit_composition(&self) {
++        self.with_input_handler(|handler| {
++            if handler.marked_text_range().is_some() {
++                handler.unmark_text();
++            }
++        });
++    }
++}
++
++fn document_len(handler: &mut PlatformInputHandler) -> usize {
++    if let Some(len) = handler.text_length_utf16() {
++        return len;
++    }
++    // Handlers clamp out-of-range offsets, so the adjusted range of an empty
++    // range past the end is the document's end.
++    let mut adjusted = None;
++    handler.text_for_range(usize::MAX..usize::MAX, &mut adjusted);
++    adjusted.map_or(0, |range| range.end)
++}
++
++// ── Objective-C plumbing ─────────────────────────────────────────────────────
++
++static REGISTER: std::sync::Once = std::sync::Once::new();
++
++fn register_view_class() -> &'static AnyClass {
++    REGISTER.call_once(|| unsafe {
++        register_position_class();
++        register_range_class();
++        register_selection_rect_class();
++        register_input_view_class();
++    });
++    class!(GPUITextInputView)
++}
++
++#[allow(deprecated)]
++unsafe fn window_of<'a>(this: *mut AnyObject) -> Option<&'a IosWindow> {
++    let window: *mut c_void = unsafe { *(*this).get_ivar(GPUI_WINDOW_IVAR) };
++    (!window.is_null()).then(|| unsafe { &*(window as *const IosWindow) })
++}
++
++unsafe fn ns_string_to_string(string: *mut AnyObject) -> String {
++    if string.is_null() {
++        return String::new();
++    }
++    let utf8: *const std::ffi::c_char = unsafe { msg_send![string, UTF8String] };
++    if utf8.is_null() {
++        return String::new();
++    }
++    unsafe { std::ffi::CStr::from_ptr(utf8) }
++        .to_string_lossy()
++        .into_owned()
++}
++
++/// `NSString` or `NSAttributedString`, as UIKit's marked-text calls pass either.
++unsafe fn text_of(object: *mut AnyObject) -> String {
++    if object.is_null() {
++        return String::new();
++    }
++    let attributed: Bool = unsafe { msg_send![object, isKindOfClass: class!(NSAttributedString)] };
++    let string = if attributed.as_bool() {
++        unsafe { msg_send![object, string] }
++    } else {
++        object
++    };
++    unsafe { ns_string_to_string(string) }
++}
++
++unsafe fn position(offset: usize) -> *mut AnyObject {
++    unsafe {
++        let position: *mut AnyObject = msg_send![class!(GPUITextPosition), new];
++        #[allow(deprecated)]
++        {
++            *(*position).get_mut_ivar::<usize>(POSITION_OFFSET_IVAR) = offset;
++        }
++        msg_send![position, autorelease]
++    }
++}
++
++unsafe fn text_range(range: Range<usize>) -> *mut AnyObject {
++    unsafe {
++        let object: *mut AnyObject = msg_send![class!(GPUITextRange), new];
++        #[allow(deprecated)]
++        {
++            *(*object).get_mut_ivar::<usize>(RANGE_START_IVAR) = range.start;
++            *(*object).get_mut_ivar::<usize>(RANGE_END_IVAR) = range.end;
++        }
++        msg_send![object, autorelease]
++    }
++}
++
++#[allow(deprecated)]
++unsafe fn offset_of(position: *mut AnyObject) -> Option<usize> {
++    if position.is_null() {
++        return None;
++    }
++    let ours: Bool = unsafe { msg_send![position, isKindOfClass: class!(GPUITextPosition)] };
++    ours.as_bool()
++        .then(|| unsafe { *(*position).get_ivar::<usize>(POSITION_OFFSET_IVAR) })
++}
++
++#[allow(deprecated)]
++unsafe fn range_of(range: *mut AnyObject) -> Option<Range<usize>> {
++    if range.is_null() {
++        return None;
++    }
++    let ours: Bool = unsafe { msg_send![range, isKindOfClass: class!(GPUITextRange)] };
++    ours.as_bool().then(|| unsafe {
++        let start = *(*range).get_ivar::<usize>(RANGE_START_IVAR);
++        let end = *(*range).get_ivar::<usize>(RANGE_END_IVAR);
++        start..end
++    })
++}
++
++fn cg_rect(bounds: Bounds<Pixels>) -> ObjcCGRect {
++    ObjcCGRect::new(
++        f32::from(bounds.origin.x) as f64,
++        f32::from(bounds.origin.y) as f64,
++        f32::from(bounds.size.width) as f64,
++        f32::from(bounds.size.height) as f64,
++    )
++}
++
++const NULL_RECT: ObjcCGRect = ObjcCGRect {
++    x: f64::INFINITY,
++    y: f64::INFINITY,
++    width: 0.0,
++    height: 0.0,
++};
++
++/// The rectangles a selection covers, one per visual line. Uses the handler's
++/// own selection geometry when it has any, else derives lines from the caret
++/// rectangles at each end and the element's bounds.
++fn selection_rects(handler: &mut PlatformInputHandler, range: Range<usize>) -> Vec<Bounds<Pixels>> {
++    let rects = handler.selection_bounds_for_range(range.clone());
++    if !rects.is_empty() {
++        return rects;
++    }
++    let (Some(start), Some(end)) = (
++        handler.bounds_for_range(range.start..range.start),
++        handler.bounds_for_range(range.end..range.end),
++    ) else {
++        return Vec::new();
++    };
++    if start.origin.y == end.origin.y {
++        return vec![Bounds::from_corners(start.origin, end.bottom_left())];
++    }
++    let Some(element) = handler.element_bounds() else {
++        return vec![Bounds::from_corners(start.origin, start.bottom_left())];
++    };
++    let mut rects = vec![Bounds::from_corners(
++        start.origin,
++        gpui::point(element.right(), start.bottom().max(start.top() + px(1.))),
++    )];
++    if end.top() > start.bottom() {
++        rects.push(Bounds::from_corners(
++            gpui::point(element.left(), start.bottom()),
++            gpui::point(element.right(), end.top()),
++        ));
++    }
++    rects.push(Bounds::from_corners(
++        gpui::point(element.left(), end.top()),
++        end.bottom_left(),
++    ));
++    rects
++}
++
++unsafe fn selection_rect(rect: ObjcCGRect, contains_start: bool, contains_end: bool) -> Id {
++    unsafe {
++        let object: Id = msg_send![class!(GPUITextSelectionRect), new];
++        #[allow(deprecated)]
++        {
++            *(*object).get_mut_ivar::<ObjcCGRect>("gpui_rect") = rect;
++            *(*object).get_mut_ivar::<Bool>("gpui_contains_start") = Bool::new(contains_start);
++            *(*object).get_mut_ivar::<Bool>("gpui_contains_end") = Bool::new(contains_end);
++        }
++        msg_send![object, autorelease]
++    }
++}
++
++unsafe fn register_selection_rect_class() {
++    let mut decl =
++        ClassBuilder::new(c"GPUITextSelectionRect", class!(UITextSelectionRect)).unwrap();
++    decl.add_ivar::<ObjcCGRect>(c"gpui_rect");
++    decl.add_ivar::<Bool>(c"gpui_contains_start");
++    decl.add_ivar::<Bool>(c"gpui_contains_end");
++
++    #[allow(deprecated)]
++    extern "C" fn rect(this: Id, _: Sel) -> ObjcCGRect {
++        unsafe { *(*this).get_ivar::<ObjcCGRect>("gpui_rect") }
++    }
++    #[allow(deprecated)]
++    extern "C" fn contains_start(this: Id, _: Sel) -> Bool {
++        unsafe { *(*this).get_ivar::<Bool>("gpui_contains_start") }
++    }
++    #[allow(deprecated)]
++    extern "C" fn contains_end(this: Id, _: Sel) -> Bool {
++        unsafe { *(*this).get_ivar::<Bool>("gpui_contains_end") }
++    }
++    extern "C" fn writing_direction(_: Id, _: Sel) -> isize {
++        0 // NSWritingDirectionLeftToRight
++    }
++    extern "C" fn is_vertical(_: Id, _: Sel) -> Bool {
++        Bool::NO
++    }
++
++    unsafe {
++        decl.add_method(sel!(rect), rect as extern "C" fn(_, _) -> _);
++        decl.add_method(
++            sel!(containsStart),
++            contains_start as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(sel!(containsEnd), contains_end as extern "C" fn(_, _) -> _);
++        decl.add_method(
++            sel!(writingDirection),
++            writing_direction as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(sel!(isVertical), is_vertical as extern "C" fn(_, _) -> _);
++    }
++    decl.register();
++}
++
++unsafe fn register_position_class() {
++    let mut decl = ClassBuilder::new(c"GPUITextPosition", class!(UITextPosition)).unwrap();
++    decl.add_ivar::<usize>(c"gpui_offset");
++    decl.register();
++}
++
++unsafe fn register_range_class() {
++    let mut decl = ClassBuilder::new(c"GPUITextRange", class!(UITextRange)).unwrap();
++    decl.add_ivar::<usize>(c"gpui_start");
++    decl.add_ivar::<usize>(c"gpui_end");
++
++    extern "C" fn start(this: *mut AnyObject, _: Sel) -> *mut AnyObject {
++        unsafe { position(range_of(this).unwrap_or_default().start) }
++    }
++    extern "C" fn end(this: *mut AnyObject, _: Sel) -> *mut AnyObject {
++        unsafe { position(range_of(this).unwrap_or_default().end) }
++    }
++    extern "C" fn is_empty(this: *mut AnyObject, _: Sel) -> Bool {
++        Bool::new(unsafe { range_of(this) }.is_none_or(|range| range.is_empty()))
++    }
++
++    unsafe {
++        decl.add_method(sel!(start), start as extern "C" fn(_, _) -> _);
++        decl.add_method(sel!(end), end as extern "C" fn(_, _) -> _);
++        decl.add_method(sel!(isEmpty), is_empty as extern "C" fn(_, _) -> _);
++    }
++    decl.register();
++}
++
++type Id = *mut AnyObject;
++
++// UITextLayoutDirection, plus UITextStorageDirectionBackward, which UIKit
++// passes through the same parameters.
++const BACKWARD: isize = 1;
++const RIGHT: isize = 2;
++const LEFT: isize = 3;
++const UP: isize = 4;
++const DOWN: isize = 5;
++
++fn towards_start(direction: isize) -> bool {
++    matches!(direction, BACKWARD | LEFT | UP)
++}
++
++unsafe fn register_input_view_class() {
++    let mut decl = ClassBuilder::new(c"GPUITextInputView", class!(UIView)).unwrap();
++    decl.add_ivar::<*mut c_void>(c"gpui_window_ptr");
++    decl.add_ivar::<Id>(c"gpui_tokenizer");
++    for protocol in [c"UIKeyInput", c"UITextInputTraits", c"UITextInput"] {
++        match AnyProtocol::get(protocol) {
++            Some(protocol) => {
++                decl.add_protocol(protocol);
++            }
++            None => log::error!("GPUI iOS: protocol {protocol:?} is not registered"),
++        }
++    }
++
++    // ── UIResponder ──────────────────────────────────────────────────────────
++
++    extern "C" fn can_become_first_responder(_: Id, _: Sel) -> Bool {
++        Bool::YES
++    }
++
++    extern "C" fn reload_if_first_responder(this: Id, _: Sel) {
++        unsafe {
++            let first: Bool = msg_send![this, isFirstResponder];
++            if first.as_bool() {
++                let _: () = msg_send![this, reloadInputViews];
++            }
++        }
++    }
++
++    // ── UIKeyInput ───────────────────────────────────────────────────────────
++
++    extern "C" fn has_text(this: Id, _: Sel) -> Bool {
++        let window = unsafe { window_of(this) };
++        let len = window.and_then(|window| window.with_input_handler(|h| document_len(h)));
++        // With no GPUI document the legacy text callbacks own the text; let
++        // Backspace through to them.
++        Bool::new(len.is_none_or(|len| len > 0))
++    }
++
++    extern "C" fn insert_text(this: Id, _: Sel, text: Id) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        let string = unsafe { ns_string_to_string(text) };
++        let handled = window
++            .edit_from_uikit(|handler| handler.replace_text_in_range(None, &string))
++            .is_some();
++        if !handled {
++            window.handle_text_input(text);
++        }
++    }
++
++    extern "C" fn delete_backward(this: Id, _: Sel) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        let marked = window
++            .with_input_handler(|handler| {
++                let marked = handler.marked_text_range()?;
++                let selection = handler.selected_text_range(false)?.range;
++                Some((marked, selection))
++            })
++            .flatten();
++        match marked {
++            // UIKit's own composition edits arrive as new marked text, so this
++            // only runs when a keyboard deletes inside a composition directly.
++            Some((marked, selection)) => {
++                let delete = if selection.is_empty() {
++                    selection.start.saturating_sub(1).max(marked.start)..selection.start
++                } else {
++                    selection
++                };
++                window.edit_from_uikit(|handler| handler.replace_text_in_range(Some(delete), ""));
++            }
++            // GPUI's Backspace action deletes by grapheme and respects the
++            // selection, so send the key rather than guessing a range.
++            None => {
++                window.handle_delete_backward();
++                window.record_seen();
++            }
++        }
++    }
++
++    // ── UITextInput: text ────────────────────────────────────────────────────
++
++    extern "C" fn text_in_range(this: Id, _: Sel, range: Id) -> Id {
++        let (Some(window), Some(range)) = (unsafe { window_of(this) }, unsafe { range_of(range) })
++        else {
++            return ptr::null_mut();
++        };
++        let mut adjusted = None;
++        match window
++            .with_input_handler(|handler| handler.text_for_range(range, &mut adjusted))
++            .flatten()
++        {
++            Some(text) => unsafe { crate::ios::util::nsstring(&text) },
++            None => ptr::null_mut(),
++        }
++    }
++
++    extern "C" fn replace_range(this: Id, _: Sel, range: Id, text: Id) {
++        let (Some(window), Some(range)) = (unsafe { window_of(this) }, unsafe { range_of(range) })
++        else {
++            return;
++        };
++        let text = unsafe { ns_string_to_string(text) };
++        log::debug!("GPUI iOS: replaceRange {range:?} with {text:?}");
++        window.edit_from_uikit(|handler| handler.replace_text_in_range(Some(range), &text));
++    }
++
++    extern "C" fn selected_text_range(this: Id, _: Sel) -> Id {
++        let selection = unsafe { window_of(this) }
++            .and_then(|window| window.with_input_handler(|h| h.selected_text_range(false)))
++            .flatten();
++        match selection {
++            Some(selection) => unsafe { text_range(selection.range) },
++            None => ptr::null_mut(),
++        }
++    }
++
++    extern "C" fn set_selected_text_range(this: Id, _: Sel, range: Id) {
++        let (Some(window), Some(range)) = (unsafe { window_of(this) }, unsafe { range_of(range) })
++        else {
++            return;
++        };
++        // Told the selection moved, UIKit collapses it to its end from inside
++        // the notification, which would undo a word GPUI just selected. GPUI's
++        // selection is the truth at that moment.
++        if window.text_input.notifying.get() {
++            return;
++        }
++        window.edit_from_uikit(|handler| handler.set_selected_text_range(range));
++    }
++
++    extern "C" fn marked_text_range(this: Id, _: Sel) -> Id {
++        let marked = unsafe { window_of(this) }
++            .and_then(|window| window.with_input_handler(|h| h.marked_text_range()))
++            .flatten();
++        match marked {
++            Some(range) => unsafe { text_range(range) },
++            None => ptr::null_mut(),
++        }
++    }
++
++    extern "C" fn marked_text_style(_: Id, _: Sel) -> Id {
++        ptr::null_mut()
++    }
++
++    extern "C" fn set_marked_text_style(_: Id, _: Sel, _: Id) {}
++
++    extern "C" fn set_marked_text(this: Id, _: Sel, text: Id, selected: ObjcNSRange) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        let text = unsafe { text_of(text) };
++        let selected = selected.location..selected.location + selected.length;
++        window.edit_from_uikit(|handler| {
++            handler.replace_and_mark_text_in_range(None, &text, Some(selected.clone()));
++            log::debug!(
++                "GPUI iOS: setMarkedText {text:?} {selected:?} -> marked {:?}",
++                handler.marked_text_range()
++            );
++        });
++    }
++
++    extern "C" fn unmark_text(this: Id, _: Sel) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        // UIKit unmarks on resign too, when focus may already be elsewhere.
++        window.edit_from_uikit(|handler| {
++            if handler.marked_text_range().is_some() {
++                handler.unmark_text();
++            }
++        });
++    }
++
++    // ── UITextInput: positions and ranges ────────────────────────────────────
++
++    extern "C" fn beginning_of_document(_: Id, _: Sel) -> Id {
++        unsafe { position(0) }
++    }
++
++    extern "C" fn end_of_document(this: Id, _: Sel) -> Id {
++        let len = unsafe { window_of(this) }
++            .and_then(|window| window.with_input_handler(|h| document_len(h)))
++            .unwrap_or(0);
++        unsafe { position(len) }
++    }
++
++    extern "C" fn range_from_positions(_: Id, _: Sel, from: Id, to: Id) -> Id {
++        let (Some(from), Some(to)) = (unsafe { offset_of(from) }, unsafe { offset_of(to) }) else {
++            return ptr::null_mut();
++        };
++        unsafe { text_range(from.min(to)..from.max(to)) }
++    }
++
++    extern "C" fn position_with_offset(this: Id, _: Sel, from: Id, offset: isize) -> Id {
++        let Some(from) = (unsafe { offset_of(from) }) else {
++            return ptr::null_mut();
++        };
++        let len = unsafe { window_of(this) }
++            .and_then(|window| window.with_input_handler(|h| document_len(h)))
++            .unwrap_or(0);
++        match from.checked_add_signed(offset) {
++            Some(target) if target <= len => unsafe { position(target) },
++            _ => ptr::null_mut(),
++        }
++    }
++
++    extern "C" fn position_in_direction(
++        this: Id,
++        _: Sel,
++        from: Id,
++        direction: isize,
++        offset: isize,
++    ) -> Id {
++        match direction {
++            RIGHT => position_with_offset(this, sel!(positionFromPosition:offset:), from, offset),
++            LEFT => position_with_offset(this, sel!(positionFromPosition:offset:), from, -offset),
++            UP | DOWN => {
++                let (Some(window), Some(from)) =
++                    (unsafe { window_of(this) }, unsafe { offset_of(from) })
++                else {
++                    return ptr::null_mut();
++                };
++                let lines = if direction == UP { -offset } else { offset };
++                let target = window
++                    .with_input_handler(|handler| {
++                        let caret = handler.bounds_for_range(from..from)?;
++                        let height = caret.size.height.max(px(1.));
++                        let point = gpui::point(
++                            caret.origin.x,
++                            caret.origin.y + height / 2. + height * lines as f32,
++                        );
++                        handler.character_index_for_point(point)
++                    })
++                    .flatten();
++                match target {
++                    Some(target) => unsafe { position(target) },
++                    None => ptr::null_mut(),
++                }
++            }
++            _ => ptr::null_mut(),
++        }
++    }
++
++    extern "C" fn compare_positions(_: Id, _: Sel, a: Id, b: Id) -> isize {
++        let (a, b) = unsafe { (offset_of(a).unwrap_or(0), offset_of(b).unwrap_or(0)) };
++        // NSOrderedAscending, NSOrderedSame, NSOrderedDescending
++        a.cmp(&b) as isize
++    }
++
++    extern "C" fn offset_between(_: Id, _: Sel, from: Id, to: Id) -> isize {
++        let (from, to) = unsafe { (offset_of(from).unwrap_or(0), offset_of(to).unwrap_or(0)) };
++        to as isize - from as isize
++    }
++
++    extern "C" fn input_delegate(this: Id, _: Sel) -> Id {
++        unsafe { window_of(this) }.map_or(ptr::null_mut(), |w| w.text_input.delegate.get())
++    }
++
++    extern "C" fn set_input_delegate(this: Id, _: Sel, delegate: Id) {
++        if let Some(window) = unsafe { window_of(this) } {
++            window.text_input.delegate.set(delegate);
++            window.record_seen();
++        }
++    }
++
++    #[allow(deprecated)]
++    extern "C" fn tokenizer(this: Id, _: Sel) -> Id {
++        unsafe {
++            let slot = (*this).get_mut_ivar::<Id>(TOKENIZER_IVAR);
++            if slot.is_null() {
++                let tokenizer: Id = msg_send![class!(UITextInputStringTokenizer), alloc];
++                *slot = msg_send![tokenizer, initWithTextInput: this];
++            }
++            *slot
++        }
++    }
++
++    extern "C" fn position_within_range(_: Id, _: Sel, range: Id, direction: isize) -> Id {
++        let Some(range) = (unsafe { range_of(range) }) else {
++            return ptr::null_mut();
++        };
++        let offset = if towards_start(direction) {
++            range.start
++        } else {
++            range.end
++        };
++        unsafe { position(offset) }
++    }
++
++    extern "C" fn character_range_by_extending(this: Id, _: Sel, from: Id, direction: isize) -> Id {
++        let Some(from) = (unsafe { offset_of(from) }) else {
++            return ptr::null_mut();
++        };
++        let len = unsafe { window_of(this) }
++            .and_then(|window| window.with_input_handler(|h| document_len(h)))
++            .unwrap_or(0);
++        let range = if towards_start(direction) {
++            from.saturating_sub(1)..from
++        } else {
++            from..(from + 1).min(len)
++        };
++        unsafe { text_range(range) }
++    }
++
++    extern "C" fn base_writing_direction(_: Id, _: Sel, _: Id, _: isize) -> isize {
++        0 // NSWritingDirectionLeftToRight
++    }
++
++    extern "C" fn set_base_writing_direction(_: Id, _: Sel, _: isize, _: Id) {}
++
++    // ── UITextInput: geometry ────────────────────────────────────────────────
++
++    extern "C" fn first_rect_for_range(this: Id, _: Sel, range: Id) -> ObjcCGRect {
++        let (Some(window), Some(range)) = (unsafe { window_of(this) }, unsafe { range_of(range) })
++        else {
++            return NULL_RECT;
++        };
++        window
++            .with_input_handler(|handler| handler.bounds_for_range(range))
++            .flatten()
++            .map_or(NULL_RECT, cg_rect)
++    }
++
++    extern "C" fn caret_rect_for_position(this: Id, _: Sel, position: Id) -> ObjcCGRect {
++        let (Some(window), Some(offset)) =
++            (unsafe { window_of(this) }, unsafe { offset_of(position) })
++        else {
++            return NULL_RECT;
++        };
++        window
++            .with_input_handler(|handler| handler.bounds_for_range(offset..offset))
++            .flatten()
++            .map_or(NULL_RECT, |bounds| ObjcCGRect {
++                width: 2.0,
++                ..cg_rect(bounds)
++            })
++    }
++
++    extern "C" fn selection_rects_for_range(this: Id, _: Sel, range: Id) -> Id {
++        let rects = match (unsafe { window_of(this) }, unsafe { range_of(range) }) {
++            (Some(window), Some(range)) => window
++                .with_input_handler(|handler| selection_rects(handler, range))
++                .unwrap_or_default(),
++            _ => Vec::new(),
++        };
++        unsafe {
++            let array: Id = msg_send![class!(NSMutableArray), array];
++            let last = rects.len().saturating_sub(1);
++            for (ix, bounds) in rects.into_iter().enumerate() {
++                let rect = selection_rect(cg_rect(bounds), ix == 0, ix == last);
++                let _: () = msg_send![array, addObject: rect];
++            }
++            array
++        }
++    }
++
++    // UIKit installs its selection gestures on this view, so name the GPUI
++    // view that receives touches. It shares this view's coordinate space.
++    extern "C" fn text_input_view(this: Id, _: Sel) -> Id {
++        unsafe { msg_send![this, superview] }
++    }
++
++    extern "C" fn attach_text_interaction(this: Id, _: Sel) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        if !window.text_input.interaction.get().is_null() {
++            return;
++        }
++        unsafe {
++            // UITextInteractionModeEditable
++            let interaction: Id =
++                msg_send![class!(UITextInteraction), textInteractionForMode: 0_isize];
++            let _: () = msg_send![interaction, setTextInput: this];
++            let host: Id = msg_send![this, superview];
++            let _: () = msg_send![host, addInteraction: interaction];
++            let _: Id = msg_send![interaction, retain];
++            window.text_input.interaction.set(interaction);
++            // GPUI still owns focus and its own gestures, so it has to keep
++            // seeing every touch UIKit's selection gestures also look at.
++            let recognizers: Id = msg_send![interaction, gesturesForFailureRequirements];
++            let count: usize = if recognizers.is_null() {
++                0
++            } else {
++                msg_send![recognizers, count]
++            };
++            let all: Id = msg_send![host, gestureRecognizers];
++            let all_count: usize = if all.is_null() {
++                0
++            } else {
++                msg_send![all, count]
++            };
++            for ix in 0..all_count {
++                let recognizer: Id = msg_send![all, objectAtIndex: ix];
++                let _: () = msg_send![recognizer, setCancelsTouchesInView: false];
++                let _: () = msg_send![recognizer, setDelaysTouchesBegan: false];
++                let _: () = msg_send![recognizer, setDelaysTouchesEnded: false];
++            }
++            log::debug!("GPUI iOS: attached UITextInteraction, {all_count} recognizers ({count} for failure)");
++        }
++    }
++
++    extern "C" fn detach_text_interaction(this: Id, _: Sel) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        let interaction = window.text_input.interaction.replace(ptr::null_mut());
++        if interaction.is_null() {
++            return;
++        }
++        unsafe {
++            let host: Id = msg_send![this, superview];
++            let _: () = msg_send![host, removeInteraction: interaction];
++            let _: () = msg_send![interaction, release];
++        }
++    }
++
++    extern "C" fn closest_position_to_point(this: Id, _: Sel, point: ObjcCGPoint) -> Id {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return ptr::null_mut();
++        };
++        let point = gpui::point(px(point.x as f32), px(point.y as f32));
++        match window
++            .with_input_handler(|handler| handler.character_index_for_point(point))
++            .flatten()
++        {
++            Some(offset) => unsafe { position(offset) },
++            None => ptr::null_mut(),
++        }
++    }
++
++    extern "C" fn closest_position_within_range(
++        this: Id,
++        _: Sel,
++        point: ObjcCGPoint,
++        range: Id,
++    ) -> Id {
++        let found = closest_position_to_point(this, sel!(closestPositionToPoint:), point);
++        let (Some(offset), Some(range)) = (unsafe { offset_of(found) }, unsafe { range_of(range) })
++        else {
++            return found;
++        };
++        unsafe { position(offset.clamp(range.start, range.end)) }
++    }
++
++    extern "C" fn character_range_at_point(this: Id, _: Sel, point: ObjcCGPoint) -> Id {
++        let found = closest_position_to_point(this, sel!(closestPositionToPoint:), point);
++        if found.is_null() {
++            return ptr::null_mut();
++        }
++        character_range_by_extending(
++            this,
++            sel!(characterRangeByExtendingPosition:inDirection:),
++            found,
++            RIGHT,
++        )
++    }
++
++    // ── UITextInputTraits ────────────────────────────────────────────────────
++
++    fn configuration(this: Id) -> TextInputConfiguration {
++        unsafe { window_of(this) }
++            .map(|window| window.text_input.configuration.borrow().clone())
++            .unwrap_or_default()
++    }
++
++    extern "C" fn autocorrection_type(this: Id, _: Sel) -> isize {
++        if configuration(this).autocorrect {
++            2
++        } else {
++            1
++        } // Yes, No
++    }
++
++    extern "C" fn spell_checking_type(this: Id, _: Sel) -> isize {
++        if configuration(this).suggestions {
++            2
++        } else {
++            1
++        } // Yes, No
++    }
++
++    extern "C" fn autocapitalization_type(this: Id, _: Sel) -> isize {
++        match configuration(this).autocapitalize {
++            Autocapitalize::None => 0,
++            Autocapitalize::Words => 1,
++            Autocapitalize::Sentences => 2,
++            Autocapitalize::Characters => 3,
++        }
++    }
++
++    extern "C" fn return_key_type(this: Id, _: Sel) -> isize {
++        match configuration(this).input_action {
++            TextInputAction::Go => 1,
++            TextInputAction::Next => 4,
++            TextInputAction::Search => 6,
++            TextInputAction::Send => 7,
++            TextInputAction::Done => 9,
++            _ => 0,
++        }
++    }
++
++    extern "C" fn keyboard_type(this: Id, _: Sel) -> isize {
++        unsafe { window_of(this) }.map_or(0, |window| window.text_input.keyboard_type.get())
++    }
++
++    extern "C" fn inline_prediction_type(_: Id, _: Sel) -> isize {
++        // Inline predictions draw grey ghost text through marked text that GPUI
++        // would paint as a real composition. Off until GPUI can draw them.
++        1 // UITextInlinePredictionTypeNo
++    }
++
++    unsafe {
++        decl.add_method(
++            sel!(canBecomeFirstResponder),
++            can_become_first_responder as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(gpuiReloadIfFirstResponder),
++            reload_if_first_responder as extern "C" fn(_, _),
++        );
++
++        decl.add_method(sel!(hasText), has_text as extern "C" fn(_, _) -> _);
++        decl.add_method(sel!(insertText:), insert_text as extern "C" fn(_, _, _));
++        decl.add_method(sel!(deleteBackward), delete_backward as extern "C" fn(_, _));
++
++        decl.add_method(
++            sel!(textInRange:),
++            text_in_range as extern "C" fn(_, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(replaceRange:withText:),
++            replace_range as extern "C" fn(_, _, _, _),
++        );
++        decl.add_method(
++            sel!(selectedTextRange),
++            selected_text_range as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(setSelectedTextRange:),
++            set_selected_text_range as extern "C" fn(_, _, _),
++        );
++        decl.add_method(
++            sel!(markedTextRange),
++            marked_text_range as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(markedTextStyle),
++            marked_text_style as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(setMarkedTextStyle:),
++            set_marked_text_style as extern "C" fn(_, _, _),
++        );
++        decl.add_method(
++            sel!(setMarkedText:selectedRange:),
++            set_marked_text as extern "C" fn(_, _, _, _),
++        );
++        decl.add_method(
++            sel!(setAttributedMarkedText:selectedRange:),
++            set_marked_text as extern "C" fn(_, _, _, _),
++        );
++        decl.add_method(sel!(unmarkText), unmark_text as extern "C" fn(_, _));
++
++        decl.add_method(
++            sel!(beginningOfDocument),
++            beginning_of_document as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(endOfDocument),
++            end_of_document as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(textRangeFromPosition:toPosition:),
++            range_from_positions as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(positionFromPosition:offset:),
++            position_with_offset as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(positionFromPosition:inDirection:offset:),
++            position_in_direction as extern "C" fn(_, _, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(comparePosition:toPosition:),
++            compare_positions as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(offsetFromPosition:toPosition:),
++            offset_between as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(inputDelegate),
++            input_delegate as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(setInputDelegate:),
++            set_input_delegate as extern "C" fn(_, _, _),
++        );
++        decl.add_method(sel!(tokenizer), tokenizer as extern "C" fn(_, _) -> _);
++        decl.add_method(
++            sel!(positionWithinRange:farthestInDirection:),
++            position_within_range as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(characterRangeByExtendingPosition:inDirection:),
++            character_range_by_extending as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(baseWritingDirectionForPosition:inDirection:),
++            base_writing_direction as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(setBaseWritingDirection:forRange:),
++            set_base_writing_direction as extern "C" fn(_, _, _, _),
++        );
++        decl.add_method(
++            sel!(firstRectForRange:),
++            first_rect_for_range as extern "C" fn(_, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(caretRectForPosition:),
++            caret_rect_for_position as extern "C" fn(_, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(selectionRectsForRange:),
++            selection_rects_for_range as extern "C" fn(_, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(textInputView),
++            text_input_view as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(gpuiAttachTextInteraction),
++            attach_text_interaction as extern "C" fn(_, _),
++        );
++        decl.add_method(
++            sel!(gpuiDetachTextInteraction),
++            detach_text_interaction as extern "C" fn(_, _),
++        );
++        decl.add_method(
++            sel!(closestPositionToPoint:),
++            closest_position_to_point as extern "C" fn(_, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(closestPositionToPoint:withinRange:),
++            closest_position_within_range as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(
++            sel!(characterRangeAtPoint:),
++            character_range_at_point as extern "C" fn(_, _, _) -> _,
++        );
++
++        decl.add_method(
++            sel!(autocorrectionType),
++            autocorrection_type as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(spellCheckingType),
++            spell_checking_type as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(autocapitalizationType),
++            autocapitalization_type as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(returnKeyType),
++            return_key_type as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(keyboardType),
++            keyboard_type as extern "C" fn(_, _) -> _,
++        );
++        decl.add_method(
++            sel!(inlinePredictionType),
++            inline_prediction_type as extern "C" fn(_, _) -> _,
++        );
++    }
++    decl.register();
++}
+diff -ruN a/src/ios/window.rs b/src/ios/window.rs
+--- a/src/ios/window.rs
++++ b/src/ios/window.rs
+@@ -24,7 +24,7 @@
+ };
+ use gpui_wgpu::{GpuContext, WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+ use objc2::encode::{Encode, Encoding, RefEncode};
+-use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
++use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel};
+ use objc2::{class, msg_send, sel};
+ 
+ use super::cg_types::ObjcCGRect;
+@@ -39,6 +39,10 @@
+     sync::Arc,
+ };
+ 
++mod text_input_view;
++
++use text_input_view::TextInputSession;
++
+ const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
+ 
+ /// Lightweight window handle for wgpu surface creation.
+@@ -75,7 +79,6 @@
+ 
+ static METAL_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
+ static VC_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
+-static TEXT_INPUT_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
+ 
+ /// Global storage for the current status bar style.
+ /// 0 = default (dark content), 1 = light content.
+@@ -254,271 +257,6 @@
+     class!(GPUIMetalView)
+ }
+ 
+-/// UITextView supplies UIKit's complete UITextInput implementation, including
+-/// marked text, tokenizer and UTF-16 positions required by Chinese/Japanese IMEs.
+-/// Its small private document holds only the current composition; committed text
+-/// is forwarded to GPUI and then removed from the native scratch buffer.
+-fn register_text_input_view_class() -> &'static AnyClass {
+-    TEXT_INPUT_VIEW_CLASS_REGISTERED.call_once(|| {
+-        let mut decl = ClassBuilder::new(c"GPUITextInputView", class!(UITextView)).unwrap();
+-        decl.add_ivar::<*mut std::ffi::c_void>(c"gpui_window_ptr");
+-        decl.add_ivar::<usize>(c"gpui_edit_depth");
+-        decl.add_ivar::<Bool>(c"gpui_marked_text");
+-
+-        #[allow(deprecated)]
+-        unsafe fn begin_edit(this: *mut AnyObject) {
+-            *(*this).get_mut_ivar::<usize>("gpui_edit_depth") += 1;
+-        }
+-
+-        #[allow(deprecated)]
+-        unsafe fn end_edit(this: *mut AnyObject) {
+-            let depth = (*this).get_mut_ivar::<usize>("gpui_edit_depth");
+-            *depth -= 1;
+-            if *depth != 0 {
+-                return;
+-            }
+-
+-            // GPUI updates may synchronously cause UIKit callbacks. Keep those
+-            // nested native edits from borrowing the input handler a second time.
+-            struct ForwardingGuard(*mut AnyObject);
+-            impl Drop for ForwardingGuard {
+-                fn drop(&mut self) {
+-                    #[allow(deprecated)]
+-                    unsafe {
+-                        *(*self.0).get_mut_ivar::<usize>("gpui_edit_depth") -= 1;
+-                    }
+-                }
+-            }
+-            begin_edit(this);
+-            let _forwarding = ForwardingGuard(this);
+-
+-            let window_ptr: *mut c_void = *(*this).get_ivar(GPUI_WINDOW_IVAR);
+-            if window_ptr.is_null() {
+-                return;
+-            }
+-            let marked: *mut AnyObject = msg_send![this, markedTextRange];
+-            let text: *mut AnyObject = msg_send![this, text];
+-            let utf8: *const i8 = msg_send![text, UTF8String];
+-            let text_string = if utf8.is_null() {
+-                String::new()
+-            } else {
+-                std::ffi::CStr::from_ptr(utf8)
+-                    .to_string_lossy()
+-                    .into_owned()
+-            };
+-            let was_marked = (*this).get_ivar::<Bool>("gpui_marked_text").as_bool();
+-            let is_marked = !marked.is_null();
+-            *(*this).get_mut_ivar::<Bool>("gpui_marked_text") = Bool::new(is_marked);
+-            let window = &*(window_ptr as *const IosWindow);
+-
+-            if is_marked {
+-                let selected: super::text_input::ObjcNSRange = msg_send![this, selectedRange];
+-                if let Some(handler) = window.input_handler.borrow_mut().as_mut() {
+-                    handler.replace_and_mark_text_in_range(
+-                        None,
+-                        &text_string,
+-                        Some(selected.location..selected.location + selected.length),
+-                    );
+-                }
+-                // Legacy string callbacks receive only committed text. Sending
+-                // each pinyin update would otherwise append duplicate syllables.
+-            } else if was_marked || !text_string.is_empty() {
+-                // Clear before forwarding: GPUI callbacks can change focus.
+-                begin_edit(this);
+-                let empty: *mut AnyObject = msg_send![class!(NSString), new];
+-                let _: () = msg_send![this, setText: empty];
+-                let _: () = msg_send![empty, release];
+-                *(*this).get_mut_ivar::<usize>("gpui_edit_depth") -= 1;
+-
+-                if was_marked {
+-                    if let Some(handler) = window.input_handler.borrow_mut().as_mut() {
+-                        handler.replace_text_in_range(None, &text_string);
+-                        handler.unmark_text();
+-                        return;
+-                    }
+-                }
+-                // Keep NSString alive across clearing the native document.
+-                let bytes = text_string.as_bytes();
+-                let committed: *mut AnyObject = msg_send![class!(NSString), alloc];
+-                let committed: *mut AnyObject = msg_send![committed,
+-                    initWithBytes: bytes.as_ptr().cast::<c_void>(), length: bytes.len(), encoding: 4_usize];
+-                window.handle_text_input(committed);
+-                let _: () = msg_send![committed, release];
+-            }
+-        }
+-
+-        unsafe extern "C" fn has_text(_this: *mut AnyObject, _sel: Sel) -> Bool {
+-            // The GPUI document can contain text even when this scratchpad is empty.
+-            Bool::YES
+-        }
+-
+-        unsafe extern "C" fn insert_text(this: *mut AnyObject, _sel: Sel, text: *mut AnyObject) {
+-            begin_edit(this);
+-            let _: () = msg_send![super(this, class!(UITextView)), insertText: text];
+-            end_edit(this);
+-        }
+-
+-        unsafe extern "C" fn set_marked_text(
+-            this: *mut AnyObject,
+-            _sel: Sel,
+-            text: *mut AnyObject,
+-            selected: super::text_input::ObjcNSRange,
+-        ) {
+-            begin_edit(this);
+-            let _: () = msg_send![super(this, class!(UITextView)),
+-                setMarkedText: text, selectedRange: selected];
+-            end_edit(this);
+-        }
+-
+-        unsafe extern "C" fn unmark_text(this: *mut AnyObject, _sel: Sel) {
+-            begin_edit(this);
+-            let _: () = msg_send![super(this, class!(UITextView)), unmarkText];
+-            end_edit(this);
+-        }
+-
+-        // UIKit's attributed composition entry point does not call the plain
+-        // setMarkedText override. Modern IMEs can update exclusively through it.
+-        unsafe extern "C" fn set_attributed_marked_text(
+-            this: *mut AnyObject,
+-            _sel: Sel,
+-            text: *mut AnyObject,
+-            selected: super::text_input::ObjcNSRange,
+-        ) {
+-            begin_edit(this);
+-            let _: () = msg_send![super(this, class!(UITextView)),
+-                setAttributedMarkedText: text, selectedRange: selected];
+-            end_edit(this);
+-        }
+-
+-        #[allow(deprecated)]
+-        unsafe extern "C" fn reset_composition(this: *mut AnyObject, _sel: Sel) {
+-            // Focus may already belong to another GPUI input by the time the
+-            // keyboard is hidden. Never forward this cleanup to that handler.
+-            begin_edit(this);
+-            let _: () = msg_send![super(this, class!(UITextView)), unmarkText];
+-            let empty: *mut AnyObject = msg_send![class!(NSString), new];
+-            let _: () = msg_send![this, setText: empty];
+-            let _: () = msg_send![empty, release];
+-            *(*this).get_mut_ivar::<Bool>("gpui_marked_text") = Bool::NO;
+-            *(*this).get_mut_ivar::<usize>("gpui_edit_depth") -= 1;
+-        }
+-
+-        unsafe extern "C" fn replace_range(
+-            this: *mut AnyObject,
+-            _sel: Sel,
+-            range: *mut AnyObject,
+-            text: *mut AnyObject,
+-        ) {
+-            begin_edit(this);
+-            let _: () =
+-                msg_send![super(this, class!(UITextView)), replaceRange: range, withText: text];
+-            end_edit(this);
+-        }
+-
+-        // Holding the software keyboard's Backspace runs a UIKit timer
+-        // (-[_UIKeyboardStateManager handleAutoDeleteWithExecutionContext:])
+-        // that asks the first responder `_selectionAtDocumentStart` before every
+-        // repeat and stops the moment the answer is YES. UITextView answers for
+-        // the scratch document, which is empty between compositions, so a held
+-        // key deleted exactly one character. Answer for the GPUI document while
+-        // the scratch document has nothing UIKit could delete natively.
+-        #[allow(deprecated)]
+-        unsafe extern "C" fn selection_at_document_start(this: *mut AnyObject, _sel: Sel) -> Bool {
+-            let text: *mut AnyObject = msg_send![this, text];
+-            let length: usize = msg_send![text, length];
+-            let native = length != 0 || (*this).get_ivar::<Bool>("gpui_marked_text").as_bool();
+-            let window_ptr: *mut c_void = *(*this).get_ivar(GPUI_WINDOW_IVAR);
+-            let gpui = if native || window_ptr.is_null() {
+-                None
+-            } else {
+-                (&*(window_ptr as *const IosWindow)).selection_at_document_start()
+-            };
+-            if let Some(at_start) = gpui {
+-                return Bool::new(at_start);
+-            }
+-            // UIKit only asks because UIResponder implements it; should that
+-            // ever change, an empty scratch document is the closest answer.
+-            if class!(UITextView).responds_to(sel!(_selectionAtDocumentStart)) {
+-                msg_send![super(this, class!(UITextView)), _selectionAtDocumentStart]
+-            } else {
+-                Bool::new(length == 0)
+-            }
+-        }
+-
+-        #[allow(deprecated)]
+-        unsafe extern "C" fn delete_backward(this: *mut AnyObject, _sel: Sel) {
+-            let text: *mut AnyObject = msg_send![this, text];
+-            let length: usize = msg_send![text, length];
+-            let depth = *(*this).get_ivar::<usize>("gpui_edit_depth");
+-            if length == 0 && depth == 0 && !(*this).get_ivar::<Bool>("gpui_marked_text").as_bool()
+-            {
+-                let window_ptr: *mut c_void = *(*this).get_ivar(GPUI_WINDOW_IVAR);
+-                if !window_ptr.is_null() {
+-                    (&*(window_ptr as *const IosWindow)).handle_delete_backward();
+-                }
+-                return;
+-            }
+-            begin_edit(this);
+-            let _: () = msg_send![super(this, class!(UITextView)), deleteBackward];
+-            end_edit(this);
+-        }
+-
+-        unsafe {
+-            decl.add_method(
+-                sel!(hasText),
+-                has_text as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,
+-            );
+-            decl.add_method(
+-                sel!(insertText:),
+-                insert_text as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+-            );
+-            decl.add_method(
+-                sel!(setMarkedText:selectedRange:),
+-                set_marked_text
+-                    as unsafe extern "C" fn(
+-                        *mut AnyObject,
+-                        Sel,
+-                        *mut AnyObject,
+-                        super::text_input::ObjcNSRange,
+-                    ),
+-            );
+-            decl.add_method(
+-                sel!(unmarkText),
+-                unmark_text as unsafe extern "C" fn(*mut AnyObject, Sel),
+-            );
+-            decl.add_method(
+-                sel!(setAttributedMarkedText:selectedRange:),
+-                set_attributed_marked_text
+-                    as unsafe extern "C" fn(
+-                        *mut AnyObject,
+-                        Sel,
+-                        *mut AnyObject,
+-                        super::text_input::ObjcNSRange,
+-                    ),
+-            );
+-            decl.add_method(
+-                sel!(gpuiResetComposition),
+-                reset_composition as unsafe extern "C" fn(*mut AnyObject, Sel),
+-            );
+-            decl.add_method(
+-                sel!(replaceRange:withText:),
+-                replace_range
+-                    as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
+-            );
+-            decl.add_method(
+-                sel!(deleteBackward),
+-                delete_backward as unsafe extern "C" fn(*mut AnyObject, Sel),
+-            );
+-            decl.add_method(
+-                sel!(_selectionAtDocumentStart),
+-                selection_at_document_start as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,
+-            );
+-        }
+-        decl.register();
+-    });
+-    class!(GPUITextInputView)
+-}
+-
+ /// Handle touch events from the GPUIMetalView
+ fn handle_touches(view: *mut AnyObject, touches: *mut AnyObject, event: *mut AnyObject) {
+     unsafe {
+@@ -553,8 +291,8 @@
+     view_controller: *mut AnyObject,
+     /// The Metal-backed UIView
+     view: *mut AnyObject,
+-    /// The hidden text input view for keyboard input
+-    text_input_view: *mut AnyObject,
++    /// The `UITextInput` view the keyboard edits the focused document through
++    text_input: TextInputSession,
+     /// Current bounds in pixels
+     bounds: Cell<Bounds<Pixels>>,
+     /// Scale factor
+@@ -684,17 +422,8 @@
+                 let _: () = msg_send![window, makeKeyAndVisible];
+             }
+ 
+-            // UIKit owns the IME composition in a native UITextView; GPUI owns
+-            // the visible document.
+-            let text_input_class = register_text_input_view_class();
+-            let text_input_view: *mut AnyObject = msg_send![text_input_class, alloc];
+-            let text_input_frame = ObjcCGRect::new(0.0, 0.0, 1.0, 1.0);
+-            let text_input_view: *mut AnyObject =
+-                msg_send![text_input_view, initWithFrame: text_input_frame];
+-            let _: () = msg_send![text_input_view, setAlpha: 0.01_f64];
+-            let _: () = msg_send![text_input_view, setUserInteractionEnabled: true];
+-            let _: () = msg_send![text_input_view, setScrollEnabled: false];
+-            let _: () = msg_send![view, addSubview: text_input_view];
++            // UIKit edits the GPUI document itself through this view.
++            let text_input = TextInputSession::new(view);
+ 
+             // --- Initialise the wgpu renderer (Metal backend) ---------------
+             let pixel_w = (screen_bounds_cg.width * scale) as i32;
+@@ -705,7 +434,7 @@
+                 window,
+                 view_controller,
+                 view,
+-                text_input_view,
++                text_input,
+                 bounds: Cell::new(screen_bounds),
+                 scale_factor: Cell::new(scale_factor),
+                 input_handler: RefCell::new(None),
+@@ -825,13 +554,13 @@
+             }
+             #[allow(deprecated)]
+             {
+-                *(*self.text_input_view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = window_ptr;
++                *(*self.text_input.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = window_ptr;
+             }
+             log::info!(
+                 "GPUI iOS: Set window pointer {:p} on view {:p} and text input {:p}",
+                 window_ptr,
+                 self.view,
+-                self.text_input_view
++                self.text_input.view
+             );
+         }
+ 
+@@ -921,9 +650,7 @@
+         let id = if phase == gpui::TouchPhase::Started {
+             // Finish the old input's composition before this contact can move
+             // GPUI focus (including taps between two text fields).
+-            unsafe {
+-                let _: () = msg_send![self.text_input_view, unmarkText];
+-            }
++            self.commit_composition();
+             // UIKit may reuse UITouch addresses, so assign a fresh ID per contact.
+             let id = self.next_touch_id();
+             self.active_touches.borrow_mut().insert(key, id);
+@@ -1005,58 +732,32 @@
+ 
+     /// Show the software keyboard with the specified keyboard type.
+     ///
+-    /// The actual `becomeFirstResponder` call is deferred to the next run-loop
+-    /// iteration via `performSelector:withObject:afterDelay:` to avoid re-entering
+-    /// GPUI's event dispatch while an entity lease is active (UIKit's keyboard
+-    /// presentation can synchronously trigger layout callbacks).
++    /// Becoming first responder is deferred to the next run-loop turn: UIKit
++    /// reads the document while it presents the keyboard, and this is called
++    /// from inside GPUI's event dispatch, where the input handler cannot run.
+     pub fn show_keyboard_with_type(&self, keyboard_type: crate::KeyboardType) {
++        use crate::KeyboardType;
+         log::info!("GPUI iOS: Showing keyboard (type={:?})", keyboard_type);
+-        unsafe {
+-            use crate::KeyboardType;
+-            let kb_type: isize = match keyboard_type {
+-                KeyboardType::Default => 0,      // UIKeyboardTypeDefault
+-                KeyboardType::EmailAddress => 7, // UIKeyboardTypeEmailAddress
+-                KeyboardType::Phone => 5,        // UIKeyboardTypePhonePad
+-                KeyboardType::NumberPad => 4,    // UIKeyboardTypeNumberPad
+-                KeyboardType::URL => 3,          // UIKeyboardTypeURL
+-                KeyboardType::Decimal => 8,      // UIKeyboardTypeDecimalPad
+-            };
+-            log::info!(
+-                "GPUI iOS: text_input_view={:p}, setKeyboardType: {}",
+-                self.text_input_view,
+-                kb_type
+-            );
+-            if self.text_input_view.is_null() {
+-                log::error!("GPUI iOS: text_input_view is NULL!");
+-                return;
+-            }
+-            super::text_input::configure_keyboard_traits(self.text_input_view, kb_type);
+-            log::info!("GPUI iOS: scheduling becomeFirstResponder");
++        self.text_input.set_keyboard_type(match keyboard_type {
++            KeyboardType::Default => 0,      // UIKeyboardTypeDefault
++            KeyboardType::EmailAddress => 7, // UIKeyboardTypeEmailAddress
++            KeyboardType::Phone => 5,        // UIKeyboardTypePhonePad
++            KeyboardType::NumberPad => 4,    // UIKeyboardTypeNumberPad
++            KeyboardType::URL => 3,          // UIKeyboardTypeURL
++            KeyboardType::Decimal => 8,      // UIKeyboardTypeDecimalPad
++        });
++        self.text_input.become_first_responder();
++    }
+ 
+-            // Defer becomeFirstResponder to the next run-loop iteration.
+-            let _: () = msg_send![self.text_input_view,
+-                performSelector: sel!(becomeFirstResponder),
+-                withObject: ptr::null::<AnyObject>(),
+-                afterDelay: 0.0_f64
+-            ];
+-            log::info!("GPUI iOS: show_keyboard_with_type done");
+-        }
++    /// Let UIKit draw the selection UI (loupe, handles, edit menu) over GPUI.
++    pub fn set_system_selection_ui(&self, enabled: bool) {
++        self.text_input.set_system_selection_ui(enabled);
+     }
+ 
+-    /// Hide the software keyboard.
+-    ///
+-    /// Deferred to the next run-loop iteration (like `show_keyboard_with_type`)
+-    /// to avoid re-entering GPUI event dispatch.
++    /// Hide the software keyboard, deferred like `show_keyboard_with_type`.
+     pub fn hide_keyboard(&self) {
+         log::info!("GPUI iOS: Hiding keyboard");
+-        unsafe {
+-            let _: () = msg_send![self.text_input_view, gpuiResetComposition];
+-            let _: () = msg_send![self.text_input_view,
+-                performSelector: sel!(resignFirstResponder),
+-                withObject: ptr::null::<AnyObject>(),
+-                afterDelay: 0.0_f64
+-            ];
+-        }
++        self.text_input.resign_first_responder();
+     }
+ 
+     /// Handle text input from the software keyboard
+@@ -1144,23 +845,6 @@
+         }
+     }
+ 
+-    /// Whether the focused GPUI document has nothing before its caret, so a
+-    /// repeated Backspace would have nothing left to delete.
+-    ///
+-    /// `None` when nobody can say: no GPUI input handler is installed and no
+-    /// legacy text callback is registered, or the handler is already borrowed
+-    /// by an edit in progress. A legacy callback cannot report its content, so
+-    /// it answers `false` and keeps the repeat going; each extra Backspace on
+-    /// an empty field is a no-op for it.
+-    fn selection_at_document_start(&self) -> Option<bool> {
+-        if let Ok(mut handler) = self.input_handler.try_borrow_mut() {
+-            if let Some(handler) = handler.as_mut() {
+-                return Some(handler.selected_text_range(false)?.range.start == 0);
+-            }
+-        }
+-        crate::has_text_input_callback().then_some(false)
+-    }
+-
+     /// Handle a key event from an external keyboard
+     pub fn handle_key_event(&self, key_code: u32, modifier_flags: u32, is_key_down: bool) {
+         use super::text_input::{
+@@ -1393,6 +1077,10 @@
+         self.input_handler.borrow_mut().take()
+     }
+ 
++    fn set_text_input_configuration(&mut self, configuration: gpui::TextInputConfiguration) {
++        self.text_input.set_configuration(configuration);
++    }
++
+     fn prompt(
+         &self,
+         _level: PromptLevel,
+@@ -1577,6 +1265,7 @@
+     }
+ 
+     fn draw(&self, scene: &Scene) {
++        self.text_input.mark_drawn();
+         let mut guard = self.renderer.lock();
+         if let Some(renderer) = guard.as_mut() {
+             renderer.draw(scene);
