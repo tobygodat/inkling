@@ -42,6 +42,32 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
   streams one live answer and prints its changes. It calls a paid API, so only Toby runs it.
 
+## Tests
+
+- Test behaviour that can break: the review model, the provider protocols, parsing a model's answer,
+  key handling and redaction, persistence, and the logic a bug fix changed.
+- Leave out tests for what the types already guarantee, trivial logic, copy text, and input no caller
+  can produce. An edge case outside the issue's "done when" becomes a line on the issue, not a test.
+- Extend before you add. When an existing test or property covers the behaviour, add a case or an
+  assertion there.
+- Test at one layer: the lowest one that fails without the change. In `core`, prefer one property
+  over a list of hand-written cases.
+- `ui/`, `mac/` and `ios/` have no unit tests. Their snap script is the proof, and a visual change
+  needs nothing more.
+- A bug in logic, data or parsing gets a failing test first, then the fix.
+
+## Review
+
+- CI runs clippy and `cargo test --workspace` on every PR and on `main`. Run both before you push.
+  Nobody runs them again by hand after that.
+- The final check runs once per PR. It waits for CI to be green on the final head, then runs
+  `mac/snap.sh` when `core/`, `ui/` or `mac/` changed and `ios/snap.sh` when `ui/` or `ios/` changed.
+  It does not repeat the tests or clippy.
+- A PR that changes only docs or CI config needs green CI and no final check.
+- After a `FAIL`, check the fix against the step that failed, not the whole proof.
+- A finding outside the issue's "done when" becomes a line on the issue, not a fix round.
+- No review panel on an ordinary diff. `interrogate` is for a contested design.
+
 ## Rules
 
 - Never take focus or move the pointer on Toby's Mac. Prove UI headless: an offscreen render, a test
