@@ -18,6 +18,21 @@ xcodebuild -project app/Inkling.xcodeproj -scheme Inkling -configuration Release
   -destination 'generic/platform=iOS' -archivePath "$archive" -derivedDataPath "$root/target/xcode-release" \
   -allowProvisioningUpdates CURRENT_PROJECT_VERSION="$build" -quiet archive
 
+# App Store Connect rejects private API use (ITMS-90338). Refuse to upload when the binary
+# imports a framework C symbol that no public iPhoneOS SDK header declares.
+sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+find "$sdk/System/Library/Frameworks" -name '*.h' >"$export_dir/headers.txt"
+private=()
+while read -r sym; do
+  xargs grep -lw -m1 "$sym" <"$export_dir/headers.txt" >/dev/null 2>&1 || private+=("$sym")
+done < <(nm -u "$archive/Products/Applications/Inkling.app/Inkling" | sed 's/^_//' \
+  | grep -E '^(k?CG|k?CT|k?CF|CA|UI|NS|MTL|k?Sec|SC|AV|CM|Audio)' | sort -u)
+if [ ${#private[@]} -gt 0 ]; then
+  echo "error: not in any public SDK header, so App Store Connect would reject the build:" >&2
+  printf '  %s\n' "${private[@]}" >&2
+  exit 1
+fi
+
 cat >"$export_dir/ExportOptions.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

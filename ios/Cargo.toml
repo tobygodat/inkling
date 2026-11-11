@@ -29,3 +29,8 @@ opt-level = 1
 
 [profile.release]
 strip = true
+# Fat LTO drops dependency code nothing calls. Without it, core-graphics' unused
+# set_font_smoothing_style wrapper links the private CGContextSetFontSmoothingStyle and
+# App Store Connect rejects the build (ITMS-90338).
+lto = true
+codegen-units = 1
