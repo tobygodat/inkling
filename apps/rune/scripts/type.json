@@ -1,0 +1,6 @@
+[
+  {"t": 0.1, "type": "type", "text": "The house was quiet when she came down."},
+  {"t": 0.3, "type": "key", "name": "Enter"},
+  {"t": 0.4, "type": "type", "text": "x"},
+  {"t": 0.6, "type": "mark", "name": "end"}
+]
