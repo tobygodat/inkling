@@ -40,9 +40,11 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
-- `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow on the Simulator,
-  with 16 checked steps. Any change under `ui/` or `ios/` reruns it. `ios/README.md` lists what is
-  still driven by hand.
+- `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow and the live
+  page on the Simulator, with 25 checked steps. Any change under `ui/` or `ios/` reruns it.
+  `ios/README.md` lists what is still driven by hand.
+- `ios/bench.sh <agent-device>` types 50 characters into a 5,000-word draft in the installed Debug
+  build and prints the median and worst time from a typed character to its painted frame.
 - `ios/testflight.sh` archives the iPhone app in Release for a real device, signs it for the App
   Store (team Q6NAWA42Y2), refuses any build that imports a symbol missing from the public SDK
   headers, and uploads it to TestFlight. Xcode's signed-in account signs it, and `altool` uploads it

@@ -4,7 +4,8 @@ The iPhone app. A Swift UIKit host (`app/`) mounts the shared views (`inkling_ui
 `FormFactor::Phone`) from a Rust static library (`inkling-ios`, `src/lib.rs`), on GPUI Kit through
 a patched `longbridge/gpui-mobile`. This folder is its own Cargo workspace.
 
-Proof is in `docs/screenshots/ios/`, from the iPhone 18 Pro Simulator, iOS 27.2, on 2026-11-11.
+Proof is in `docs/screenshots/ios/`, from the iPhone 18 Pro Simulator, iOS 27.2: the scripted run
+on 2026-11-12, the hand-driven shots on 2026-11-11.
 
 ## Run
 
@@ -23,6 +24,8 @@ Launch flags work in Debug builds only; Release ignores them:
   the Keychain is never touched.
 - `--memory-keys` sets `INKLING_MEMORY_KEYS=1`: keys in memory and the real providers. Use it for
   the missing-key path. Asking without a key opens the key screen and calls nothing.
+- `--probe-typing` sets `INKLING_PROBE_TYPING=1`: the app logs at Debug, which includes the time
+  from each typed character to its painted frame. `bench.sh` reads it.
 
 With neither flag the app reads keys from the Keychain through `inkling_core::default_keys()`.
 
@@ -41,7 +44,12 @@ Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and `p8`, the 
 [The scripted run](#the-scripted-run).
 
 `keys.sh <agent-device> "<text>"` types on the English on-screen keyboard by tapping keys (lowercase
-letters, space, `<` for delete, `/` for Return).
+letters, space, `<` for delete, `/` for Return, and `#` when a space follows it).
+
+`bench.sh <agent-device>` types 50 characters into a 5,000-word draft in the installed Debug build
+and prints the median and the worst time from a typed character to its painted frame. On
+2026-11-12 the live page measured a 14.7 ms median over three runs, and the text area it
+replaced 13.6 ms. Both are Debug builds on the Simulator, so they are a floor for a real iPhone.
 
 ## What the host does
 
@@ -66,9 +74,17 @@ gpui-mobile is pinned to `7548ebc4b24f00494af9976af8852c7163ded9ce`. `fetch-mobi
   never saved.
 - `0004-paste-control.patch` puts a system `UIPasteControl` above the keyboard, so text copied in
   another app pastes. See [Paste from another app](#paste-from-another-app).
+- `0005-system-selection-ui.patch` makes UIKit's own caret, handles and edit menu work over a GPUI
+  input. See [The page's selection](#the-pages-selection).
+- `0006-clipboard-write.patch` fixes Copy. gpui-mobile handed the pasteboard a Rust string as a C
+  string, with no NUL at its end, so a copy longer than a few words read past it and cleared the
+  pasteboard.
+- `0007-typing-probe.patch` logs, at Debug, the time from the keyboard's `insertText:` to the frame
+  that shows it.
 
 To change gpui-mobile, edit `target/gpui-mobile` in place, run `patches/refresh.sh` (it rewrites
-the last patch from the working tree), then build. `run.sh` re-fetches, so an edit not yet captured
+the last patch from the working tree, so a change to an earlier patch needs the later ones taken
+out first), then build. `run.sh` re-fetches, so an edit not yet captured
 by `refresh.sh` is lost.
 
 ## The text-input bridge
@@ -111,14 +127,43 @@ its own update, where the input handler cannot run. UIKit reads the document bac
 reloads, so `becomeFirstResponder`, `resignFirstResponder` and `reloadInputViews` run on the next
 run-loop turn.
 
-The app opts in per input. `ui/src/app.rs` builds the page with
-`.autocorrect(true).autocapitalize(Autocapitalize::Sentences)`; the kit's default is off.
-
-`gpui_ios_set_system_selection_ui(window, enabled)` attaches UIKit's own `UITextInteraction` to the
-GPUI view, so UIKit draws its handles and edit menu. Inkling leaves it off; see Gaps.
+The app opts in per input. The page asks for autocorrection, suggestions and sentence capitals in
+`text_input_configuration` (`ui/src/live/input.rs`), and the feedback field with the kit's
+`.autocorrect(true).autocapitalize(Autocapitalize::Sentences)`. The kit's default is off.
 
 Inline predictions (iOS's grey ghost text) are off (`inlinePredictionType = No`). UIKit would send
 them as marked text, which GPUI would draw as a real composition.
+
+## The page's selection
+
+The page is the live editor, not a kit input, so nothing in the kit draws its handles. UIKit
+does: `ios/src/lib.rs` calls `gpui_ios_set_system_selection_ui(window, true)` when the page takes
+focus and `false` when it loses it, because the kit's inputs still draw their own. Patch 0005 is
+what that needed.
+
+- **Where UIKit draws.** UIKit puts its caret, highlight and handles in the view its
+  `UITextInteraction` is on, and a GPUI input is only a region of one view. So the interaction
+  goes on a canvas the size of the GPUI view, inside a clip view that takes the focused input's
+  bounds (`element_bounds`). The canvas keeps GPUI's coordinates, and nothing shows over the
+  header when the selection scrolls out of the page.
+- **Keeping it in step.** GPUI lays text out when it draws. After each drawn frame the bridge
+  calls `setNeedsSelectionUpdate` on UIKit's `UITextSelectionDisplayInteraction`, so the caret
+  follows an edit and the handles follow a scroll. It also activates that interaction when it
+  attaches, since the view is first responder by then and UIKit would show no caret. After a
+  text change GPUI made (a paste), it tells UIKit the selection changed as well as the text.
+- **The edit menu.** UIKit looks for each action's target up the responder chain of the view the
+  interaction is on. The bridge's text input view is a subview of the GPUI view, so it is not on
+  that chain, and the menu had no Cut, Copy or Paste. The GPUI view now answers `targetForAction:withSender:` with the
+  text input view, which performs Cut, Copy and Paste as GPUI's `ctrl-x`, `ctrl-c` and `ctrl-v`
+  and Select All through the input handler. When the same selection moves (a scroll), the bridge
+  dismisses the menu, as a text view does.
+- **Whose touch it is.** Both UIKit's recognizers and GPUI see every touch. For a tap UIKit acts
+  first and GPUI's tap lands last, in the same event, so the editor places the caret on the
+  tapped character and selects the double-tapped word. UIKit would snap a tap to a word boundary
+  and would take a short scroll for a tap, so the bridge turns down a caret UIKit sets while the
+  finger is making a tap or a pan, and tells UIKit to read the selection again. A finger that
+  rests 400 ms is UIKit's long press, and its caret is kept. The editor claims a touch that
+  starts on a handle and a long press, so GPUI neither scrolls nor taps under them.
 
 ## Paste from another app
 
@@ -137,13 +182,9 @@ there (`ctrl-v`, the kit's binding off the Mac). That read carries the control's
 (`AuthMessageAuthentic`, "Paste allowed silently"), and the kit's rules still apply: a
 single-line input drops newlines, a read-only one ignores the paste.
 
-Why not UIKit's edit menu: attaching `UITextInteraction` and implementing `paste:` and
-`canPerformAction:withSender:` was tried again. UIKit asks about `paste:` only once the view
-answers `isEditable` (iOS 18), and still left Paste out of the caret menu, while a stock
-`UITextField` in the same app offered it for the same clipboard. `UIPasteboard.hasStrings` also
-answers NO for text another app copied. The same experiment crashed the app when UIKit's own
-cursor got an infinite caret rect (`CALayerInvalidGeometry`). Handing selection to UIKit is a
-larger change than paste needs, so it is not kept.
+The page also has Paste in UIKit's edit menu now (see [The page's selection](#the-pages-selection)).
+The control stays, because the ask field, the key fields and the feedback field are kit inputs
+with the kit's own menu, and because it is one tap with no selection to make first.
 
 ## Taps in the review
 
@@ -168,7 +209,7 @@ the paint after it sees the mouse down. So `ui/src/review.rs` gives the review a
 | Use accepts it and the sheet moves to the next pending change | `09-used` |
 | Keep rejects it and the sheet moves on | `10-kept` |
 | Accept the rest applies the rest and returns to the draft | `11-accept-rest` |
-| Double tap selects a word, kit handles and menu | `12-word-selected` |
+| Double tap selects a word (the text-area page, with the kit's handles; the live page's are in `snap/21-live-select`) | `12-word-selected` |
 | Find a word with the keyboard up | `13-find-a-word` |
 | Other wordings in the sheet, 44 pt rows | `14-other-words` |
 | Choosing a wording, then Use | `15-wording-chosen`, `16-wording-used` |
@@ -186,14 +227,15 @@ the paint after it sees the mouse down. So `ui/src/review.rs` gives the review a
 | Paste puts the key copied in Safari into the key field, shown revealed | `30-key-pasted-from-safari` |
 | The same Paste works in the page | `31-page-pasted-from-safari` |
 
-Driven by hand with `agent-device` and `keys.sh`: every row above.
+Driven by hand with `agent-device` and `keys.sh`: every row above, on the text-area page the
+live editor replaced. The scripted run below proves the same page behaviour on the live editor.
 
 ## The scripted run
 
 `snap.sh <agent-device>` uninstalls the app, builds and installs it through `run.sh` with
 `--fake-ai`, drives the main flow through `agent-device` and saves each step to
 `docs/screenshots/ios/snap/`. It stops with a non-zero exit at the first failed check. A run takes
-about a minute.
+about three and a half minutes, the build included.
 
 | Step | Checked | Screenshot only |
 | --- | --- | --- |
@@ -211,6 +253,15 @@ about a minute.
 | Back, then Feedback in the header | | `14-feedback-open` |
 | Type "bigger margins", Done, Send | `sent-feedback.json` holds "Bigger margins" and not the draft | `15-feedback-sent` |
 | Save a link on an `.invalid` host, send "a darker caret" | the failed send adds nothing to `sent-feedback.json` | `16-feedback-failed` |
+| Relaunch on an empty draft, tap the page, type a line | the saved draft is the line, and the Paste control shows, so the keyboard is up | `17-live-typed` |
+| Type `# title`, Return twice, a line | the saved draft is the heading, a blank line and the line; the heading is drawn large (by eye) | `18-live-heading` |
+| Type "becuase" and a space | the saved draft says "because" | `19-live-autocorrect` |
+| Type "rive", tap "river" in the suggestion bar | the saved draft ends "river " | `20-live-suggestion` |
+| Relaunch on two blocks, double tap "light" | Copy in UIKit's menu puts "light" on the clipboard; the handles show (by eye) | `21-live-select` |
+| Double tap "paragraph" in the second block, drag its start handle into the first | Copy puts the source from "light" to "paragraph" on the clipboard, blank line included | `22-live-handles` |
+| Tap the end of the second block, Paste | the saved draft is the two blocks and then the copied source | `23-live-paste` |
+| Relaunch on a draft with a heading, an inline formula and a block formula | the draft is unchanged and the shot is 1206 px wide (3x); both formulas are drawn and sharp (by eye) | `24-live-maths` |
+| Relaunch on a misspelt line, Fix grammar, Use the first change, Keep the other three | the saved draft holds that one change | `25-live-review` |
 
 After every tap it also checks that Inkling is still the foreground app, so a crash fails the
 step. The pasted part carries the misspellings the fake Fix grammar corrects (`i`, `dont`,
@@ -218,7 +269,13 @@ step. The pasted part carries the misspellings the fake Fix grammar corrects (`i
 clipboard is set with `agent-device clipboard write`, which iOS treats as another app's copy.
 GPUI draws everything inside one view, so the accessibility tree has no handles for the page,
 the chips or the review; those taps are coordinates, all in `point()` at the top of the script.
-The Paste control is pressed by its label.
+The Paste control, UIKit's edit menu and the suggestion bar are pressed by their labels. The live
+steps open their drafts by writing `draft.md` and relaunching, because the keyboard has no `$` or
+`*` within `keys.sh`'s reach.
+
+Still driven by hand on the live page: a long press and its loupe, a drag on the end handle, Cut,
+Select All, a tap inside the selection (it brings the menu back), scrolling with a selection, and
+the two switches (set in `settings.json`, since the iPhone has no Appearance panel).
 
 Done and declined feedback and Restart are proved by `mac/snap.sh`, which also renders the
 phone layout of the list (`19-iphone-feedback`). The iPhone lists its items as waiting until a new
@@ -229,9 +286,23 @@ iPhone build carries their records.
 
 ## Gaps
 
-- **The kit's own Paste.** The Paste in the kit's long-press menu still reads the pasteboard
-  without consent, so it pastes only what Inkling copied. Text from another app goes through the
-  Paste control above the keyboard. Removing the kit's item needs a kit option.
+- **The switches have no control on iPhone.** The page draws by `markdown` and `maths` in
+  `settings.json`, but the Appearance panel that changes them is on the Mac only.
+- **The end handle under the edit menu.** UIKit shows the menu just under the selection. A drag
+  that starts on the end handle's knob there can stop after a few points: the touch began inside
+  the menu's own window, UIKit closes the menu when a drag begins, and iOS then starts the touch
+  again. A drag on the start handle, or on the end handle once the menu is closed, goes through.
+  It needs a real iPhone to say how often a finger hits it.
+- **No scroll while a handle is dragged.** Dragging a handle to the page's edge does not scroll
+  the page. Lift, scroll, and drag again.
+- **The menu after Select All.** UIKit closes its menu when the selection changes and does not
+  open it for the new one. A tap inside the selection opens it.
+- **Marked text and dictation on the live page** are untested. The Simulator's English keyboard
+  makes neither. The Mac proof covers marked text in the same editor.
+- **The kit's own Paste.** The Paste in the kit's long-press menu, in the ask field, the key
+  fields and the feedback field, still reads the pasteboard without consent, so it pastes only
+  what Inkling copied. Text from another app goes through the Paste control above the keyboard.
+  Removing the kit's item needs a kit option.
 - **The masked key is readable by accessibility.** The bridge answers UIKit's `textInRange:` with
   the document's real text, and the accessibility tree reads it back, so the key field's value
   is visible there (and to VoiceOver) while the field shows dots. The bridge needs to know a field
@@ -245,22 +316,8 @@ iPhone build carries their records.
   such ask yet, so the phone shows the Mac's three.
 - **Keyboard state.** The views know focus, not the keyboard. Done shows while the page or the ask
   field has focus. The page is not focused at launch, so the keyboard comes up on the first tap.
-- **Marked-text underline after scrolling.** Once the text area has scrolled, a composition has no
-  underline (log: marked `51..53`, nothing drawn). The bridge reports the range correctly. The bug
-  is in gpui-base 0.9.1 `src/input/base/element.rs` `prepaint`: on the plain-text path it builds
-  the runs over the whole document from offset 0 (`split_run_for_ime_underline(run,
-  0..display_text.len(), …)`), while the shaped lines start at the first visible line. Every
-  colour in a plain text area is the same, so only the underline shows the misalignment. It is a
-  GPUI Kit fix.
-- **Loupe.** Not there with the kit's handles. With `UITextInteraction` attached, a held long
-  press gave UIKit's handles but no loupe in the screenshot. The capture may wait for the hold to
-  end, so this is unproved either way.
-- **System selection UI is an experiment.** With `UITextInteraction` attached, UIKit's edit menu
-  lacks Cut, Copy and Paste, and implementing them did not bring Paste back (see
-  [Paste from another app](#paste-from-another-app)). A long press with it attached crashed the
-  app once: UIKit's cursor view got an infinite caret rect. One run also lost auto-capitalisation on the first letter, probably because UIKit's tap
-  makes the view first responder before GPUI focuses the input. Both gesture systems see every
-  touch (`cancelsTouchesInView = NO`), so GPUI keeps focus and its own taps.
+- **Loupe.** A long press moves the page's caret to the finger. Whether UIKit shows its loupe
+  over it is unproved: the Simulator's capture may wait for the hold to end.
 - **Text changes of the same length** (for example accepting a same-length AI change) do not tell
   the keyboard that the text changed, only that the selection did, because the bridge compares
   length, selection and marked range rather than content.

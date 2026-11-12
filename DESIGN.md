@@ -84,8 +84,9 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 - Inline buttons are 28 pt on Mac. No control on iPhone is under 44 pt.
 
 ## The live page
-On the Mac the page draws its Markdown and maths while the writer types. The draft on disk stays
-plain Markdown. Every block is drawn except the one that holds the caret, which shows its source.
+The page draws its Markdown and maths while the writer types, on the Mac and on iPhone. The draft
+on disk stays plain Markdown. Every block is drawn except the one that holds the caret, which
+shows its source.
 
 - **Headings.** Semibold in the body face, larger than body text by level. A heading keeps its size
   while the caret is in it, so the line doesn't jump.
@@ -109,6 +110,10 @@ plain Markdown. Every block is drawn except the one that holds the caret, which 
 - **Maths off.** Formulas show their source. The rest still draws.
 - **During review.** The review draws the source, syntax included, so every change sits on the
   bytes it replaces.
+- **On iPhone.** Until the page is tapped it has no caret, so every block is drawn, and an empty
+  page says "Start writing" in muted ink. A tap puts the caret on the tapped character and brings
+  the keyboard up. The caret, the selection, its two handles and the edit menu (Cut, Copy, Paste,
+  Select All) are iOS's own. Done draws every block again.
 
 ## Motion
 - One duration, 200 ms, with a quick ease-out (quint), for anything that appears or goes.

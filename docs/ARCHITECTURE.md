@@ -65,11 +65,9 @@ has (asked once at launch); the iPhone always gets the default look at its own s
 theme and redraws the window.
 
 ## The page
-`ui::page::Page` is the writing page, one value with two variants. On the Mac it is
-`Page::Live`, the live editor in `ui/src/live/`. On iPhone it is `Page::Plain`, GPUI Kit's text
-area, until the live editor takes touch. Asking, Find a word, Next line, autosave and finishing a
-review use only `Page`'s `value`, `selected_range`, `cursor` and `replace`, so they see the
-Markdown source and its byte ranges whichever variant is open.
+`ui::page::Page` is the writing page: the live editor in `ui/src/live/`, on the Mac and on
+iPhone. Asking, Find a word, Next line, autosave and finishing a review use only `Page`'s `value`,
+`selected_range`, `cursor` and `replace`, so they see the Markdown source and its byte ranges.
 
 The live editor keeps the source in `core::draft::Draft`, which owns the selection, the top-level
 blocks and the undo history, and changes only through `Draft::replace`. Each block's
@@ -78,6 +76,14 @@ lands on the right byte. Every block is drawn by GPUI Kit's Markdown renderer ex
 holds the caret, which shows its source with the syntax muted. RaTeX sets each formula, and the
 editor caches the image per formula, size, colour and scale. A remote image is drawn as its alt text and never
 fetched.
+
+On iPhone the keyboard reads and edits the source through the editor's `EntityInputHandler`, in
+UTF-16 code units that `Draft` converts to and from bytes. UIKit draws the caret, the selection,
+its handles and the edit menu over the page while the page has focus (`FormFactor::system_selection`),
+from the rectangles the editor reports for a source range. The editor keeps the taps: a tap lands on
+the tapped byte, a double tap selects the word. A drag on a handle and a long press are UIKit's, so
+the editor claims those touches to keep the page from scrolling under them. While the page has no
+focus it has no block of source: every block is drawn. `ios/README.md` has the bridge's side.
 
 `Appearance::markdown` and `Appearance::maths` are the page's two switches.
 `Inkling::set_appearance` passes them, with the theme, to the editor, which redraws at once. With
