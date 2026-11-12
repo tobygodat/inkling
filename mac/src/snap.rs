@@ -3,7 +3,8 @@
 use super::*;
 use gpui_kit::test::TestWindowExt as _;
 use inkling_core::feedback::{Delivery, FeedbackId, Outcome, Record, SendError, Status};
-use inkling_core::{AiEvent, Appearance, Build, Face, Mode, Part, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
+use inkling_core::{AiEvent, Appearance, Build, ChangeId, Face, Mode, Part, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
+use inkling_ui::live::Snapshot;
 use inkling_ui::{Menu, Restart};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,8 @@ struct Snap {
     window: AnyWindowHandle,
     view: Entity<Inkling>,
     dir: PathBuf,
+    /// Where every frame goes for the review video, and how many so far.
+    frames: Option<(PathBuf, usize)>,
 }
 
 impl Snap {
@@ -44,7 +47,7 @@ impl Snap {
         cx.update(init);
         let (window, view) =
             cx.update(|cx| open(cx, form, false, false, Box::new(keys), build)).expect("open a headless window");
-        let mut snap = Snap { cx, window, view, dir: dir.to_path_buf() };
+        let mut snap = Snap { cx, window, view, dir: dir.to_path_buf(), frames: None };
         snap.frame();
         snap
     }
@@ -62,6 +65,24 @@ impl Snap {
         self.cx.run_until_parked();
         self.with(|w, cx| w.render_frame(cx));
         self.with(|w, cx| w.render_frame(cx));
+        if let Some((dir, n)) = self.frames.as_mut() {
+            *n += 1;
+            let path = dir.join(format!("{n:05}.png"));
+            if let Ok(image) = self.cx.capture_screenshot(self.window) {
+                image.save(path).ok();
+            }
+        }
+    }
+
+    /// Saves every frame to `INKLING_PAGE_FRAMES`, when set, for the review video.
+    fn record(&mut self, on: bool) {
+        self.frames = std::env::var_os("INKLING_PAGE_FRAMES").filter(|_| on).map(|d| (PathBuf::from(d), 0));
+    }
+
+    fn type_slowly(&mut self, text: &str) {
+        for c in text.chars() {
+            self.input(&c.to_string());
+        }
     }
 
     fn press(&mut self, key: &str) {
@@ -108,7 +129,42 @@ impl Snap {
 
     /// The height of the page's first line, which follows the text size.
     fn first_line(&mut self) -> Pixels {
-        self.read(|v, cx| v.page().read(cx).range_to_bounds(&(0..1)).map(|b| b.size.height)).unwrap_or_default()
+        self.point_for(0).map(|(_, h)| h).unwrap_or_default()
+    }
+
+    /// The top of a caret at source byte `at` on the live page, and its height.
+    fn point_for(&mut self, at: usize) -> Option<(Point<Pixels>, Pixels)> {
+        self.read(|v, cx| v.page().live()?.read(cx).point_for(at))
+    }
+
+    fn live(&mut self) -> Snapshot {
+        self.read(|v, cx| v.page().live().map(|p| p.read(cx).snapshot())).unwrap_or_else(|| fail("the Mac page is the live editor"))
+    }
+
+    /// A window point inside drawn text `needle`, `offset` bytes in, found by the kit's text.
+    fn point_of_drawn(&mut self, needle: &str, offset: usize) -> Point<Pixels> {
+        let snap = self.live();
+        let (key, index, h) = snap
+            .leaves
+            .iter()
+            .filter(|l| !l.is_source)
+            .find_map(|l| l.text.find(needle).map(|i| (l.key, i + offset, l.line_height.unwrap_or(px(20.)))))
+            .unwrap_or_else(|| fail(&format!("{needle:?} is drawn")));
+        let p = self.read(|v, cx| v.page().live().and_then(|e| e.read(cx).drawn_point(key, index))).unwrap_or_else(|| fail("the leaf is laid out"));
+        point(p.x + px(1.), p.y + h / 2.)
+    }
+
+    fn page_focused(&mut self) -> bool {
+        let view = self.view.clone();
+        self.with(|w, cx| view.read(cx).page().focus_handle(cx).is_focused(w))
+    }
+
+    fn cursor(&mut self) -> usize {
+        self.read(|v, cx| v.page().cursor(cx))
+    }
+
+    fn selected(&mut self) -> std::ops::Range<usize> {
+        self.read(|v, cx| v.page().selected_range(cx))
     }
 
     fn appearance(&mut self) -> Appearance {
@@ -188,7 +244,7 @@ impl Snap {
     }
 
     fn select(&mut self, range: std::ops::Range<usize>) {
-        self.update(|v, _, cx| v.page().update(cx, |p, cx| p.set_selected_range(range, cx)));
+        self.update(|v, _, cx| v.page().set_selection(range, cx));
         self.frame();
     }
 }
@@ -234,7 +290,7 @@ pub fn run(dir: &Path) {
     let typed = PARAGRAPHS.join("\n\n");
     check(s.text() == typed, "four paragraphs typed by key events");
     s.shot("02-writing");
-    let page_text = s.view.read_with(&s.cx, |v, cx| v.page().read(cx).range_to_bounds(&(0..0)).map(|b| b.origin));
+    let page_text = s.point_for(0).map(|(p, _)| p);
 
     s.advance(499);
     check(paths.load_draft().is_empty(), "nothing is saved 499 ms after the last edit");
@@ -254,9 +310,10 @@ pub fn run(dir: &Path) {
     check(stats.words_added == 6 && stats.words_removed == 5, "the version bar counts +6 and −5 words");
     s.shot("04-review");
     let page = s.bounds("review").unwrap_or_else(|| fail("the review page is laid out"));
+    let review_text = page.origin + point(px(24.), px(21.));
     check(
-        page_text == Some(page.origin + point(px(10.), px(8.))),
-        "the review's text starts exactly where the page's text does",
+        page_text == Some(review_text),
+        &format!("the review's text starts exactly where the page's text does ({page_text:?} vs {review_text:?})"),
     );
     for i in 0..stats.total {
         let accept = s.bounds(("accept", i)).unwrap_or_else(|| {
@@ -384,6 +441,7 @@ pub fn run(dir: &Path) {
     phone(dir, &expected);
     feedback(dir);
     appearance(dir);
+    live_page(dir);
 }
 
 /// The cog at the top left: hover peeks at the menu, a click pins it, and it never covers the text.
@@ -460,6 +518,8 @@ fn appearance(dir: &Path) {
     check(s.appearance().mode == Mode::Dark && s.appearance().tokens() == inkling_core::appearance::DARK, "Dark switches every colour to the dark set");
     s.shot("26-dark");
     let dark = s.appearance().palette();
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
     s.click(("color", 3usize));
     check(s.read(|v, _| v.picker_part()) == Some(Part::Accent), "a colour row opens the picker under it");
     check(s.bounds(("swatch", 9usize)).is_some() && s.bounds("wheel").is_none(), "the picker shows ten swatches first");
@@ -493,6 +553,8 @@ fn appearance(dir: &Path) {
     s.click("cog");
     s.click("menu-appearance");
     s.advance(200);
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
     s.click("appearance-reset");
     check(s.appearance() == Appearance::default(), "Reset returns to the default look");
     let column = s.bounds("column").map(|b| b.size.width);
@@ -665,4 +727,185 @@ fn feedback(dir: &Path) {
     dev.update(|v, _, cx| v.set_installed_build(Some(BuildNumber(43)), cx));
     dev.frame();
     check(dev.bounds("restart").is_none(), "a development build never offers a restart");
+}
+
+const PAGE: &str = "# Ferry notes\n\n- The crossing takes **twenty-two** minutes\n- The fare is cheap\n\nEnergy is $E = mc^2$ on the water.\n\nThe caret starts in this last paragraph.";
+const GRAMMAR: &str = "i like the **teh** ferry, and $E = mc^2$ is still true.\n\nWe watched the **cold** grey water and dont talk.";
+
+fn lane(ok: bool, lane: &str, what: &str) {
+    check(ok, &format!("{lane} {what}"));
+}
+
+/// The heading's line is taller than the body's.
+fn heading_large(snap: &Snapshot) -> bool {
+    let line = |f: &dyn Fn(&inkling_ui::live::SnapLeaf) -> bool| snap.leaves.iter().find(|l| f(l)).and_then(|l| l.line_height);
+    match (line(&|l| l.block == 0), line(&|l| l.text.contains("on the water"))) {
+        (Some(heading), Some(body)) => heading > body,
+        _ => false,
+    }
+}
+
+fn formula_drawn(snap: &Snapshot) -> bool {
+    snap.formulas.iter().any(|f| f.0 == "E = mc^2")
+}
+
+/// The Mac page is the live editor: its two switches, the review over its source, Find a word,
+/// autosave and focus, each checked on the whole app.
+fn live_page(dir: &Path) {
+    let paths = Paths::mac();
+    let l = "page-01";
+    println!("ok   {l} every step above, the write, ask, review, accept and finish flow, passed on the live page");
+    paths.save_draft(PAGE).expect("write the draft");
+    let mut s = Snap::open(dir);
+    s.shot("page-01-flow");
+
+    let l = "page-02";
+    lane(s.text() == PAGE && s.appearance().markdown && s.appearance().maths, l, "the draft opens with both switches on");
+    let end = PAGE.len();
+    s.select(end..end);
+    let snap = s.live();
+    lane(heading_large(&snap), l, "the heading is drawn larger than body text");
+    lane(formula_drawn(&snap), l, &format!("the formula is drawn as an image {:?}", snap.formulas));
+    lane(snap.mismatches.is_empty(), l, "every block's drawn text matches its source map");
+    s.shot("page-02-on");
+
+    let l = "page-03";
+    s.click("cog");
+    s.click("menu-appearance");
+    s.advance(200);
+    s.click("markdown");
+    lane(!s.appearance().markdown, l, "the Markdown switch turns Markdown off");
+    lane(s.page_focused() && s.cursor() == end, l, "and the page keeps focus and its caret");
+    s.click("maths");
+    lane(s.appearance().maths, l, "the maths switch is disabled while Markdown is off and keeps its value");
+    let snap = s.live();
+    let v = s.text();
+    let plain = snap.leaves.iter().all(|leaf| leaf.is_source && leaf.text == v[leaf.source.clone()]);
+    let drawn: String = snap.leaves.iter().map(|leaf| leaf.text.as_str()).collect::<String>().split_whitespace().collect();
+    let source: String = v.split_whitespace().collect();
+    lane(plain && drawn == source && snap.formulas.is_empty(), l, "the page's drawn text is the draft's source");
+    s.shot("page-03-off");
+
+    let l = "page-04";
+    s.click("markdown");
+    s.click("maths");
+    lane(s.appearance().markdown && !s.appearance().maths, l, "Markdown on, maths off");
+    let snap = s.live();
+    let maths_leaf = snap.leaves.iter().find(|leaf| leaf.text.contains("on the water")).map(|leaf| leaf.text.clone());
+    lane(snap.formulas.is_empty() && maths_leaf.is_some_and(|t| t.contains("$E = mc^2$")), l, "the formula is its source");
+    lane(heading_large(&snap), l, "the heading is still large");
+    s.shot("page-04-md-only");
+    let saved = std::fs::read_to_string(paths.settings()).unwrap_or_default();
+    lane(saved.contains("\"markdown\": true") && saved.contains("\"maths\": false"), l, "both switches are saved to settings.json");
+
+    let l = "page-05";
+    drop(s);
+    let mut s = Snap::open(dir);
+    s.select(end..end);
+    let a = s.appearance();
+    let snap = s.live();
+    lane(a.markdown && !a.maths, l, "a relaunch on the same data folder keeps both switches");
+    lane(snap.formulas.is_empty() && heading_large(&snap), l, "and the page draws as it did before the relaunch");
+    s.shot("page-05-saved");
+    s.update(|v, w, cx| v.set_appearance(|a| a.maths = true, w, cx));
+    s.frame();
+    lane(formula_drawn(&s.live()), l, "turning maths back on draws the formula at once");
+    drop(s);
+
+    let l = "page-06";
+    paths.save_draft(GRAMMAR).expect("write the draft");
+    let mut s = Snap::open(dir);
+    s.click("fix-grammar");
+    s.wait(10_000, reviewing);
+    let review = s.review();
+    lane(review.draft() == GRAMMAR, l, "Fix grammar asks about the Markdown source, markers included");
+    let changes: Vec<_> = review.changes().map(|c| (c.range.clone(), c.removed.to_string(), c.added.to_string())).collect();
+    lane(
+        changes.len() >= 2 && changes.iter().all(|(range, removed, _)| &GRAMMAR[range.clone()] == removed),
+        l,
+        &format!("each change's marked range is its range in the source {changes:?}"),
+    );
+    let drawn: String = review
+        .segments()
+        .iter()
+        .map(|seg| match seg {
+            inkling_core::Segment::Unchanged(t) => t.to_string(),
+            inkling_core::Segment::Change(c) => c.removed.to_string(),
+        })
+        .collect();
+    lane(drawn == GRAMMAR, l, "the review draws the source text, with ** and $ as written");
+    s.shot("page-06-review");
+
+    let l = "page-07";
+    let mut two = review.clone();
+    let ids: Vec<ChangeId> = two.changes().map(|c| c.id).take(2).collect();
+    for &id in &ids {
+        two.accept(id);
+    }
+    let expected = two.result();
+    s.click(("accept", 0usize));
+    s.click(("accept", 1usize));
+    s.press("escape");
+    lane(s.revision() == Revision::Idle && s.text() == expected, l, "accepting two changes and finishing puts them in the source");
+    s.shot("page-07-applied");
+    s.press("cmd-z");
+    s.press("cmd-z");
+    lane(s.text() == GRAMMAR, l, "two undo steps restore the source");
+    s.press("cmd-shift-z");
+    s.press("cmd-shift-z");
+    lane(s.text() == expected, l, "and two redo steps put them back");
+
+    let l = "page-08";
+    let from = s.point_of_drawn("the cold", 0);
+    let to = s.point_of_drawn("grey", 4);
+    s.with(|w, cx| w.drag(from, to, cx));
+    s.frame();
+    let sel = s.selected();
+    lane(&expected[sel.clone()] == "the **cold** grey", l, &format!("dragging over drawn bold text selects its source {:?}", &expected[sel.clone()]));
+    s.shot("page-08-find-word");
+    s.click("find-word");
+    let asked = match s.revision() {
+        Revision::Asking { request, .. } => Some(request.ask().clone()),
+        _ => None,
+    };
+    lane(asked == Some(inkling_core::Ask::FindWord(sel.clone())), l, &format!("Find a word asks about the selection's source range {asked:?}"));
+    s.press("escape");
+    drop(s);
+
+    let l = "page-09";
+    paths.save_draft("").expect("clear the draft");
+    let mut s = Snap::open(dir);
+    s.hover("column");
+    s.advance(200);
+    s.record(true);
+    for (i, line) in ["# Crossing", "- The ferry leaves at **7:40**", "- It takes 22 minutes", "Its energy is $E = mc^2$, give or take."].iter().enumerate() {
+        if i > 0 {
+            s.press("enter");
+            if i != 2 {
+                s.press("enter");
+            }
+        }
+        s.type_slowly(line);
+    }
+    for _ in 0..8 {
+        s.frame();
+    }
+    s.record(false);
+    let typed = s.text();
+    lane(typed.starts_with("# Crossing\n\n- The ferry") && typed.ends_with("give or take."), l, "a heading, a list and a formula typed by key events");
+    s.advance(501);
+    lane(std::fs::read(paths.draft()).ok() == Some(typed.clone().into_bytes()), l, "500 ms later draft.md is the page's source byte for byte");
+    let snap = s.live();
+    lane(snap.leaves.iter().any(|leaf| leaf.block == 0 && !leaf.is_source), l, "the heading is drawn once the caret leaves it");
+    s.shot("page-09-autosave");
+
+    let l = "page-10";
+    let at = typed.find("22").expect("the number") + 1;
+    s.select(at..at);
+    s.press("cmd-,");
+    lane(s.read(|v, _| v.key_screen_provider()).is_some(), l, "Cmd-Comma opens the key screen");
+    s.press("escape");
+    lane(s.page_focused(), l, "closing the key screen gives the page focus again");
+    lane(s.cursor() == at, l, "and the caret is where it was");
+    s.shot("page-10-focus");
 }

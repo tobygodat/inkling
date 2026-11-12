@@ -30,6 +30,9 @@ pub struct Options {
     pub maths: bool,
 }
 
+/// Emitted when the source changes: an edit, an undo or a redo.
+pub struct Edited;
+
 /// The leaf key of the block holding the caret.
 const SOURCE_KEY: u64 = u64::MAX;
 /// Leaf keys are a view's id shifted left by this, plus the leaf's index.
@@ -174,7 +177,12 @@ impl LiveEditor {
     }
 
     pub fn set_appearance(&mut self, appearance: &Appearance, cx: &mut Context<Self>) {
-        self.theme = Theme::new(self.form, appearance, &[]);
+        self.set_theme(Theme::new(self.form, appearance, &[]), cx);
+    }
+
+    /// The app's theme, which knows the faces this device has.
+    pub(crate) fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        self.theme = theme;
         self.extensions = Arc::new(self.build_extensions());
         cx.notify();
     }
@@ -195,6 +203,11 @@ impl LiveEditor {
     fn edit(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         self.draft.replace(range, text);
         self.marked = None;
+        self.source_changed(cx);
+    }
+
+    fn source_changed(&mut self, cx: &mut Context<Self>) {
+        cx.emit(Edited);
         self.changed(cx);
     }
 
@@ -410,6 +423,8 @@ impl LiveEditor {
         }
     }
 }
+
+impl EventEmitter<Edited> for LiveEditor {}
 
 /// What a headless test can read about the last frame.
 #[derive(Debug)]
