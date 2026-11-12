@@ -706,6 +706,7 @@ impl Inkling {
         div()
             .w_full()
             .flex()
+            .items_center()
             .justify_between()
             .gap_3()
             .px_6()
@@ -717,12 +718,7 @@ impl Inkling {
             .children(self.render_restart(cx))
             .when(self.feedback_on, |footer| {
                 footer.child(
-                    div()
-                        .id("open-feedback")
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(color::INK))
-                        .cursor_pointer()
-                        .child("Feedback")
+                    footer_button("open-feedback", "Feedback")
                         .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
                         .test_support(),
                 )
@@ -882,6 +878,25 @@ pub(crate) fn ghost_button(id: &'static str, label: &'static str) -> Stateful<Di
         .rounded(px(6.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(rgb(color::MUTED))
+        .cursor_pointer()
+        .child(label)
+}
+
+/// A Mac footer action: a small outlined pill, so it reads as a button beside the footer's text.
+pub(crate) fn footer_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .h(px(26.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .bg(rgb(color::SURFACE))
+        .border_1()
+        .border_color(rgb(color::HAIRLINE))
+        .rounded(px(13.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(rgb(color::INK))
         .cursor_pointer()
         .child(label)
 }

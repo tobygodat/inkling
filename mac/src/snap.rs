@@ -396,7 +396,8 @@ fn feedback(dir: &Path) {
     check(leaked.is_empty(), &format!("the link is in no file in the data folder {leaked:?}"));
     s.shot("14-feedback-link");
     s.press("escape");
-    check(s.bounds("open-feedback").is_some(), "the footer offers Feedback");
+    let feedback = s.bounds("open-feedback");
+    check(feedback.is_some_and(|b| b.size.height >= px(24.)), "the footer offers Feedback as a button, not bare text");
 
     s.click("open-feedback");
     check(s.read(|v, _| v.feedback_open()), "Feedback opens the feedback screen");
@@ -475,7 +476,7 @@ fn feedback(dir: &Path) {
     check(s.bounds("restart").is_none(), "the running build on disk offers no restart");
     s.update(|v, _, cx| v.set_installed_build(Some(BuildNumber(43)), cx));
     s.frame();
-    check(s.bounds("restart").is_some(), "a newer build on disk offers Restart");
+    check(s.bounds("restart").is_some_and(|b| b.size.height >= px(24.)), "a newer build on disk offers a Restart button");
     s.shot("20-restart");
     s.input("Restart now. ");
     s.click("restart");

@@ -2,7 +2,7 @@
 //! device sent with each item's status in the running build. It renders `inkling_core::Desk` and
 //! keeps no copy of it. Nothing here is reachable until a feedback link is saved.
 
-use crate::app::{Inkling, ghost_button, primary_button};
+use crate::app::{Inkling, footer_button, ghost_button, primary_button};
 use crate::{FormFactor, SERIF, color};
 use gpui_kit::component::input::Textarea;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -128,12 +128,7 @@ impl Inkling {
                 .text_color(rgb(color::MUTED))
                 .child(format!("Build {} is installed.", build.0))
                 .child(
-                    div()
-                        .id("restart")
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(color::INK))
-                        .cursor_pointer()
-                        .child("Restart")
+                    footer_button("restart", "Restart")
                         .on_click(cx.listener(|this, _, _, cx| this.restart(cx)))
                         .test_support(),
                 ),
