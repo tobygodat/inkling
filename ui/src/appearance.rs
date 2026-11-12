@@ -4,7 +4,10 @@
 use crate::app::{Inkling, Screen, ghost_button};
 use crate::icons::Icon;
 use crate::picker::Picker;
+use crate::theme::Colors;
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::Disableable as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::appearance::{LineSpacing, PageWidth, TextSize};
@@ -159,7 +162,9 @@ impl Inkling {
         if let Err(e) = self.settings.save(&self.paths) {
             self.notice = Some(format!("Couldn't save the appearance ({e}).").into());
         }
-        self.theme().apply_to_kit(cx);
+        let theme = self.theme();
+        theme.apply_to_kit(cx);
+        self.page.set_look(&self.settings.appearance, theme, cx);
         window.refresh();
         cx.notify();
     }
@@ -171,6 +176,51 @@ impl Inkling {
         if let Screen::Page(Some(panel)) = &self.screen {
             panel.follow(&self.settings.appearance, window, cx);
         }
+    }
+
+    /// Markdown, then maths. Maths is drawn only with Markdown, so its switch is disabled while
+    /// Markdown is off and keeps its saved value for when Markdown comes back. A flip hands focus
+    /// back to the page, so the writer sees the change and keeps typing where they were.
+    fn render_switches(&self, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let a = &self.settings.appearance;
+        let view = cx.entity().downgrade();
+        let row = |id: &'static str, label: &'static str, on: bool, enabled: bool, set: fn(&mut Appearance, bool)| {
+            let view = view.clone();
+            div()
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .text_size(px(13.))
+                .when(!enabled, |row| row.text_color(c.muted))
+                .child(label)
+                .child(
+                    div()
+                        .id(id)
+                        .child(
+                            Switch::new((id, 1usize))
+                                .checked(on)
+                                .disabled(!enabled)
+                                .color(c.link)
+                                .accessibility_label(label)
+                                .on_click(move |next, window, cx| {
+                                    let next = *next;
+                                    view.update(cx, |this, cx| {
+                                        this.set_appearance(|a| set(a, next), window, cx);
+                                        this.focus_page(window, cx);
+                                    })
+                                    .ok();
+                                }),
+                        )
+                        .test_support(),
+                )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(row("markdown", "Markdown", a.markdown, true, |a, on| a.markdown = on))
+            .child(row("maths", "Maths", a.maths, a.markdown, |a, on| a.maths = on))
     }
 
     pub(crate) fn render_appearance(&self, panel: &AppearancePanel, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -258,6 +308,7 @@ impl Inkling {
                     .child(self.render_modes(&c, cx))
                     .child(section("Font").child(faces))
                     .child(div().flex().flex_col().gap_5().children(sliders))
+                    .child(section("Drawing").child(self.render_switches(&c, cx)))
                     .child(section("Colours").child(self.render_colors(&c, cx)))
                     .child(
                         div().flex().child(

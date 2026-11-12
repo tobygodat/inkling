@@ -3,7 +3,7 @@
 
 use crate::app::{Inkling, ghost_button};
 use crate::inline::{InlineText, ROOM, room_for, width_of};
-use crate::theme::Colors;
+use crate::theme::{Body, Colors};
 use crate::{FormFactor, SANS};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -12,11 +12,17 @@ use std::ops::Range;
 
 const PENDING_CONTROLS: f32 = 70.;
 const MORE_BUTTON: f32 = 56.;
-/// The page's text sits this far inside the kit's text area, which also stops wrapping
-/// `TEXTAREA_RIGHT` short of its right edge. The review matches both so nothing moves.
-const TEXTAREA_INSET: Pixels = px(10.);
-const TEXTAREA_TOP: Pixels = px(8.);
-const TEXTAREA_RIGHT: Pixels = px(20.);
+/// Where the page's text sits inside the page: left, right and top. The review matches it, so
+/// nothing moves when a review opens.
+fn text_inset(form: FormFactor, body: &Body) -> (Pixels, Pixels, Pixels) {
+    match form {
+        FormFactor::Mac => {
+            let gutter = form.metrics().gutter;
+            (gutter, gutter, body.size)
+        }
+        FormFactor::Phone => (px(10.), px(20.), px(8.)),
+    }
+}
 
 fn removed(c: &Colors) -> HighlightStyle {
     HighlightStyle {
@@ -127,6 +133,7 @@ impl Inkling {
         let styled = StyledText::new(out.text).with_highlights(out.highlights);
         let layout = styled.layout().clone();
         let changes = out.changes;
+        let (left, right, top) = text_inset(self.form, &t.body);
         div()
             .id("review")
             .size_full()
@@ -135,7 +142,7 @@ impl Inkling {
             .text_size(t.body.size)
             .line_height(relative(t.body.line))
             .text_color(c.ink)
-            .child(div().pl(TEXTAREA_INSET).pr(TEXTAREA_RIGHT).pt(TEXTAREA_TOP).child(InlineText::new(styled, out.controls)))
+            .child(div().pl(left).pr(right).pt(top).child(InlineText::new(styled, out.controls)))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 if this.form != FormFactor::Phone {
                     return;

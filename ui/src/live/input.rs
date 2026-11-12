@@ -126,12 +126,12 @@ pub(super) fn actions(page: Stateful<Div>, cx: &mut Context<LiveEditor>) -> Stat
     }))
     .on_action(cx.listener(|e, _: &Undo, _, cx| {
         if e.draft.undo() {
-            e.changed(cx);
+            e.source_changed(cx);
         }
     }))
     .on_action(cx.listener(|e, _: &Redo, _, cx| {
         if e.draft.redo() {
-            e.changed(cx);
+            e.source_changed(cx);
         }
     }))
 }

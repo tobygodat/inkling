@@ -9,6 +9,7 @@ mod icons;
 mod inline;
 mod keys;
 pub mod live;
+mod page;
 mod picker;
 mod review;
 mod theme;
@@ -17,6 +18,7 @@ pub use app::{Inkling, OpenKeys, Saved};
 pub use chrome::Menu;
 pub use feedback::Restart;
 pub use icons::Assets;
+pub use page::Page;
 
 use gpui_kit::*;
 use std::borrow::Cow;
@@ -83,4 +85,5 @@ pub fn init(cx: &mut App) {
     theme.font_size = px(14.);
     theme.shadow = false;
     cx.bind_keys([KeyBinding::new("cmd-,", OpenKeys, None)]);
+    live::bind_keys(cx);
 }

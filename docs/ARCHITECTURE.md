@@ -52,7 +52,7 @@ shows what happened. `core::feedback::Desk` owns all of it, the way `Revision` o
 
 ## Appearance
 `core::appearance::Appearance` is what the writer chose: Light, Dark or Custom, the four custom
-colours, the body face, text size, line spacing and page width. It lives in `settings.json` and is
+colours, the body face, text size, line spacing, page width, and the Markdown and maths switches. It lives in `settings.json` and is
 read leniently: a missing field or one that can't be read takes its default, and every number is
 clamped, so neither an old file nor a hand edit can load an invalid look or cost the other
 settings. `Appearance::tokens` derives every colour the views draw; Light is exactly the table in
@@ -63,6 +63,29 @@ is the one place views read them. The Mac uses the writer's appearance in a face
 has (asked once at launch); the iPhone always gets the default look at its own sizes.
 `Inkling::set_appearance` is the one way to change it: it saves the file, recolours GPUI Kit's
 theme and redraws the window.
+
+## The page
+`ui::page::Page` is the writing page, one value with two variants. On the Mac it is
+`Page::Live`, the live editor in `ui/src/live/`. On iPhone it is `Page::Plain`, GPUI Kit's text
+area, until the live editor takes touch. Asking, Find a word, Next line, autosave and finishing a
+review use only `Page`'s `value`, `selected_range`, `cursor` and `replace`, so they see the
+Markdown source and its byte ranges whichever variant is open.
+
+The live editor keeps the source in `core::draft::Draft`, which owns the selection, the top-level
+blocks and the undo history, and changes only through `Draft::replace`. Each block's
+`SourceMap` maps the text GPUI Kit draws back to source bytes, so a click or a drag on drawn text
+lands on the right byte. Every block is drawn by GPUI Kit's Markdown renderer except the one that
+holds the caret, which shows its source with the syntax muted. RaTeX sets each formula, and the
+editor caches the image per formula, size, colour and scale. A remote image is drawn as its alt text and never
+fetched.
+
+`Appearance::markdown` and `Appearance::maths` are the page's two switches.
+`Inkling::set_appearance` passes them, with the theme, to the editor, which redraws at once. With
+Markdown off, every block is its source and maths is off too, because `$` is Markdown here.
+
+The review keeps drawing the source text, syntax included, so each change sits on the bytes it
+replaces. On the Mac its text starts where the live page's does, so nothing moves when a review
+opens.
 
 ## What is open
 `Inkling::screen` is one `Screen`: the page, the key screen or the feedback screen. The page

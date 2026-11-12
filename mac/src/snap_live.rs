@@ -4,7 +4,7 @@
 use super::*;
 use gpui_kit::test::TestWindowExt as _;
 use inkling_core::{Appearance, Face, Mode};
-use inkling_ui::live::{LiveEditor, Options, Snapshot, bind_keys};
+use inkling_ui::live::{LiveEditor, Options, Snapshot};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -72,10 +72,7 @@ impl Live {
             Arc::new(inkling_ui::Assets),
             gpui_kit::platform::current_headless_renderer,
         );
-        cx.update(|cx| {
-            init(cx);
-            bind_keys(cx);
-        });
+        cx.update(init);
         let text = text.to_string();
         let images = images.to_path_buf();
         let (window, view) = cx
@@ -239,7 +236,7 @@ pub fn run(dir: &Path) {
 
     // Lane 1.
     let l = "live-01";
-    println!("ok   {l} trunk has no live editor: the app's page is unchanged in this PR, and the flow above passed");
+    println!("ok   {l} the editor alone, outside the app; the app's own flow on the live page is page-01 above");
     let snap = s.snap();
     let active = snap.active.unwrap_or_else(|| fail("a block holds the caret"));
     let source_leaves: Vec<_> = snap.leaves.iter().filter(|l| l.is_source).collect();
@@ -435,8 +432,8 @@ pub fn run(dir: &Path) {
     std::fs::remove_dir_all(&images).ok();
 }
 
-/// Typed character to painted frame, on a 5,000-word draft, for `page`: the app's `Textarea`
-/// page or the live editor.
+/// Typed character to painted frame, on a 5,000-word draft, for `page`: the live editor alone,
+/// or the whole app's page, which reads the draft from `INKLING_DATA_DIR`.
 pub fn bench(page: &str) {
     let mut doc = String::from("# Long draft\n\n");
     let mut i = 0;
@@ -466,6 +463,10 @@ pub fn bench(page: &str) {
             check(s.value().len() == doc.len() + 220, "bench", "every character reached the draft");
         }
         _ => {
+            if std::env::var_os("INKLING_DATA_DIR").is_none() {
+                fail("the app bench needs INKLING_DATA_DIR set to a temp folder");
+            }
+            inkling_core::Paths::mac().save_draft(&doc).expect("write the bench draft");
             let mut cx = HeadlessAppContext::with_platform(
                 gpui_kit::platform::current_platform(true).text_system(),
                 Arc::new(inkling_ui::Assets),
@@ -475,12 +476,7 @@ pub fn bench(page: &str) {
             let build = Build::with_records(None, []);
             let (window, view) = cx.update(|cx| open(cx, FormFactor::Mac, false, false, Box::new(Arc::new(inkling_core::MemoryKeys::default())), build)).expect("window");
             let with = |cx: &mut HeadlessAppContext, f: &mut dyn FnMut(&mut Window, &mut App)| cx.update_window(window, |_, w, cx| f(w, cx)).expect("window");
-            with(&mut cx, &mut |w, cx| {
-                view.update(cx, |v, cx| v.page().update(cx, |p, cx| {
-                    p.set_value(doc.clone(), w, cx);
-                    p.set_selected_range(caret..caret, cx);
-                }));
-            });
+            with(&mut cx, &mut |_, cx| view.update(cx, |v, cx| v.page().set_selection(caret..caret, cx)));
             cx.run_until_parked();
             with(&mut cx, &mut |w, cx| w.render_frame(cx));
             for n in 0..220 {

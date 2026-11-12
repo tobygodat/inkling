@@ -304,7 +304,7 @@ pub type LineSpacing = Clamped<120, 220, 175>;
 pub type PageWidth = Clamped<480, 960, 700>;
 
 /// What the writer chose on the Appearance panel. Kept in `settings.json`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
     #[serde(deserialize_with = "lenient")]
@@ -320,6 +320,32 @@ pub struct Appearance {
     pub line_spacing: LineSpacing,
     #[serde(deserialize_with = "lenient")]
     pub page_width: PageWidth,
+    /// Draw the page's Markdown. Off, every block shows its source, maths included.
+    #[serde(deserialize_with = "switch")]
+    pub markdown: bool,
+    /// Draw `$…$` and `$$…$$` as maths. Has no effect while `markdown` is off.
+    #[serde(deserialize_with = "switch")]
+    pub maths: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance {
+            mode: Mode::default(),
+            custom: Palette::default(),
+            face: Face::default(),
+            text_size: TextSize::default(),
+            line_spacing: LineSpacing::default(),
+            page_width: PageWidth::default(),
+            markdown: true,
+            maths: true,
+        }
+    }
+}
+
+/// Reads a switch, or gives on when the value is there but isn't a bool.
+fn switch<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    Ok(serde_json::Value::deserialize(d)?.as_bool().unwrap_or(true))
 }
 
 /// Reads `T`, or gives its default when the value is there but isn't a `T`.

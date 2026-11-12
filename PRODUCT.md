@@ -17,6 +17,8 @@ to the provider the writer picked.
 - The AI never changes the draft on its own. Every change is shown and is the writer's to accept.
 - Rejecting is as cheap as accepting.
 - It should be fun to use, not just quiet.
+- Images on the page load from local files only. A remote image shows its alt text, so opening a
+  draft never sends a request the writer didn't ask for.
 
 ## Accessibility
 Text and labels meet 4.5:1 contrast in Light and Dark; a Custom look is the writer's own. Touch targets on iPhone are at least 44 pt. Accepted and rejected

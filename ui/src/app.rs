@@ -2,9 +2,10 @@ pub(crate) use crate::chrome::Menu;
 use crate::appearance::AppearancePanel;
 use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
+use crate::page::Page;
 use crate::theme::{Colors, Theme};
 use crate::{FormFactor, Metrics, SANS};
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::{
@@ -76,7 +77,7 @@ pub struct Inkling {
     pub(crate) keys: Box<dyn KeyStore>,
     /// Asked of the key store when the provider or its key changes, never on a frame.
     pub(crate) key_saved: bool,
-    pub(crate) page: Entity<TextareaState>,
+    pub(crate) page: Page,
     pub(crate) ask_field: Entity<InputState>,
     /// All AI state. The views render it and keep no copy.
     pub(crate) revision: Revision,
@@ -123,24 +124,12 @@ impl Inkling {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = Settings::load(&paths);
-        let draft = paths.load_draft();
-        let page = cx.new(|cx| {
-            let mut page = TextareaState::new(window, cx)
-                .soft_wrap(true)
-                .autocorrect(true)
-                .autocapitalize(Autocapitalize::Sentences);
-            if form == FormFactor::Phone {
-                page = page.placeholder("Start writing");
-            }
-            page.set_value(draft, window, cx);
-            page
-        });
+        let installed = cx.text_system().all_font_names();
+        let faces: Vec<Face> = Face::ALL.into_iter().filter(|f| installed.iter().any(|n| n == f.family())).collect();
+        let theme = Theme::new(form, &settings.appearance, &faces);
+        let page = Page::new(form, paths.load_draft(), &settings.appearance, theme, paths.dir.clone(), window, cx);
         let ask_field = cx.new(|cx| InputState::new(window, cx).placeholder("Ask for fixes, words or a nudge"));
-        let edited = cx.subscribe_in(&page, window, |this, _, event: &InputEvent, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.edited(cx);
-            }
-        });
+        let edited = page.on_edit(window, cx, Self::edited);
         let sent = cx.subscribe_in(&ask_field, window, |this, _, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 this.send(window, cx);
@@ -154,7 +143,7 @@ impl Inkling {
             }
         });
         if form == FormFactor::Mac {
-            page.read(cx).focus_handle(cx).focus(window, cx);
+            page.focus_handle(cx).focus(window, cx);
         }
         let key_saved = keys.has(Secret::ApiKey(settings.provider));
         let feedback = Desk::open(paths.clone(), build);
@@ -167,8 +156,6 @@ impl Inkling {
                 .autocapitalize(Autocapitalize::Sentences)
                 .placeholder("Say what you'd like Inkling to do differently")
         });
-        let installed = cx.text_system().all_font_names();
-        let faces: Vec<Face> = Face::ALL.into_iter().filter(|f| installed.iter().any(|n| n == f.family())).collect();
         let feedback_edited = cx.subscribe_in(&feedback_field, window, |this, _, event: &InputEvent, _, cx| {
             if matches!(event, InputEvent::Change) {
                 this.feedback.edited();
@@ -207,7 +194,7 @@ impl Inkling {
     }
 
     pub fn text(&self, cx: &App) -> String {
-        self.page.read(cx).value().to_string()
+        self.page.value(cx)
     }
 
     pub fn revision(&self) -> &Revision {
@@ -218,7 +205,7 @@ impl Inkling {
         &self.saved
     }
 
-    pub fn page(&self) -> &Entity<TextareaState> {
+    pub fn page(&self) -> &Page {
         &self.page
     }
 
@@ -353,33 +340,33 @@ impl Inkling {
     }
 
     pub fn fix_grammar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.ask(|_| Ask::FixGrammar, window, cx);
+        self.ask(|_, _| Ask::FixGrammar, window, cx);
     }
 
     pub fn find_word(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.ask(|page| Ask::FindWord(page.selected_range()), window, cx);
+        self.ask(|page, cx| Ask::FindWord(page.selected_range(cx)), window, cx);
     }
 
     pub fn next_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.ask(|page| Ask::NextLine { at: page.cursor() }, window, cx);
+        self.ask(|page, cx| Ask::NextLine { at: page.cursor(cx) }, window, cx);
     }
 
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let instruction = self.ask_field.read(cx).value().to_string();
-        self.ask(move |_| Ask::Freeform(instruction), window, cx);
+        self.ask(move |_, _| Ask::Freeform(instruction), window, cx);
         if self.revision.is_busy() {
             self.ask_field.update(cx, |field, cx| field.set_value("", window, cx));
         }
     }
 
     /// Asks about the page as it stands. A review still open ends first, keeping what was accepted.
-    fn ask(&mut self, ask: impl FnOnce(&TextareaState) -> Ask, window: &mut Window, cx: &mut Context<Self>) {
+    fn ask(&mut self, ask: impl FnOnce(&Page, &App) -> Ask, window: &mut Window, cx: &mut Context<Self>) {
         if self.revision.review().is_some() {
             self.finish(window, cx);
         }
         self.running = None;
         self.notice = None;
-        let ask = ask(self.page.read(cx));
+        let ask = ask(&self.page, cx);
         let request = match Request::new(self.text(cx), ask) {
             Ok(request) => request,
             Err(bad) => {
@@ -490,13 +477,9 @@ impl Inkling {
     /// Ends the review: each accepted change goes into the page through the editor, one undo
     /// step per change, and the page is editable again.
     pub fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let edits = self.revision.finish();
-        self.page.update(cx, |page, cx| {
-            for edit in edits {
-                page.set_selected_range(edit.range, cx);
-                page.replace(edit.text, window, cx);
-            }
-        });
+        for edit in self.revision.finish() {
+            self.page.replace(edit.range, &edit.text, window, cx);
+        }
         self.back_to_page(window, cx);
     }
 
@@ -511,7 +494,7 @@ impl Inkling {
     /// raises the keyboard.
     pub(crate) fn focus_page(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.form == FormFactor::Mac {
-            self.page.read(cx).focus_handle(cx).focus(window, cx);
+            self.page.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -523,7 +506,7 @@ impl Inkling {
     }
 
     fn typing(&self, window: &Window, cx: &App) -> bool {
-        self.page.read(cx).focus_handle(cx).is_focused(window) || self.ask_field.read(cx).focus_handle(cx).is_focused(window)
+        self.page.focus_handle(cx).is_focused(window) || self.ask_field.read(cx).focus_handle(cx).is_focused(window)
     }
 
     pub fn open_keys(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
@@ -662,15 +645,7 @@ impl Inkling {
         if self.revision.review().is_some() {
             return self.render_review(window, cx);
         }
-        let t = self.theme();
-        Textarea::new(&self.page)
-            .appearance(false)
-            .h_full()
-            .font_family(t.body.face)
-            .text_size(t.body.size)
-            .line_height(relative(t.body.line))
-            .text_color(t.c.ink)
-            .into_any_element()
+        self.page.render(&self.theme())
     }
 
     fn render_message(&self) -> Option<impl IntoElement + use<>> {
