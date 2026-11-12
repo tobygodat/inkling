@@ -54,12 +54,14 @@ proptest! {
         custom in field(prop::collection::vec(color(), 4).prop_map(|c| json!({"background": c[0], "foreground": c[1], "text": c[2], "accent": c[3]}))),
         face in field(prop::sample::select(Face::ALL.map(|f| json!(f.family())).to_vec())),
         sizes in (field(number()), field(number()), field(number())),
+        switches in (field(any::<bool>().prop_map(|b| json!(b))), field(any::<bool>().prop_map(|b| json!(b)))),
         paint in (prop::sample::select(Part::ALL.to_vec()), any::<u32>()),
         case in any::<u64>(),
     ) {
         let (text_size, line_spacing, page_width) = sizes;
+        let (markdown, maths) = switches;
         let mut appearance = serde_json::Map::new();
-        for (key, value) in [("mode", &mode), ("custom", &custom), ("face", &face), ("text_size", &text_size), ("line_spacing", &line_spacing), ("page_width", &page_width)] {
+        for (key, value) in [("mode", &mode), ("custom", &custom), ("face", &face), ("text_size", &text_size), ("line_spacing", &line_spacing), ("page_width", &page_width), ("markdown", &markdown), ("maths", &maths)] {
             if let Some(value) = value {
                 appearance.insert(key.into(), value.clone());
             }
@@ -89,6 +91,9 @@ proptest! {
         prop_assert_eq!(a.text_size.get(), clamp(&text_size, 15, 32, 21));
         prop_assert_eq!(a.line_spacing.get(), clamp(&line_spacing, 120, 220, 175));
         prop_assert_eq!(a.page_width.get(), clamp(&page_width, 480, 960, 700));
+        let switch = |v: &Option<Value>| v.as_ref().filter(|_| present).and_then(Value::as_bool).unwrap_or(true);
+        prop_assert_eq!(a.markdown, switch(&markdown), "a file from before the switches, or junk for one, draws Markdown");
+        prop_assert_eq!(a.maths, switch(&maths), "and maths");
         if present {
             prop_assert_eq!(a.mode, expect::<Mode>(&mode));
             prop_assert_eq!(a.face, expect::<Face>(&face));
