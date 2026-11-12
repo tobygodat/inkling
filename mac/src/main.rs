@@ -6,6 +6,8 @@ use std::time::Duration;
 
 #[cfg(feature = "snap")]
 mod snap;
+#[cfg(feature = "snap")]
+mod snap_live;
 
 gpui_kit::actions!(inkling_mac, [Quit]);
 
@@ -52,6 +54,14 @@ fn main() {
     #[cfg(feature = "snap")]
     if let Some(dir) = std::env::args().skip_while(|a| a != "--snap").nth(1) {
         return snap::run(std::path::Path::new(&dir));
+    }
+    #[cfg(feature = "snap")]
+    if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-live").nth(1) {
+        return snap_live::run(std::path::Path::new(&dir));
+    }
+    #[cfg(feature = "snap")]
+    if let Some(page) = std::env::args().skip_while(|a| a != "--bench-typing").nth(1) {
+        return snap_live::bench(&page);
     }
     gpui_kit::application().with_assets(inkling_ui::Assets).run(|cx| {
         init(cx);

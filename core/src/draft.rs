@@ -50,6 +50,28 @@ pub struct SourceMap {
     pub leaves: Vec<Leaf>,
 }
 
+impl SourceMap {
+    /// The bytes of `block` that draw nothing: Markdown syntax such as `**`, `# `, `- `, link
+    /// targets and the backslash of an escape.
+    pub fn markers(&self, block: Range<usize>) -> Vec<Range<usize>> {
+        let mut out = vec![];
+        let mut at = block.start;
+        for s in self.leaves.iter().flat_map(|l| &l.segments) {
+            if at < s.source.start {
+                out.push(at..s.source.start);
+            }
+            if s.kind == Kind::Escape {
+                out.push(s.source.start..s.source.start + 1);
+            }
+            at = at.max(s.source.end);
+        }
+        if at < block.end {
+            out.push(at..block.end);
+        }
+        out
+    }
+}
+
 /// One drawn run of text and where each piece of it comes from. A segment that isn't `Same`
 /// (an escape, an entity, a line ending, an image) is one caret stop.
 #[derive(Debug, Default)]
@@ -125,21 +147,6 @@ impl Leaf {
             }
             _ => s.drawn.end,
         }
-    }
-
-    /// Source bytes inside this leaf that draw nothing: emphasis markers, link targets, the
-    /// backslash of an escape.
-    pub fn markers(&self) -> Vec<Range<usize>> {
-        let mut out = vec![];
-        for pair in self.segments.windows(2) {
-            if pair[0].source.end < pair[1].source.start {
-                out.push(pair[0].source.end..pair[1].source.start);
-            }
-        }
-        for s in self.segments.iter().filter(|s| s.kind == Kind::Escape) {
-            out.push(s.source.start..s.source.start + 1);
-        }
-        out
     }
 
     fn push(&mut self, drawn: &str, source: Range<usize>, kind: Kind) {
@@ -442,13 +449,14 @@ pub struct Draft {
     source: String,
     selection: Selection,
     blocks: Vec<Block>,
+    definitions: Vec<Range<usize>>,
     history: History,
     claim: Claim,
 }
 
 impl Draft {
     pub fn new(source: impl Into<String>, claim: Claim) -> Self {
-        let mut draft = Draft { source: source.into(), selection: Selection::default(), blocks: vec![], history: History::default(), claim };
+        let mut draft = Draft { source: source.into(), selection: Selection::default(), blocks: vec![], definitions: vec![], history: History::default(), claim };
         draft.reparse();
         draft
     }
@@ -463,6 +471,11 @@ impl Draft {
 
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
+    }
+
+    /// The top-level link reference definitions, which every block's references resolve against.
+    pub fn definitions(&self) -> impl Iterator<Item = &str> {
+        self.definitions.iter().map(|r| &self.source[r.clone()])
     }
 
     /// The block the byte belongs to: the last one starting at or before it.
@@ -569,6 +582,7 @@ impl Draft {
 
     fn reparse(&mut self) {
         self.blocks.clear();
+        self.definitions.clear();
         let Ok(Node::Root(root)) = markdown::to_mdast(&self.source, &options(true)) else { return };
         let mut defs = HashSet::new();
         for child in &root.children {
@@ -577,6 +591,9 @@ impl Draft {
         let mapper = Mapper { source: &self.source, claim: &self.claim, definitions: &defs };
         for child in &root.children {
             let Some(range) = span(child, 0) else { continue };
+            if matches!(child, Node::Definition(_)) {
+                self.definitions.push(range.clone());
+            }
             self.blocks.push(Block { range, map: mapper.block(child) });
         }
     }
