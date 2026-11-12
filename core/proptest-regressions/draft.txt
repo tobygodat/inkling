@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc f67c51fac02227880198565e06be7a40be63fd2cf0c39194ce8dbd21656e4af1 # shrinks to (source, expected) = ("w ferry w", [["w ferry w"]]), edits = []
+cc e098f40b060225a4a6ca6c1af69086d15091365932f36628756d3b099e18e273 # shrinks to (source, expected) = ("> w ,  w\n> w <https://a.example/x>   w\n\nsep\n\nw \\* <https://a.example/x> <https://a.example/x> w\n\nsep\n\n| a \\| b | c |\n|---|---|\n| &amp; | `x` |\n\nsep\n\nw &amp; `co de` 😀 https://b.example w  \nw *it* *it* w", [["w ,  w w https://a.example/x   w"], ["sep"], ["w * https://a.example/x https://a.example/x w"], ["sep"], ["a | b", "c", "&", "x"], ["sep"], ["w & co de 😀 https://b.example w\nw it it w"]]), edits = [Replace(1918024082505, 6, "\n"), Backspace, Delete, Backspace, Backspace, Backspace, Replace(0, 0, "")], (a, b) = (16198459436755678830, 0)
