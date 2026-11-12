@@ -3,7 +3,7 @@
 use super::*;
 use gpui_kit::test::TestWindowExt as _;
 use inkling_core::feedback::{Delivery, FeedbackId, Outcome, Record, SendError, Status};
-use inkling_core::{AiEvent, Build, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
+use inkling_core::{AiEvent, Appearance, Build, Face, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
 use inkling_ui::{Menu, Restart};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -96,6 +96,23 @@ impl Snap {
         self.cx.advance_clock(Duration::from_millis(260));
         self.update(|_, _, cx| cx.notify());
         self.frame();
+    }
+
+    /// Drags a panel slider's thumb to `fraction` of its track.
+    fn slide(&mut self, id: &'static str, from: f32, to: f32) {
+        let track = self.bounds(id).unwrap_or_else(|| fail(&format!("the {id} slider is laid out")));
+        let at = |f: f32| point(track.left() + track.size.width * f, track.center().y);
+        self.with(|w, cx| w.drag(at(from), at(to), cx));
+        self.frame();
+    }
+
+    /// The height of the page's first line, which follows the text size.
+    fn first_line(&mut self) -> Pixels {
+        self.read(|v, cx| v.page().read(cx).range_to_bounds(&(0..1)).map(|b| b.size.height)).unwrap_or_default()
+    }
+
+    fn appearance(&mut self) -> Appearance {
+        self.read(|v, _| v.appearance().clone())
     }
 
     fn menu(&mut self) -> Menu {
@@ -366,6 +383,7 @@ pub fn run(dir: &Path) {
     drop(relaunch);
     phone(dir, &expected);
     feedback(dir);
+    appearance(dir);
 }
 
 /// The cog at the top left: hover peeks at the menu, a click pins it, and it never covers the text.
@@ -401,6 +419,58 @@ fn cog(s: &mut Snap) {
     s.advance(200);
     check(s.menu() == Menu::Closed && s.text().is_empty(), "Escape closes it and leaves the page alone");
     s.shot("23-menu-closed");
+}
+
+/// The Appearance panel beside the page: every change shows on the page at once, is saved, and
+/// comes back after a relaunch.
+fn appearance(dir: &Path) {
+    let paths = Paths::mac();
+    let mut s = Snap::open(dir);
+    s.hover("column");
+    s.advance(200);
+    let line = s.first_line();
+    let narrow = s.bounds("column").unwrap_or_else(|| fail("the column is laid out"));
+    s.click("cog");
+    s.click("menu-appearance");
+    s.advance(200);
+    check(s.read(|v, _| v.appearance_open()), "Appearance in the cog's menu opens the panel");
+    let panel = s.bounds("appearance").unwrap_or_else(|| fail("the panel is drawn"));
+    let column = s.bounds("column").unwrap_or_else(|| fail("the page stays on screen"));
+    check(panel.left() == px(0.) && panel.size.width == px(300.), "the panel is 300 pt wide on the left");
+    check(column.left() >= panel.right(), "the page sits beside the panel, not under it");
+    check(s.bounds(("face", 0usize)).is_some() && s.bounds(("face", 1usize)).is_some(), "the font list offers Source Serif 4 and this Mac's faces");
+    s.shot("24-appearance-open");
+
+    let face = s.read(|v, _| v.faces().get(1).copied()).unwrap_or_else(|| fail("this Mac has a second face"));
+    s.click(("face", 1usize));
+    check(s.appearance().face == face, &format!("choosing {} sets the body face", face.family()));
+    s.slide("text-size", 6. / 17., 15. / 17.);
+    let size = s.appearance().text_size.get();
+    check(size > 27 && s.first_line() > line, &format!("a bigger text size ({size} pt) takes effect on the page"));
+    s.slide("page-width", 220. / 480., 1.);
+    let wide = s.bounds("column").unwrap_or_else(|| fail("the column is laid out"));
+    check(s.appearance().page_width.get() == 960 && wide.size.width > column.size.width, "a wider page width widens the column");
+    s.slide("line-spacing", 0.55, 0.2);
+    check(s.appearance().line_spacing.get() < 175, "the line spacing slider sets the spacing");
+    let saved = std::fs::read_to_string(paths.settings()).unwrap_or_default();
+    check(saved.contains(&format!("\"text_size\": {size}")) && saved.contains(face.family()), "every change is saved to settings.json");
+    s.shot("25-appearance-changed");
+    let before = s.appearance();
+    s.click("appearance-done");
+    check(!s.read(|v, _| v.appearance_open()), "Done closes the panel");
+    drop(s);
+
+    let mut s = Snap::open(dir);
+    check(s.appearance() == before, "a relaunch restores the appearance");
+    s.shot("26-appearance-relaunched");
+    s.click("cog");
+    s.click("menu-appearance");
+    s.advance(200);
+    s.click("appearance-reset");
+    check(s.appearance() == Appearance::default(), "Reset returns to the default look");
+    let column = s.bounds("column").map(|b| b.size.width);
+    check(s.first_line() == line && column == Some(narrow.size.width.min(px(700.))), "and the page is as it was");
+    check(Face::default() == s.appearance().face, "in Source Serif 4");
 }
 
 /// The same views laid out for iPhone: no inline controls, a tap selects, a sheet acts.

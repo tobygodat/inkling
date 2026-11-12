@@ -100,7 +100,7 @@ fn key_page(provider: Provider) -> &'static str {
 
 impl Inkling {
     fn pick_provider(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
-        let Screen::Keys(mut screen) = std::mem::replace(&mut self.screen, Screen::Page) else { return };
+        let Screen::Keys(mut screen) = std::mem::replace(&mut self.screen, Screen::Page(None)) else { return };
         screen.show(provider, self, window, cx);
         self.screen = Screen::Keys(screen);
         cx.notify();

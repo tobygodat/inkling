@@ -40,7 +40,7 @@ impl Inkling {
     /// The field keeps its text, so text typed and not sent, or sent and failed, is there when
     /// the screen opens again.
     pub fn close_feedback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.screen = Screen::Page;
+        self.screen = Screen::Page(None);
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         if self.revision.review().is_none() {

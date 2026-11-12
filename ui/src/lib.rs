@@ -2,6 +2,7 @@
 //! the host passes the form factor, the data folder and the key store.
 
 mod app;
+mod appearance;
 mod chrome;
 mod feedback;
 mod icons;

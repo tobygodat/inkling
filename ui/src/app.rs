@@ -1,4 +1,5 @@
 pub(crate) use crate::chrome::Menu;
+use crate::appearance::AppearancePanel;
 use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
 use crate::theme::{Colors, Theme};
@@ -46,7 +47,8 @@ pub(crate) struct Version {
 
 /// What fills the window. One value, so no two screens are ever open at once.
 pub(crate) enum Screen {
-    Page,
+    /// The page, with the Appearance panel beside it while that is open.
+    Page(Option<AppearancePanel>),
     Keys(KeyScreen),
     Feedback(FeedbackScreen),
 }
@@ -185,7 +187,7 @@ impl Inkling {
             revision: Revision::Idle,
             running: None,
             notice: None,
-            screen: Screen::Page,
+            screen: Screen::Page(None),
             menu: Menu::Closed,
             wordings_open: None,
             selected: None,
@@ -302,7 +304,7 @@ impl Inkling {
         }
         match key.key.as_str() {
             "escape" => self.escape(window, cx),
-            "tab" | "enter" if self.revision.review().is_some() && matches!(self.screen, Screen::Page) => {
+            "tab" | "enter" if self.revision.review().is_some() && matches!(self.screen, Screen::Page(_)) => {
                 let typing = key.key == "enter"
                     && self.ask_field.read(cx).focus_handle(cx).is_focused(window)
                     && !self.ask_field.read(cx).value().trim().is_empty();
@@ -319,6 +321,8 @@ impl Inkling {
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.menu.is_open() {
             self.close_menu(cx);
+        } else if self.appearance_open() {
+            self.close_appearance(cx);
         } else if self.screen.feedback().is_some() {
             self.close_feedback(window, cx);
         } else if self.screen.keys().is_some() {
@@ -528,7 +532,7 @@ impl Inkling {
     }
 
     pub fn close_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.screen = Screen::Page;
+        self.screen = Screen::Page(None);
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         self.key_saved = self.keys.has(Secret::ApiKey(self.settings.provider));
@@ -536,11 +540,6 @@ impl Inkling {
             self.focus_page(window, cx);
         }
         cx.notify();
-    }
-
-    /// The Appearance row of the cog's menu.
-    pub fn open_appearance(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.close_menu(cx);
     }
 
     pub(crate) fn on_open_keys(&mut self, _: &OpenKeys, window: &mut Window, cx: &mut Context<Self>) {
@@ -778,8 +777,14 @@ impl Render for Inkling {
         let screen = match &self.screen {
             Screen::Keys(keys) => self.render_keys(keys, cx).into_any_element(),
             Screen::Feedback(_) => self.render_feedback(window, cx).into_any_element(),
-            Screen::Page if self.form == FormFactor::Phone => self.render_phone(window, cx),
-            Screen::Page => self.render_mac_page(window, cx),
+            Screen::Page(_) if self.form == FormFactor::Phone => self.render_phone(window, cx),
+            Screen::Page(None) => self.render_mac_page(window, cx),
+            Screen::Page(Some(panel)) => div()
+                .size_full()
+                .flex()
+                .child(self.render_appearance(panel, cx))
+                .child(div().flex_1().min_w_0().h_full().child(self.render_mac_page(window, cx)))
+                .into_any_element(),
         };
         let root = root.child(screen);
         if self.form == FormFactor::Phone {
