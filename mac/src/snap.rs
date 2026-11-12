@@ -402,6 +402,11 @@ fn feedback(dir: &Path) {
     check(s.read(|v, _| v.feedback_open()), "Feedback opens the feedback screen");
     check(s.statuses().is_empty() && s.bounds(("feedback-item", 0usize)).is_none(), "an empty list says nothing was sent");
     s.shot("15-feedback-empty");
+    s.press("cmd-enter");
+    check(s.bounds("feedback-message").is_some() && s.statuses().is_empty(), "Send with nothing written says to write first");
+    s.input("M");
+    check(s.bounds("feedback-message").is_none(), "typing clears \"Write what should change first.\"");
+    s.press("backspace");
     s.input("Make the margins wider on the Mac.");
     s.click("send-feedback");
     check(s.statuses() == ["pending"] && s.field().is_empty(), "a send lands in the list as waiting for a build");

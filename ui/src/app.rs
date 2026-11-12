@@ -136,6 +136,12 @@ impl Inkling {
                 .autocapitalize(Autocapitalize::Sentences)
                 .placeholder("Say what you'd like Inkling to do differently")
         });
+        let feedback_edited = cx.subscribe_in(&feedback_field, window, |this, _, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.feedback.edited();
+                cx.notify();
+            }
+        });
         Inkling {
             form,
             paths,
@@ -160,7 +166,7 @@ impl Inkling {
             saved: Saved::Saved,
             save: Task::ready(()),
             focus: cx.focus_handle(),
-            _subs: vec![edited, sent, intercept],
+            _subs: vec![edited, sent, intercept, feedback_edited],
         }
     }
 

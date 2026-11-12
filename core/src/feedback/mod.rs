@@ -265,6 +265,14 @@ impl Desk {
         save_sent(&self.paths, &self.sent)
     }
 
+    /// The writer changed the text. "Write what should change first." no longer applies, so it
+    /// goes; the other stops stay until the next `send`.
+    pub fn edited(&mut self) {
+        if self.delivery == Delivery::Stopped(CantSend::Empty) {
+            self.delivery = Delivery::Idle;
+        }
+    }
+
     pub fn delivery(&self) -> &Delivery {
         &self.delivery
     }

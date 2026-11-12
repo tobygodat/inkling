@@ -169,8 +169,12 @@ fn a_send_stops_before_the_network_when_it_should() {
     assert_eq!(desk.delivery(), &Delivery::Stopped(CantSend::NoLink));
     assert!(desk.send(" \n ", &keys, from()).is_none());
     assert_eq!(desk.delivery(), &Delivery::Stopped(CantSend::Empty));
+    desk.edited();
+    assert_eq!(desk.delivery(), &Delivery::Idle, "typing clears \"write something first\"");
     assert!(desk.send(&"a".repeat(MAX_TEXT + 1), &keys, from()).is_none());
     assert_eq!(desk.delivery(), &Delivery::Stopped(CantSend::TooLong));
+    desk.edited();
+    assert_eq!(desk.delivery(), &Delivery::Stopped(CantSend::TooLong), "only sending again clears the other stops");
     let _post = desk.send("Bigger margins", &keys, from()).unwrap();
     assert!(desk.send("Bigger margins", &keys, from()).is_none());
     assert_eq!(desk.delivery(), &Delivery::Sending);
