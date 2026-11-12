@@ -2,7 +2,7 @@
 //! device sent with each item's status in the running build. It renders `inkling_core::Desk` and
 //! keeps no copy of it. Nothing here is reachable until a feedback link is saved.
 
-use crate::app::{Inkling, footer_button, ghost_button, primary_button};
+use crate::app::{Inkling, Menu, Screen, footer_button, ghost_button, primary_button};
 use crate::FormFactor;
 use gpui_kit::component::input::Textarea;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -10,7 +10,7 @@ use gpui_kit::*;
 use inkling_core::BuildNumber;
 use inkling_core::feedback::{Delivery, SendError, SentFrom, Status};
 
-/// Open while `Inkling::feedback_screen` is `Some`.
+/// Open while `Inkling::screen` is `Screen::Feedback`.
 pub(crate) struct FeedbackScreen {
     /// "page" or "review": the screen open when Feedback was pressed, for the body's `screen`.
     pub from: &'static str,
@@ -27,8 +27,8 @@ impl Inkling {
             return;
         }
         let from = if self.revision.review().is_some() { "review" } else { "page" };
-        self.key_screen = None;
-        self.feedback_screen = Some(FeedbackScreen { from });
+        self.screen = Screen::Feedback(FeedbackScreen { from });
+        self.menu = Menu::Closed;
         if self.form == FormFactor::Mac {
             self.feedback_field.read(cx).focus_handle(cx).focus(window, cx);
         } else {
@@ -40,7 +40,7 @@ impl Inkling {
     /// The field keeps its text, so text typed and not sent, or sent and failed, is there when
     /// the screen opens again.
     pub fn close_feedback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.feedback_screen = None;
+        self.screen = Screen::Page;
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         if self.revision.review().is_none() {
@@ -51,7 +51,7 @@ impl Inkling {
 
     /// Send, or Try again after a failure. Cmd-Return in the field does the same.
     pub fn send_feedback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(screen) = &self.feedback_screen else { return };
+        let Some(screen) = self.screen.feedback() else { return };
         let text = self.feedback_field.read(cx).value().to_string();
         let size = window.viewport_size();
         let from = SentFrom {
@@ -76,7 +76,7 @@ impl Inkling {
         if sent {
             self.feedback_field.update(cx, |field, cx| field.set_value("", window, cx));
         }
-        if self.form == FormFactor::Mac && self.feedback_screen.is_some() {
+        if self.form == FormFactor::Mac && self.screen.feedback().is_some() {
             self.feedback_field.read(cx).focus_handle(cx).focus(window, cx);
         }
         cx.notify();

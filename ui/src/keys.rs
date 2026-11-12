@@ -2,7 +2,7 @@
 //! Keys and the link go only to the key store, and the screen says one is saved without ever
 //! reading it back. The link field is the only feedback UI shown before a link is saved.
 
-use crate::app::{Inkling, ghost_button, primary_button};
+use crate::app::{Inkling, Screen, ghost_button, primary_button};
 use crate::FormFactor;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -100,16 +100,16 @@ fn key_page(provider: Provider) -> &'static str {
 
 impl Inkling {
     fn pick_provider(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(mut screen) = self.key_screen.take() else { return };
+        let Screen::Keys(mut screen) = std::mem::replace(&mut self.screen, Screen::Page) else { return };
         screen.show(provider, self, window, cx);
-        self.key_screen = Some(screen);
+        self.screen = Screen::Keys(screen);
         cx.notify();
     }
 
     /// Writes the key through the key store and the provider and model through `Settings`.
     /// An empty key field keeps the key already saved.
     pub fn save_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(screen) = &self.key_screen else { return };
+        let Some(screen) = self.screen.keys() else { return };
         let provider = screen.provider;
         let key = screen.key.read(cx).value().trim().to_string();
         let model = screen.model.read(cx).value().to_string();
@@ -119,7 +119,7 @@ impl Inkling {
         let written = self.settings.save(&self.paths).map_err(|e| format!("Couldn't save settings ({e})."));
         let status = stored.and(written);
         self.key_saved = self.keys.has(Secret::ApiKey(provider));
-        if let Some(screen) = &mut self.key_screen {
+        if let Screen::Keys(screen) = &mut self.screen {
             screen.has_key = self.key_saved;
             screen.status = Some(status);
             screen.clear_key(window, cx);
@@ -129,14 +129,14 @@ impl Inkling {
 
     /// Save link, or Return in the link field. An empty field keeps the link already saved.
     pub fn save_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(screen) = &self.key_screen else { return };
+        let Some(screen) = self.screen.keys() else { return };
         let pasted = screen.link.read(cx).value().trim().to_string();
         if pasted.is_empty() {
             return;
         }
         let status = Desk::save_link(self.keys.as_ref(), &pasted);
         self.feedback_on = Desk::has_link(self.keys.as_ref());
-        if let Some(screen) = &mut self.key_screen {
+        if let Screen::Keys(screen) = &mut self.screen {
             screen.link_status = Some(status);
             screen.clear_link(self.feedback_on, window, cx);
         }

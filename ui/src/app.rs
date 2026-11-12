@@ -1,3 +1,4 @@
+pub(crate) use crate::chrome::Menu;
 use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
 use crate::theme::{Colors, Theme};
@@ -43,6 +44,29 @@ pub(crate) struct Version {
     pub source: Provider,
 }
 
+/// What fills the window. One value, so no two screens are ever open at once.
+pub(crate) enum Screen {
+    Page,
+    Keys(KeyScreen),
+    Feedback(FeedbackScreen),
+}
+
+impl Screen {
+    pub fn keys(&self) -> Option<&KeyScreen> {
+        match self {
+            Screen::Keys(keys) => Some(keys),
+            _ => None,
+        }
+    }
+
+    pub fn feedback(&self) -> Option<&FeedbackScreen> {
+        match self {
+            Screen::Feedback(feedback) => Some(feedback),
+            _ => None,
+        }
+    }
+}
+
 pub struct Inkling {
     pub(crate) form: FormFactor,
     pub(crate) paths: Paths,
@@ -58,7 +82,10 @@ pub struct Inkling {
     pub(crate) version: Version,
     /// A line for something that went right but needs saying, such as an empty review.
     pub(crate) notice: Option<SharedString>,
-    pub(crate) key_screen: Option<KeyScreen>,
+    /// The screen in the window. Opening one closes the one before.
+    pub(crate) screen: Screen,
+    /// The cog's menu, over whichever screen is open.
+    pub(crate) menu: Menu,
     /// The change whose other wordings are open.
     pub(crate) wordings_open: Option<ChangeId>,
     /// The change tapped on iPhone, which the sheet acts on.
@@ -70,7 +97,6 @@ pub struct Inkling {
     pub(crate) feedback_on: bool,
     /// Lives here, not on the screen, so the text survives closing the screen and a failed send.
     pub(crate) feedback_field: Entity<TextareaState>,
-    pub(crate) feedback_screen: Option<FeedbackScreen>,
     /// The send on the background executor. Replaced, never cancelled: a POST that has left
     /// can't be called back, and the webhook dedupes on the id.
     pub(crate) sending: Task<()>,
@@ -159,13 +185,13 @@ impl Inkling {
             revision: Revision::Idle,
             running: None,
             notice: None,
-            key_screen: None,
+            screen: Screen::Page,
+            menu: Menu::Closed,
             wordings_open: None,
             selected: None,
             feedback,
             feedback_on,
             feedback_field,
-            feedback_screen: None,
             sending: Task::ready(()),
             installed: None,
             saved: Saved::Saved,
@@ -199,7 +225,7 @@ impl Inkling {
     }
 
     pub fn key_screen_provider(&self) -> Option<Provider> {
-        self.key_screen.as_ref().map(|k| k.provider)
+        self.screen.keys().map(|k| k.provider)
     }
 
     /// Whether the key store holds a key for the chosen provider.
@@ -214,11 +240,11 @@ impl Inkling {
 
     /// What the key screen's last Save link did.
     pub fn link_status(&self) -> Option<&Result<(), String>> {
-        self.key_screen.as_ref()?.link_status.as_ref()
+        self.screen.keys()?.link_status.as_ref()
     }
 
     pub fn feedback_open(&self) -> bool {
-        self.feedback_screen.is_some()
+        self.screen.feedback().is_some()
     }
 
     pub fn notice(&self) -> Option<&str> {
@@ -267,7 +293,7 @@ impl Inkling {
     /// Keys the review, a running request, the key screen or a message own. Runs before any
     /// binding, so the editor never sees them while they mean something here.
     fn key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.feedback_screen.is_some() && key.key == "enter" && key.modifiers.platform {
+        if self.screen.feedback().is_some() && key.key == "enter" && key.modifiers.platform {
             self.send_feedback(window, cx);
             return true;
         }
@@ -276,7 +302,7 @@ impl Inkling {
         }
         match key.key.as_str() {
             "escape" => self.escape(window, cx),
-            "tab" | "enter" if self.revision.review().is_some() && self.key_screen.is_none() && self.feedback_screen.is_none() => {
+            "tab" | "enter" if self.revision.review().is_some() && matches!(self.screen, Screen::Page) => {
                 let typing = key.key == "enter"
                     && self.ask_field.read(cx).focus_handle(cx).is_focused(window)
                     && !self.ask_field.read(cx).value().trim().is_empty();
@@ -291,9 +317,11 @@ impl Inkling {
     }
 
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.feedback_screen.is_some() {
+        if self.menu.is_open() {
+            self.close_menu(cx);
+        } else if self.screen.feedback().is_some() {
             self.close_feedback(window, cx);
-        } else if self.key_screen.is_some() {
+        } else if self.screen.keys().is_some() {
             self.close_keys(window, cx);
         } else if self.wordings_open.is_some() {
             self.wordings_open = None;
@@ -492,15 +520,15 @@ impl Inkling {
     }
 
     pub fn open_keys(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
-        self.feedback_screen = None;
         let screen = KeyScreen::new(provider, self, window, cx);
         screen.key.read(cx).focus_handle(cx).focus(window, cx);
-        self.key_screen = Some(screen);
+        self.screen = Screen::Keys(screen);
+        self.menu = Menu::Closed;
         cx.notify();
     }
 
     pub fn close_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.key_screen = None;
+        self.screen = Screen::Page;
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         self.key_saved = self.keys.has(Secret::ApiKey(self.settings.provider));
@@ -510,7 +538,12 @@ impl Inkling {
         cx.notify();
     }
 
-    fn on_open_keys(&mut self, _: &OpenKeys, window: &mut Window, cx: &mut Context<Self>) {
+    /// The Appearance row of the cog's menu.
+    pub fn open_appearance(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(cx);
+    }
+
+    pub(crate) fn on_open_keys(&mut self, _: &OpenKeys, window: &mut Window, cx: &mut Context<Self>) {
         let provider = self.settings.provider;
         self.open_keys(provider, window, cx);
     }
@@ -704,8 +737,7 @@ impl Inkling {
             ))
     }
 
-    /// Left to right: whether the page is saved, then a newer build's Restart, Feedback once a
-    /// link is saved, and the provider, which opens the key screen like Cmd-Comma.
+    /// Whether the page is saved, then a newer build's Restart. The corners hold the rest.
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let c = self.theme().c;
         let saved = match &self.saved {
@@ -713,44 +745,25 @@ impl Inkling {
             Saved::Pending => "Editing".to_string(),
             Saved::Failed(e) => format!("Couldn't save the draft ({e})."),
         };
-        let provider = self.settings.provider.label();
-        let key = if self.key_saved {
-            format!("{provider}, on your key")
-        } else {
-            format!("{provider}, no key yet · ⌘, to add one")
-        };
         div()
             .w_full()
+            .h(px(40.))
             .flex()
             .items_center()
-            .justify_between()
             .gap_3()
-            .px_6()
-            .pt_2()
-            .pb(px(14.))
+            .pl_6()
+            .pr(px(72.))
+            .mb(px(14.))
             .text_size(px(12.))
             .text_color(c.muted)
             .child(div().flex_1().min_w_0().truncate().child(saved))
             .children(self.render_restart(cx))
-            .when(self.feedback_on, |footer| {
-                footer.child(
-                    footer_button(&c, "open-feedback", "Feedback")
-                        .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
-                        .test_support(),
-                )
-            })
-            .child(
-                footer_button(&c, "open-keys", key)
-                    .on_click(cx.listener(|this, _, window, cx| this.on_open_keys(&OpenKeys, window, cx)))
-                    .test_support(),
-            )
     }
 }
 
 impl Render for Inkling {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = self.theme().c;
-        let m = self.metrics();
+        let t = self.theme();
         let root = div()
             .id("inkling")
             .track_focus(&self.focus)
@@ -758,32 +771,52 @@ impl Render for Inkling {
             .relative()
             .flex()
             .flex_col()
-            .bg(c.ground)
-            .text_color(c.ink)
+            .bg(t.c.ground)
+            .text_color(t.c.ink)
             .font_family(SANS)
             .on_action(cx.listener(Self::on_open_keys));
-        if let Some(screen) = &self.key_screen {
-            return root.child(self.render_keys(screen, cx));
-        }
-        if self.feedback_screen.is_some() {
-            return root.child(self.render_feedback(window, cx));
-        }
+        let screen = match &self.screen {
+            Screen::Keys(keys) => self.render_keys(keys, cx).into_any_element(),
+            Screen::Feedback(_) => self.render_feedback(window, cx).into_any_element(),
+            Screen::Page if self.form == FormFactor::Phone => self.render_phone(window, cx),
+            Screen::Page => self.render_mac_page(window, cx),
+        };
+        let root = root.child(screen);
         if self.form == FormFactor::Phone {
-            return root.child(self.render_phone(window, cx));
+            return root;
         }
+        root.children(self.render_feedback_button(cx)).child(self.render_cog(cx))
+    }
+}
+
+impl Inkling {
+    /// Mac, top to bottom: the version bar's slot, the page, the message and the asks, the footer.
+    fn render_mac_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let m = self.metrics();
+        let column = self.theme().body.column;
         let page = self.render_page(window, cx);
-        root.child(self.render_bar(cx))
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(self.render_bar(cx))
             .child(
-                div().flex_1().min_h_0().w_full().flex().justify_center().px(m.gutter).pt(px(48.)).pb(px(24.)).child(
-                    div().w_full().max_w(self.theme().body.column).h_full().child(page),
-                ),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .px(m.gutter)
+                    .pt(px(48.))
+                    .pb(px(24.))
+                    .child(div().id("column").w_full().max_w(column).h_full().child(page).test_support()),
             )
-            .children(self.render_sheet(cx))
             .child(
                 div().w_full().flex().justify_center().px(m.gutter).pb(px(12.)).child(
                     div()
                         .w_full()
-                        .max_w(self.theme().body.column)
+                        .max_w(column)
                         .flex()
                         .flex_col()
                         .gap_2()
@@ -792,6 +825,7 @@ impl Render for Inkling {
                 ),
             )
             .child(self.render_footer(cx))
+            .into_any_element()
     }
 }
 

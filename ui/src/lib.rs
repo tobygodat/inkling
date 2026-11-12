@@ -2,14 +2,18 @@
 //! the host passes the form factor, the data folder and the key store.
 
 mod app;
+mod chrome;
 mod feedback;
+mod icons;
 mod inline;
 mod keys;
 mod review;
 mod theme;
 
 pub use app::{Inkling, OpenKeys, Saved};
+pub use chrome::Menu;
 pub use feedback::Restart;
+pub use icons::Assets;
 
 use gpui_kit::*;
 use std::borrow::Cow;

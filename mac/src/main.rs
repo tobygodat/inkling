@@ -53,7 +53,7 @@ fn main() {
     if let Some(dir) = std::env::args().skip_while(|a| a != "--snap").nth(1) {
         return snap::run(std::path::Path::new(&dir));
     }
-    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx| {
+    gpui_kit::application().with_assets(inkling_ui::Assets).run(|cx| {
         init(cx);
         cx.set_menus(vec![Menu { name: "Inkling".into(), items: vec![MenuItem::action("Quit Inkling", Quit)], disabled: false }]);
         cx.on_window_closed(|cx, _| cx.quit()).detach();

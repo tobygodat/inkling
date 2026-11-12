@@ -4,7 +4,7 @@ use super::*;
 use gpui_kit::test::TestWindowExt as _;
 use inkling_core::feedback::{Delivery, FeedbackId, Outcome, Record, SendError, Status};
 use inkling_core::{AiEvent, Build, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
-use inkling_ui::Restart;
+use inkling_ui::{Menu, Restart};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -38,7 +38,7 @@ impl Snap {
     fn open_with(dir: &Path, form: FormFactor, keys: Arc<MemoryKeys>, build: Build) -> Self {
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(gpui_kit::assets::Assets),
+            Arc::new(inkling_ui::Assets),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(init);
@@ -83,6 +83,23 @@ impl Snap {
     fn bounds(&mut self, id: impl Into<ElementId>) -> Option<Bounds<Pixels>> {
         let id = id.into();
         self.with(|w, _| w.try_find(id).map(|e| e.bounds()))
+    }
+
+    fn hover(&mut self, id: impl Into<ElementId>) {
+        let id = id.into();
+        self.with(|w, cx| w.hover(id, cx));
+        self.frame();
+    }
+
+    /// Plays an animation out. Animations run on the executor's clock, which is the test clock.
+    fn settle(&mut self) {
+        self.cx.advance_clock(Duration::from_millis(260));
+        self.update(|_, _, cx| cx.notify());
+        self.frame();
+    }
+
+    fn menu(&mut self) -> Menu {
+        self.read(|v, _| v.menu())
     }
 
     fn advance(&mut self, ms: u64) {
@@ -188,6 +205,7 @@ pub fn run(dir: &Path) {
         "the bundled Source Serif 4 and Inter are loaded",
     );
     s.shot("01-empty");
+    cog(&mut s);
 
     for (i, p) in PARAGRAPHS.iter().enumerate() {
         if i > 0 {
@@ -334,8 +352,12 @@ pub fn run(dir: &Path) {
     s.shot("11-keys");
     s.press("escape");
     check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()).is_none(), "Escape closes the key screen");
-    s.click("open-keys");
-    check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()) == Some(Provider::Claude), "clicking the provider in the footer opens the key screen");
+    check(s.bounds("open-keys").is_none(), "the Mac footer has no provider button");
+    s.click("cog");
+    s.click("menu-provider");
+    check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()) == Some(Provider::Claude), "Provider in the cog's menu opens the key screen");
+    check(s.menu() != Menu::Open { pinned: true }, "choosing Provider closes the menu");
+    check(s.bounds("cog").is_some(), "the cog is on the key screen too");
     s.press("escape");
 
     drop(s);
@@ -344,6 +366,41 @@ pub fn run(dir: &Path) {
     drop(relaunch);
     phone(dir, &expected);
     feedback(dir);
+}
+
+/// The cog at the top left: hover peeks at the menu, a click pins it, and it never covers the text.
+fn cog(s: &mut Snap) {
+    let cog = s.bounds("cog").unwrap_or_else(|| fail("the window has a cog"));
+    check(cog.left() < px(24.) && cog.top() < px(24.), "the cog sits in the top left corner");
+    // The headless pointer starts at the window's origin, over the cog.
+    s.hover("column");
+    s.advance(200);
+    check(s.bounds("menu").is_none() && s.menu() == Menu::Closed, "the cog's menu starts closed");
+    s.hover("cog");
+    s.settle();
+    check(s.menu() == Menu::Open { pinned: false }, "hovering the cog opens its menu");
+    let menu = s.bounds("menu").unwrap_or_else(|| fail("the open menu is drawn"));
+    let column = s.bounds("column").unwrap_or_else(|| fail("the text column is laid out"));
+    check(menu.right() < column.left(), "the menu never reaches the text column");
+    let rows = s.bounds("menu-appearance").zip(s.bounds("menu-provider"));
+    check(rows.is_some_and(|(a, p)| a.bottom() <= p.top()), "the menu lists Appearance, then Provider");
+    check(menu.size.width < px(180.), "the menu is only as wide as its rows need");
+    s.shot("22-menu-open");
+    s.hover("column");
+    check(s.menu() == Menu::Closing, "leaving the cog closes an unpinned menu");
+    s.advance(200);
+    check(s.menu() == Menu::Closed && s.bounds("menu").is_none(), "and it is gone once it has faded");
+    s.click("cog");
+    s.hover("column");
+    check(s.menu() == Menu::Open { pinned: true }, "a click pins the menu open");
+    s.click("cog");
+    s.advance(200);
+    check(s.menu() == Menu::Closed, "a second click closes it");
+    s.click("cog");
+    s.press("escape");
+    s.advance(200);
+    check(s.menu() == Menu::Closed && s.text().is_empty(), "Escape closes it and leaves the page alone");
+    s.shot("23-menu-closed");
 }
 
 /// The same views laid out for iPhone: no inline controls, a tap selects, a sheet acts.
@@ -408,7 +465,17 @@ fn feedback(dir: &Path) {
     s.shot("14-feedback-link");
     s.press("escape");
     let feedback = s.bounds("open-feedback");
-    check(feedback.is_some_and(|b| b.size.height >= px(24.)), "the footer offers Feedback as a button, not bare text");
+    let window = s.with(|w, _| w.viewport_size());
+    check(
+        feedback.is_some_and(|b| b.size.width == b.size.height && b.size.width >= px(40.) && b.right() > window.width - px(24.) && b.bottom() > window.height - px(24.)),
+        "a round feedback button sits in the bottom right corner",
+    );
+    s.input("i like teh ferry. ");
+    s.click("fix-grammar");
+    s.wait(5000, reviewing);
+    check(reviewing(&s.revision()) && s.bounds("open-feedback").is_some(), "the feedback button stays during a review");
+    s.shot("21-feedback-button-in-review");
+    s.press("escape");
 
     s.click("open-feedback");
     check(s.read(|v, _| v.feedback_open()), "Feedback opens the feedback screen");
