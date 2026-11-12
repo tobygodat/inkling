@@ -16,6 +16,9 @@ shots="$(cd .. && pwd)/docs/screenshots/ios/snap"
 line="the light held"
 pasted=" and i dont know wich way teh river went"
 key_text="sk-ant-snap-FAKE-0000"
+good_link="https://hooks.example/inkling#k=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+# The fake transport fails any .invalid host as offline.
+failing_link="https://hooks.invalid/inkling#k=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 point() {
   case "$1" in
     page) echo "200 300" ;;
@@ -29,6 +32,13 @@ point() {
     back) echo "80 105" ;;
     key-field) echo "200 434" ;;
     reveal-key) echo "355 434" ;;
+    open-keys) echo "360 84" ;;       # header, "Claude" once a key is saved
+    feedback-link) echo "200 690" ;;  # key screen, scrolled to the bottom
+    open-feedback) echo "282 84" ;;   # header, left of the provider
+    feedback-field) echo "200 250" ;;
+    feedback-done) echo "355 105" ;;
+    feedback-back) echo "80 105" ;;
+    send-feedback) echo "200 337" ;;
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -64,6 +74,28 @@ if [ -z "$udid" ]; then
   udid="$(udid_now)"
 fi
 [ -n "$udid" ] || fail "no Simulator udid from agent-device"
+
+# Scrolls the key screen to its link section, or back to the top.
+scroll() {
+  case "$1" in
+    down) "$ad" gesture pan 380 700 0 -400 600 >/dev/null ;;
+    up) "$ad" gesture pan 380 300 0 400 600 >/dev/null ;;
+  esac
+  sleep 1
+}
+
+# Opens the key screen, pastes `$1` into the link field with the Paste control and saves it
+# with Return, then goes back to the page.
+save_link() {
+  tap open-keys 1.5
+  scroll down
+  tap feedback-link
+  "$ad" clipboard write "$1" >/dev/null
+  "$ad" press 'label="Paste"' >/dev/null
+  sleep 1
+  ./keys.sh "$ad" "/"
+  sleep 1.5
+}
 
 data_dir() {
   echo "$(xcrun simctl get_app_container "$udid" "$app" data)/Library/Application Support/Inkling"
@@ -149,6 +181,41 @@ shot
 
 begin back-with-key
 tap back 1.5
+shot
+
+begin link-saved
+save_link "$good_link"
+! grep -rl "#k=" "$(data_dir)" >/dev/null || fail "the link is in a data file"
+shot
+scroll up
+tap back 1.5
+
+begin feedback-open
+tap open-feedback 1.5
+shot
+
+begin feedback-sent
+sent="$(data_dir)/sent-feedback.json"
+tap feedback-field
+./keys.sh "$ad" "bigger margins"
+tap feedback-done
+tap send-feedback 1.5
+for _ in $(seq 25); do [ -f "$sent" ] && break; sleep 0.2; done
+grep -q '"text": "Bigger margins"' "$sent" || fail "sent-feedback.json has no \"Bigger margins\""
+! grep -qi "the light held" "$sent" || fail "sent-feedback.json holds the draft"
+shot
+
+begin feedback-failed
+tap feedback-back 1.5
+save_link "$failing_link"
+scroll up
+tap back 1.5
+tap open-feedback 1.5
+tap feedback-field
+./keys.sh "$ad" "a darker caret"
+tap feedback-done
+tap send-feedback 1.5
+[ "$(grep -c '"id"' "$sent")" = 1 ] || fail "a failed send was added to sent-feedback.json"
 shot
 
 echo "all $step steps passed; screenshots in $shots"

@@ -195,7 +195,7 @@ impl Inkling {
             None => None,
         };
         let provider = screen.provider;
-        div().id("keys").size_full().flex().justify_center().overflow_y_scroll().child(
+        div().id("keys").size_full().flex().flex_col().items_center().overflow_y_scroll().child(
             div()
                 .w_full()
                 .max_w(px(480.))
