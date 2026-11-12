@@ -1,0 +1,56 @@
+diff -ruN a/src/ios/window/text_input_view.rs b/src/ios/window/text_input_view.rs
+--- a/src/ios/window/text_input_view.rs
++++ b/src/ios/window/text_input_view.rs
+@@ -78,6 +78,8 @@
+     /// The part of it that draws the caret, the highlight and the handles.
+     /// The canvas owns it while `interaction` is attached.
+     selection_display: Cell<*mut AnyObject>,
++    /// When the keyboard typed the text the next frame will show.
++    typed_at: Cell<Option<std::time::Instant>>,
+     /// The finger on the GPUI view now, if any.
+     contact: Cell<Option<Contact>>,
+     /// The part of it that shows the edit menu. The canvas owns it too.
+@@ -126,6 +128,7 @@
+             notifying: Cell::new(false),
+             interaction: Cell::new(ptr::null_mut()),
+             selection_display: Cell::new(ptr::null_mut()),
++            typed_at: Cell::new(None),
+             contact: Cell::new(None),
+             edit_menu: Cell::new(ptr::null_mut()),
+             placed: RefCell::new(None),
+@@ -180,6 +183,14 @@
+         self.drew.set(true);
+     }
+ 
++    /// The frame is on its way to the screen. Logs how long the typed text
++    /// took to get there, for a typing benchmark to read.
++    pub(super) fn painted(&self) {
++        if let Some(typed_at) = self.typed_at.take() {
++            log::debug!("GPUI iOS: typed to painted {} us", typed_at.elapsed().as_micros());
++        }
++    }
++
+     pub(super) fn become_first_responder(&self) {
+         self.after_this_turn(sel!(becomeFirstResponder));
+         self.after_this_turn(sel!(gpuiReloadIfFirstResponder));
+@@ -767,6 +778,9 @@
+             return;
+         };
+         let string = unsafe { ns_string_to_string(text) };
++        if window.text_input.typed_at.get().is_none() {
++            window.text_input.typed_at.set(Some(std::time::Instant::now()));
++        }
+         if string == "\n" {
+             window.handle_enter();
+             window.record_seen();
+diff -ruN a/src/ios/window.rs b/src/ios/window.rs
+--- a/src/ios/window.rs
++++ b/src/ios/window.rs
+@@ -1336,6 +1336,7 @@
+         let mut guard = self.renderer.lock();
+         if let Some(renderer) = guard.as_mut() {
+             renderer.draw(scene);
++            self.text_input.painted();
+         } else {
+             log::trace!("GPUI iOS: draw called but no renderer available");
+         }

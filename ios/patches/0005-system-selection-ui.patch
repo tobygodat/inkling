@@ -1,0 +1,490 @@
+diff -ruN a/src/ios/window/text_input_view.rs b/src/ios/window/text_input_view.rs
+--- a/src/ios/window/text_input_view.rs
++++ b/src/ios/window/text_input_view.rs
+@@ -49,6 +49,18 @@
+     }
+ }
+ 
++/// A finger on the GPUI view, as far as it tells whose gesture it is.
++#[derive(Clone, Copy)]
++struct Contact {
++    began: std::time::Instant,
++    origin: gpui::Point<Pixels>,
++    /// It moved off its origin before a long press could begin.
++    pan: bool,
++}
++
++/// How long a finger rests before UIKit's long press takes it.
++const LONG_PRESS: std::time::Duration = std::time::Duration::from_millis(400);
++
+ /// The window's half of the bridge: the native view plus the state UIKit
+ /// hands it. The view itself holds only a pointer back to the window.
+ pub(super) struct TextInputSession {
+@@ -63,6 +75,20 @@
+     notifying: Cell<bool>,
+     /// UIKit's own selection UI (loupe, handles, edit menu), when attached.
+     interaction: Cell<*mut AnyObject>,
++    /// The part of it that draws the caret, the highlight and the handles.
++    /// The canvas owns it while `interaction` is attached.
++    selection_display: Cell<*mut AnyObject>,
++    /// The finger on the GPUI view now, if any.
++    contact: Cell<Option<Contact>>,
++    /// The part of it that shows the edit menu. The canvas owns it too.
++    edit_menu: Cell<*mut AnyObject>,
++    /// The selection when the last frame was drawn, and where it started.
++    placed: RefCell<Option<(Range<usize>, Bounds<Pixels>)>>,
++    /// The view `interaction` is on, inside a view that clips it to the
++    /// focused input. Both belong to the GPUI view while attached.
++    selection_canvas: Cell<*mut AnyObject>,
++    /// The focused input's bounds the clip view was last given.
++    selection_frame: Cell<Option<Bounds<Pixels>>>,
+     /// The bar above the keyboard that holds the system paste control.
+     paste_bar: *mut AnyObject,
+ }
+@@ -99,10 +125,46 @@
+             drew: Cell::new(false),
+             notifying: Cell::new(false),
+             interaction: Cell::new(ptr::null_mut()),
++            selection_display: Cell::new(ptr::null_mut()),
++            contact: Cell::new(None),
++            edit_menu: Cell::new(ptr::null_mut()),
++            placed: RefCell::new(None),
++            selection_canvas: Cell::new(ptr::null_mut()),
++            selection_frame: Cell::new(None),
+             paste_bar: paste_bar(view),
+         }
+     }
+ 
++    /// Follow a touch on the GPUI view.
++    pub(super) fn touch(&self, phase: gpui::TouchPhase, position: gpui::Point<Pixels>) {
++        match phase {
++            gpui::TouchPhase::Started => self.contact.set(Some(Contact {
++                began: std::time::Instant::now(),
++                origin: position,
++                pan: false,
++            })),
++            gpui::TouchPhase::Moved => {
++                if let Some(mut contact) = self.contact.get() {
++                    let far = (position.x - contact.origin.x).abs() > px(10.)
++                        || (position.y - contact.origin.y).abs() > px(10.);
++                    if far && contact.began.elapsed() < LONG_PRESS {
++                        contact.pan = true;
++                        self.contact.set(Some(contact));
++                    }
++                }
++            }
++            gpui::TouchPhase::Ended | gpui::TouchPhase::Cancelled => self.contact.set(None),
++        }
++    }
++
++    /// Whether the finger down now is making a tap or a pan, which are
++    /// GPUI's: it has not rested long enough to be UIKit's long press.
++    fn gpui_owns_touch(&self) -> bool {
++        self.contact
++            .get()
++            .is_some_and(|contact| contact.pan || contact.began.elapsed() < LONG_PRESS)
++    }
++
+     pub(super) fn set_keyboard_type(&self, keyboard_type: isize) {
+         self.keyboard_type.set(keyboard_type);
+     }
+@@ -182,16 +244,50 @@
+         *self.text_input.seen.borrow_mut() = state;
+     }
+ 
+-    /// Tell UIKit about document changes it did not make. Runs after a frame,
+-    /// outside any GPUI update, because UIKit reads the document back
+-    /// synchronously from inside these delegate calls.
++    /// Bring UIKit up to date with the frame GPUI just drew. Runs after a
++    /// frame, outside any GPUI update, because UIKit reads the document back
++    /// synchronously from inside these calls.
+     pub(crate) fn sync_text_input(&self) {
+         if !self.text_input.drew.replace(false) {
+             return;
+         }
++        self.place_selection_canvas();
++        self.tell_outside_changes();
++        // GPUI lays text out when it draws, so the frame may have moved what
++        // UIKit drew over it: the caret after an edit, everything on a scroll.
++        // Last, so UIKit lays out the selection it was just told of.
++        let display = self.text_input.selection_display.get();
++        if !display.is_null() {
++            unsafe {
++                let _: () = msg_send![display, setNeedsSelectionUpdate];
++            }
++        }
++    }
++
++    /// Tell UIKit about document changes it did not make.
++    fn tell_outside_changes(&self) {
++        let placed = self
++            .with_input_handler(|handler| {
++                let selection = handler.selected_text_range(false)?.range;
++                let start = handler.bounds_for_range(selection.start..selection.start)?;
++                Some((selection, start))
++            })
++            .flatten();
++        // The same selection somewhere else: the input scrolled.
++        let scrolled = match (self.text_input.placed.replace(placed.clone()), placed) {
++            (Some(before), Some(now)) => before.0 == now.0 && before.1 != now.1,
++            _ => false,
++        };
+         let now = self.read_document_state();
+         let before = self.text_input.seen.replace(now.clone());
+         if before == now {
++            // UIKit's edit menu would stay where it was, over other text.
++            let menu = self.text_input.edit_menu.get();
++            if scrolled && !menu.is_null() {
++                unsafe {
++                    let _: () = msg_send![menu, dismissMenu];
++                }
++            }
+             return;
+         }
+         let delegate = self.text_input.delegate.get();
+@@ -208,7 +304,10 @@
+             if text_changed {
+                 let _: () = msg_send![delegate, textWillChange: view];
+                 let _: () = msg_send![delegate, textDidChange: view];
+-            } else {
++            }
++            // Also after new text: the selection UI keeps the selection it
++            // last heard of, and would draw the caret where it was.
++            if !text_changed || !self.text_input.selection_display.get().is_null() {
+                 let _: () = msg_send![delegate, selectionWillChange: view];
+                 let _: () = msg_send![delegate, selectionDidChange: view];
+             }
+@@ -216,6 +315,34 @@
+         self.text_input.notifying.set(false);
+     }
+ 
++    /// Give the clip view the focused input's bounds, and move the canvas
++    /// back by their origin so it still covers the GPUI view.
++    fn place_selection_canvas(&self) {
++        let canvas = self.text_input.selection_canvas.get();
++        if canvas.is_null() {
++            return;
++        }
++        let Some(bounds) = self.with_input_handler(|handler| handler.element_bounds()).flatten()
++        else {
++            return;
++        };
++        if self.text_input.selection_frame.replace(Some(bounds)) == Some(bounds) {
++            return;
++        }
++        let frame = cg_rect(bounds);
++        unsafe {
++            let clip: *mut AnyObject = msg_send![canvas, superview];
++            let host: *mut AnyObject = msg_send![clip, superview];
++            let whole: ObjcCGRect = msg_send![host, bounds];
++            let _: () = msg_send![class!(CATransaction), begin];
++            let _: () = msg_send![class!(CATransaction), setDisableActions: true];
++            let _: () = msg_send![clip, setFrame: frame];
++            let _: () = msg_send![canvas,
++                setFrame: ObjcCGRect::new(-frame.x, -frame.y, whole.width, whole.height)];
++            let _: () = msg_send![class!(CATransaction), commit];
++        }
++    }
++
+     /// End any composition before a touch can move focus or the caret. UIKit
+     /// hears about it from the next [`Self::sync_text_input`].
+     pub(super) fn commit_composition(&self) {
+@@ -570,6 +697,61 @@
+         }
+     }
+ 
++    // ── Edit menu ────────────────────────────────────────────────────────────
++
++    /// UIKit's edit menu asks its first responder which actions apply. Cut,
++    /// Copy, Paste and Select All run on the GPUI document; the rest stay
++    /// UIKit's.
++    extern "C" fn can_perform_action(this: Id, _: Sel, action: Sel, sender: Id) -> Bool {
++        let state = unsafe { window_of(this) }.and_then(|window| window.read_document_state());
++        if action == sel!(copy:) || action == sel!(cut:) {
++            return Bool::new(state.is_some_and(|state| !state.selection.is_empty()));
++        }
++        if action == sel!(paste:) {
++            return Bool::new(state.is_some());
++        }
++        if action == sel!(selectAll:) {
++            return Bool::new(
++                state.is_some_and(|state| state.len > 0 && state.selection != (0..state.len)),
++            );
++        }
++        unsafe { msg_send![super(this, class!(UIView)), canPerformAction: action, withSender: sender] }
++    }
++
++    // Each runs the focused input's own action, so GPUI makes the change and
++    // UIKit hears about it from the next `sync_text_input`.
++    extern "C" fn copy(this: Id, _: Sel, _sender: Id) {
++        if let Some(window) = unsafe { window_of(this) } {
++            window.handle_edit_shortcut("c");
++        }
++    }
++
++    extern "C" fn cut(this: Id, _: Sel, _sender: Id) {
++        if let Some(window) = unsafe { window_of(this) } {
++            window.handle_edit_shortcut("x");
++        }
++    }
++
++    extern "C" fn paste(this: Id, _: Sel, _sender: Id) {
++        if let Some(window) = unsafe { window_of(this) } {
++            window.handle_paste();
++        }
++    }
++
++    extern "C" fn select_all(this: Id, _: Sel, _sender: Id) {
++        if let Some(window) = unsafe { window_of(this) } {
++            window.with_input_handler(|handler| {
++                let len = document_len(handler);
++                handler.set_selected_text_range(0..len);
++            });
++        }
++    }
++
++    // UIKit offers Paste only to a text input that says it is editable.
++    extern "C" fn is_editable(_: Id, _: Sel) -> Bool {
++        Bool::YES
++    }
++
+     // ── UIKeyInput ───────────────────────────────────────────────────────────
+ 
+     extern "C" fn has_text(this: Id, _: Sel) -> Bool {
+@@ -677,9 +859,35 @@
+         if window.text_input.notifying.get() {
+             return;
+         }
++        // UIKit's tap recognizers see GPUI's taps and pans too. GPUI's own tap
++        // places the caret right after this, on the exact character, where
++        // UIKit would snap to a word boundary; and a short pan scrolls, where
++        // UIKit would still see a tap and move the caret.
++        if range.is_empty() && window.text_input.gpui_owns_touch() {
++            // UIKit draws the caret where it asked for one unless it is told
++            // to read the selection again.
++            window.text_input.after_this_turn(sel!(gpuiReportSelection));
++            return;
++        }
+         window.edit_from_uikit(|handler| handler.set_selected_text_range(range));
+     }
+ 
++    extern "C" fn report_selection(this: Id, _: Sel) {
++        let Some(window) = (unsafe { window_of(this) }) else {
++            return;
++        };
++        let delegate = window.text_input.delegate.get();
++        if delegate.is_null() {
++            return;
++        }
++        window.text_input.notifying.set(true);
++        unsafe {
++            let _: () = msg_send![delegate, selectionWillChange: this];
++            let _: () = msg_send![delegate, selectionDidChange: this];
++        }
++        window.text_input.notifying.set(false);
++    }
++
+     extern "C" fn marked_text_range(this: Id, _: Sel) -> Id {
+         let marked = unsafe { window_of(this) }
+             .and_then(|window| window.with_input_handler(|h| h.marked_text_range()))
+@@ -906,10 +1114,17 @@
+         }
+     }
+ 
+-    // UIKit installs its selection gestures on this view, so name the GPUI
+-    // view that receives touches. It shares this view's coordinate space.
++    // UIKit installs its selection gestures and views on this view. While the
++    // system selection UI is attached that is its canvas, else the GPUI view.
++    // Both share this view's coordinate space.
+     extern "C" fn text_input_view(this: Id, _: Sel) -> Id {
+-        unsafe { msg_send![this, superview] }
++        let canvas = unsafe { window_of(this) }
++            .map_or(ptr::null_mut(), |window| window.text_input.selection_canvas.get());
++        if canvas.is_null() {
++            unsafe { msg_send![this, superview] }
++        } else {
++            canvas
++        }
+     }
+ 
+     extern "C" fn attach_text_interaction(this: Id, _: Sel) {
+@@ -924,8 +1139,26 @@
+             let interaction: Id =
+                 msg_send![class!(UITextInteraction), textInteractionForMode: 0_isize];
+             let _: () = msg_send![interaction, setTextInput: this];
++            // UIKit draws the selection in the view the interaction is on, and
++            // GPUI inputs are regions of one view. A clip view takes the
++            // focused input's bounds and holds a canvas the size of the GPUI
++            // view, moved back by the clip's origin: the canvas keeps GPUI's
++            // coordinates, and no handle or highlight shows outside the input.
++            // Touches on either pass up the responder chain to the GPUI view.
+             let host: Id = msg_send![this, superview];
+-            let _: () = msg_send![host, addInteraction: interaction];
++            let bounds: ObjcCGRect = msg_send![host, bounds];
++            let clip: Id = msg_send![class!(UIView), alloc];
++            let clip: Id = msg_send![clip, initWithFrame: bounds];
++            let _: () = msg_send![clip, setClipsToBounds: true];
++            let canvas: Id = msg_send![class!(UIView), alloc];
++            let canvas: Id = msg_send![canvas, initWithFrame: bounds];
++            let _: () = msg_send![clip, addSubview: canvas];
++            let _: () = msg_send![host, addSubview: clip];
++            let _: () = msg_send![canvas, release];
++            let _: () = msg_send![clip, release];
++            window.text_input.selection_canvas.set(canvas);
++            window.place_selection_canvas();
++            let _: () = msg_send![canvas, addInteraction: interaction];
+             let _: Id = msg_send![interaction, retain];
+             window.text_input.interaction.set(interaction);
+             // GPUI still owns focus and its own gestures, so it has to keep
+@@ -936,7 +1169,7 @@
+             } else {
+                 msg_send![recognizers, count]
+             };
+-            let all: Id = msg_send![host, gestureRecognizers];
++            let all: Id = msg_send![canvas, gestureRecognizers];
+             let all_count: usize = if all.is_null() {
+                 0
+             } else {
+@@ -949,6 +1182,28 @@
+                 let _: () = msg_send![recognizer, setDelaysTouchesEnded: false];
+             }
+             log::debug!("GPUI iOS: attached UITextInteraction, {all_count} recognizers ({count} for failure)");
++            // The text interaction adds others beside itself. One draws the
++            // caret, the highlight and the handles, and shows them only once
++            // activated, which UIKit does when the view becomes first
++            // responder; that has usually happened already. One shows the
++            // edit menu.
++            let interactions: Id = msg_send![canvas, interactions];
++            let count: usize = msg_send![interactions, count];
++            for ix in 0..count {
++                let candidate: Id = msg_send![interactions, objectAtIndex: ix];
++                let display: Bool =
++                    msg_send![candidate, isKindOfClass: class!(UITextSelectionDisplayInteraction)];
++                if display.as_bool() {
++                    let first: Bool = msg_send![this, isFirstResponder];
++                    let _: () = msg_send![candidate, setActivated: first];
++                    window.text_input.selection_display.set(candidate);
++                }
++                let menu: Bool =
++                    msg_send![candidate, isKindOfClass: class!(UIEditMenuInteraction)];
++                if menu.as_bool() {
++                    window.text_input.edit_menu.set(candidate);
++                }
++            }
+         }
+     }
+ 
+@@ -957,13 +1212,18 @@
+             return;
+         };
+         let interaction = window.text_input.interaction.replace(ptr::null_mut());
++        window.text_input.selection_display.set(ptr::null_mut());
++        window.text_input.edit_menu.set(ptr::null_mut());
+         if interaction.is_null() {
+             return;
+         }
++        let canvas = window.text_input.selection_canvas.replace(ptr::null_mut());
++        window.text_input.selection_frame.set(None);
+         unsafe {
+-            let host: Id = msg_send![this, superview];
+-            let _: () = msg_send![host, removeInteraction: interaction];
++            let _: () = msg_send![canvas, removeInteraction: interaction];
+             let _: () = msg_send![interaction, release];
++            let clip: Id = msg_send![canvas, superview];
++            let _: () = msg_send![clip, removeFromSuperview];
+         }
+     }
+ 
+@@ -1080,6 +1340,15 @@
+             sel!(pasteItemProviders:),
+             paste_item_providers as extern "C" fn(_, _, _),
+         );
++        decl.add_method(
++            sel!(canPerformAction:withSender:),
++            can_perform_action as extern "C" fn(_, _, _, _) -> _,
++        );
++        decl.add_method(sel!(copy:), copy as extern "C" fn(_, _, _));
++        decl.add_method(sel!(cut:), cut as extern "C" fn(_, _, _));
++        decl.add_method(sel!(paste:), paste as extern "C" fn(_, _, _));
++        decl.add_method(sel!(selectAll:), select_all as extern "C" fn(_, _, _));
++        decl.add_method(sel!(isEditable), is_editable as extern "C" fn(_, _) -> _);
+         decl.add_method(sel!(hasText), has_text as extern "C" fn(_, _) -> _);
+         decl.add_method(sel!(insertText:), insert_text as extern "C" fn(_, _, _));
+         decl.add_method(sel!(deleteBackward), delete_backward as extern "C" fn(_, _));
+@@ -1099,6 +1368,10 @@
+         decl.add_method(
+             sel!(setSelectedTextRange:),
+             set_selected_text_range as extern "C" fn(_, _, _),
++        );
++        decl.add_method(
++            sel!(gpuiReportSelection),
++            report_selection as extern "C" fn(_, _),
+         );
+         decl.add_method(
+             sel!(markedTextRange),
+diff -ruN a/src/ios/window.rs b/src/ios/window.rs
+--- a/src/ios/window.rs
++++ b/src/ios/window.rs
+@@ -224,7 +224,37 @@
+             handle_touches(this, touches, event);
+         }
+ 
++        // UIKit presents the text edit menu from this view, where the text
++        // interaction lives, and looks for each action's target up this view's
++        // responder chain. The text input view is a subview, so it is not on
++        // that chain: name it for the actions it performs.
++        #[allow(deprecated)]
++        extern "C" fn target_for_action(
++            this: *mut AnyObject,
++            _sel: Sel,
++            action: Sel,
++            sender: *mut AnyObject,
++        ) -> *mut AnyObject {
++            unsafe {
++                let window: *mut c_void = *(*this).get_ivar(GPUI_WINDOW_IVAR);
++                if !window.is_null() {
++                    let input = (&*(window as *const IosWindow)).text_input.view;
++                    let can: objc2::runtime::Bool =
++                        msg_send![input, canPerformAction: action, withSender: sender];
++                    if can.as_bool() {
++                        return input;
++                    }
++                }
++                msg_send![super(this, class!(UIView)), targetForAction: action, withSender: sender]
++            }
++        }
++
+         unsafe {
++            decl.add_method(
++                sel!(targetForAction:withSender:),
++                target_for_action
++                    as extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> *mut AnyObject,
++            );
+             // Add class method for layerClass
+             decl.add_class_method(
+                 sel!(layerClass),
+@@ -663,6 +693,7 @@
+         };
+ 
+         self.mouse_position.set(position);
++        self.text_input.touch(phase, position);
+         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+             let event = gpui::TouchEvent {
+                 id,
+@@ -862,10 +893,15 @@
+     /// standard shortcut for it (`ctrl-v` off the Mac), so the input's rules apply:
+     /// a single-line input drops a pasted newline, a read-only one ignores the paste.
+     pub fn handle_paste(&self) {
++        self.handle_edit_shortcut("v");
++    }
++
++    /// Send the focused input `ctrl-<key>`: GPUI's Cut, Copy or Paste off the Mac.
++    pub fn handle_edit_shortcut(&self, key: &str) {
+         let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
+             keystroke: gpui::Keystroke {
+                 modifiers: Modifiers { control: true, ..Modifiers::default() },
+-                key: "v".to_string(),
++                key: key.to_string(),
+                 key_char: None,
+             },
+             is_held: false,

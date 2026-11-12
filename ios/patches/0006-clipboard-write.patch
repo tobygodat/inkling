@@ -1,0 +1,15 @@
+diff -ruN a/src/ios/platform.rs b/src/ios/platform.rs
+--- a/src/ios/platform.rs
++++ b/src/ios/platform.rs
+@@ -319,9 +319,8 @@
+         unsafe {
+             let pasteboard: *mut AnyObject = msg_send![class!(UIPasteboard), generalPasteboard];
+             if let Some(text) = item.text() {
+-                let ns_string: *mut AnyObject =
+-                    msg_send![class!(NSString), stringWithUTF8String: text.as_ptr()];
+-                let _: () = msg_send![pasteboard, setString: ns_string];
++                // A Rust string has no NUL at its end, so it goes over by length.
++                let _: () = msg_send![pasteboard, setString: super::util::nsstring(&text)];
+             }
+         }
+     }
