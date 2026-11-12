@@ -4,6 +4,7 @@
 //! A UI that counts in UTF-16 converts at its own edge.
 
 pub mod ai;
+pub mod appearance;
 pub mod ask;
 pub mod feedback;
 #[cfg(test)]
@@ -12,6 +13,7 @@ pub mod providers;
 pub mod review;
 pub mod store;
 
+pub use appearance::{Appearance, Face, Mode, Part, Rgb, Tokens};
 pub use ai::{AiEvent, Backend, Cancel, Prompt, Provider, start};
 pub use ask::{AnswerError, Ask, BadRequest, Request, Revision, parse_alternatives};
 pub use feedback::{Build, BuildNumber, Desk};

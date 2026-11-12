@@ -3,7 +3,7 @@
 //! keeps no copy of it. Nothing here is reachable until a feedback link is saved.
 
 use crate::app::{Inkling, footer_button, ghost_button, primary_button};
-use crate::{FormFactor, SERIF, color};
+use crate::FormFactor;
 use gpui_kit::component::input::Textarea;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -119,16 +119,17 @@ impl Inkling {
 
     /// "Build 43 is installed. Restart", in the Mac footer and at the top of the feedback screen.
     pub(crate) fn render_restart(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let c = self.theme().c;
         let build = self.update_ready()?;
         Some(
             div()
                 .flex()
                 .items_center()
                 .gap_2()
-                .text_color(rgb(color::MUTED))
+                .text_color(c.muted)
                 .child(format!("Build {} is installed.", build.0))
                 .child(
-                    footer_button("restart", "Restart")
+                    footer_button(&c, "restart", "Restart")
                         .on_click(cx.listener(|this, _, _, cx| this.restart(cx)))
                         .test_support(),
                 ),
@@ -136,6 +137,7 @@ impl Inkling {
     }
 
     pub(crate) fn render_feedback(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
         let m = self.metrics();
         let phone = self.form == FormFactor::Phone;
         let delivery = self.feedback.delivery();
@@ -151,7 +153,7 @@ impl Inkling {
             _ => "Send",
         };
         let typing = self.feedback_field.read(cx).focus_handle(cx).is_focused(window);
-        let label = |text: &'static str| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(color::MUTED)).child(text);
+        let label = |text: &'static str| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(c.muted).child(text);
         let items: Vec<AnyElement> = self
             .feedback
             .items()
@@ -169,7 +171,7 @@ impl Inkling {
                 };
                 let emphasis = HighlightStyle {
                     font_weight: Some(FontWeight::SEMIBOLD),
-                    color: Some(rgb(color::INK).into()),
+                    color: Some(c.ink.into()),
                     ..Default::default()
                 };
                 let highlights = if pending { vec![] } else { vec![(0..state.len(), emphasis)] };
@@ -182,14 +184,14 @@ impl Inkling {
                     .justify_center()
                     .gap(px(4.))
                     .border_t_1()
-                    .border_color(rgb(color::HAIRLINE))
+                    .border_color(c.hairline)
                     .child(div().text_size(px(15.)).line_height(relative(1.4)).line_clamp(3).child(item.sent.text.clone()))
                     .child(
                         div()
                             .text_size(px(13.))
                             .line_height(relative(1.4))
                             .line_clamp(2)
-                            .text_color(rgb(color::MUTED))
+                            .text_color(c.muted)
                             .child(StyledText::new(line).with_highlights(highlights)),
                     )
                     .test_support()
@@ -213,18 +215,18 @@ impl Inkling {
                         .items_center()
                         .justify_between()
                         .child(
-                            ghost_button("feedback-back", "‹ Back to the page")
+                            ghost_button(&c, "feedback-back", "‹ Back to the page")
                                 .h(m.control.max(px(32.)))
                                 .on_click(cx.listener(|this, _, window, cx| this.close_feedback(window, cx)))
                                 .test_support(),
                         )
                         .when(phone && typing, |row| {
                             row.child(
-                                ghost_button("done", "Done")
+                                ghost_button(&c, "done", "Done")
                                     .h(m.control)
                                     .text_size(px(15.))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(color::INK))
+                                    .text_color(c.ink)
                                     .on_click(cx.listener(|this, _, window, cx| this.done_typing(window, cx)))
                                     .test_support(),
                             )
@@ -237,7 +239,7 @@ impl Inkling {
                         .gap(px(10.))
                         .child(
                             div()
-                                .font_family(SERIF)
+                                .font_family(self.theme().body.face)
                                 .text_size(px(30.))
                                 .line_height(relative(1.2))
                                 .font_weight(FontWeight::SEMIBOLD)
@@ -256,18 +258,18 @@ impl Inkling {
                                 .min_h(px(96.))
                                 .px(px(14.))
                                 .py(px(10.))
-                                .bg(rgb(color::SURFACE))
+                                .bg(c.surface)
                                 .border_1()
-                                .border_color(rgb(color::HAIRLINE))
+                                .border_color(c.hairline)
                                 .rounded(px(12.))
                                 .text_size(px(15.))
                                 .line_height(relative(1.5))
                                 .child(Textarea::new(&self.feedback_field).appearance(false))
                                 .test_support(),
                         )
-                        .children(message.map(|m| div().id("feedback-message").text_size(px(13.)).text_color(rgb(color::MUTED)).child(m).test_support()))
+                        .children(message.map(|m| div().id("feedback-message").text_size(px(13.)).text_color(c.muted).child(m).test_support()))
                         .child(
-                            primary_button("send-feedback", button, m)
+                            primary_button(&c, "send-feedback", button, m)
                                 .h(if phone { px(52.) } else { px(48.) })
                                 .justify_center()
                                 .text_size(px(15.))
@@ -283,7 +285,7 @@ impl Inkling {
                         .gap_2()
                         .child(label("Feedback & fixes"))
                         .when(empty, |list| {
-                            list.child(div().py(px(12.)).text_size(px(15.)).text_color(rgb(color::MUTED)).child("Nothing sent yet."))
+                            list.child(div().py(px(12.)).text_size(px(15.)).text_color(c.muted).child("Nothing sent yet."))
                         })
                         .child(div().flex().flex_col().children(items)),
                 ),

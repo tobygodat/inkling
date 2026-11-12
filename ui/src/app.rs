@@ -1,11 +1,12 @@
 use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
-use crate::{FormFactor, Metrics, SANS, SERIF, color};
+use crate::theme::{Colors, Theme};
+use crate::{FormFactor, Metrics, SANS};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::{
-    AiEvent, Ask, Build, BuildNumber, Cancel, ChangeId, Desk, KeyStore, Paths, Provider, Request, Revision, Secret, Settings,
+    AiEvent, Ask, Build, BuildNumber, Cancel, ChangeId, Desk, Face, KeyStore, Paths, Provider, Request, Revision, Secret, Settings,
 };
 use std::sync::mpsc;
 use std::time::Duration;
@@ -77,6 +78,8 @@ pub struct Inkling {
     pub(crate) installed: Option<BuildNumber>,
     pub(crate) saved: Saved,
     save: Task<()>,
+    /// The body faces this device has, asked of the text system once at launch.
+    pub(crate) faces: Vec<Face>,
     pub(crate) focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -136,13 +139,15 @@ impl Inkling {
                 .autocapitalize(Autocapitalize::Sentences)
                 .placeholder("Say what you'd like Inkling to do differently")
         });
+        let installed = cx.text_system().all_font_names();
+        let faces: Vec<Face> = Face::ALL.into_iter().filter(|f| installed.iter().any(|n| n == f.family())).collect();
         let feedback_edited = cx.subscribe_in(&feedback_field, window, |this, _, event: &InputEvent, _, cx| {
             if matches!(event, InputEvent::Change) {
                 this.feedback.edited();
                 cx.notify();
             }
         });
-        Inkling {
+        let inkling = Inkling {
             form,
             paths,
             version: Version { number: 1, source: settings.provider },
@@ -166,8 +171,11 @@ impl Inkling {
             saved: Saved::Saved,
             save: Task::ready(()),
             focus: cx.focus_handle(),
+            faces,
             _subs: vec![edited, sent, intercept, feedback_edited],
-        }
+        };
+        inkling.theme().apply_to_kit(cx);
+        inkling
     }
 
     pub fn text(&self, cx: &App) -> String {
@@ -511,6 +519,10 @@ impl Inkling {
         self.form.metrics()
     }
 
+    pub(crate) fn theme(&self) -> Theme {
+        Theme::new(self.form, &self.settings.appearance, &self.faces)
+    }
+
     /// The version bar's slot. It keeps its height when empty, so the page doesn't move when a
     /// review starts or ends.
     fn render_bar(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -523,6 +535,7 @@ impl Inkling {
     }
 
     fn render_version_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let c = self.theme().c;
         let m = self.metrics();
         let source = self.version.source.label();
         let content: AnyElement = match &self.revision {
@@ -535,8 +548,8 @@ impl Inkling {
                 };
                 bar_row()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("Version {}", self.version.number)))
-                    .child(div().flex_grow(1.).text_color(rgb(color::MUTED)).child(progress))
-                    .child(ghost_button("cancel", "Cancel").h(m.control.max(px(32.))).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))).test_support())
+                    .child(div().flex_grow(1.).text_color(c.muted).child(progress))
+                    .child(ghost_button(&c, "cancel", "Cancel").h(m.control.max(px(32.))).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))).test_support())
                     .into_any_element()
             }
             Revision::Reviewing(review) => {
@@ -545,11 +558,11 @@ impl Inkling {
                 let numbers = div()
                     .flex()
                     .gap_1()
-                    .text_color(rgb(color::MUTED))
+                    .text_color(c.muted)
                     .when(self.form == FormFactor::Mac, |numbers| numbers.flex_wrap().child(format!("from {source} ·")))
                     .when(self.form == FormFactor::Phone, |numbers| numbers.whitespace_nowrap().child(format!("{source} ·")))
-                    .child(div().text_color(rgb(color::ADDED_COUNT)).child(format!("+{}", s.words_added)))
-                    .child(div().text_color(rgb(color::REMOVED_LINE)).child(format!("−{}", s.words_removed)))
+                    .child(div().text_color(c.added_count).child(format!("+{}", s.words_added)))
+                    .child(div().text_color(c.removed_line).child(format!("−{}", s.words_removed)))
                     .child(format!("· {} of {} accepted", s.accepted, s.total));
                 let label = match self.form {
                     FormFactor::Mac => div().flex_grow(1.).flex().items_center().gap(px(10.)).child(name).child(numbers),
@@ -567,13 +580,13 @@ impl Inkling {
                     .child(label)
                     .when(self.form == FormFactor::Mac, |row| {
                         row.child(
-                            ghost_button("back", "Back to draft")
+                            ghost_button(&c, "back", "Back to draft")
                                 .on_click(cx.listener(|this, _, window, cx| this.finish(window, cx)))
                                 .test_support(),
                         )
                     })
                     .child(
-                        primary_button("accept-rest", "Accept the rest", m)
+                        primary_button(&c, "accept-rest", "Accept the rest", m)
                             .flex_none()
                             .on_click(cx.listener(|this, _, window, cx| this.accept_rest(window, cx)))
                             .test_support(),
@@ -595,13 +608,13 @@ impl Inkling {
                 .child(
                     div()
                         .w_full()
-                        .max_w(m.column)
+                        .max_w(self.theme().body.column)
                         .pl(px(14.))
                         .pr(px(6.))
                         .py(px(6.))
-                        .bg(rgb(color::SURFACE))
+                        .bg(c.surface)
                         .border_1()
-                        .border_color(rgb(color::HAIRLINE))
+                        .border_color(c.hairline)
                         .rounded(px(10.))
                         .text_size(m.ui)
                         .child(content),
@@ -614,27 +627,29 @@ impl Inkling {
         if self.revision.review().is_some() {
             return self.render_review(window, cx);
         }
-        let m = self.metrics();
+        let t = self.theme();
         Textarea::new(&self.page)
             .appearance(false)
             .h_full()
-            .font_family(SERIF)
-            .text_size(m.body)
-            .line_height(relative(m.line))
-            .text_color(rgb(color::INK))
+            .font_family(t.body.face)
+            .text_size(t.body.size)
+            .line_height(relative(t.body.line))
+            .text_color(t.c.ink)
             .into_any_element()
     }
 
     fn render_message(&self) -> Option<impl IntoElement + use<>> {
+        let c = self.theme().c;
         let line: SharedString = match (&self.revision, &self.notice) {
             (Revision::Failed(message), _) => message.clone().into(),
             (_, Some(notice)) => notice.clone(),
             _ => return None,
         };
-        Some(div().id("message").text_size(px(13.)).text_color(rgb(color::MUTED)).truncate().child(line))
+        Some(div().id("message").text_size(px(13.)).text_color(c.muted).truncate().child(line))
     }
 
     fn render_asks(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
         let m = self.metrics();
         let phone = self.form == FormFactor::Phone;
         let chip = if phone { m.control } else { px(30.) };
@@ -646,9 +661,9 @@ impl Inkling {
                 .map(|chip| if phone { chip.px(px(14.)) } else { chip.px_3() })
                 .flex()
                 .items_center()
-                .bg(rgb(color::SURFACE))
+                .bg(c.surface)
                 .border_1()
-                .border_color(rgb(color::HAIRLINE))
+                .border_color(c.hairline)
                 .rounded(chip / 2.)
                 .text_size(if phone { px(14.) } else { px(12.) })
                 .font_weight(FontWeight::MEDIUM)
@@ -680,18 +695,19 @@ impl Inkling {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .bg(rgb(color::SURFACE))
+                    .bg(c.surface)
                     .border_1()
-                    .border_color(rgb(color::HAIRLINE))
+                    .border_color(c.hairline)
                     .rounded(px(12.))
                     .child(div().flex_1().min_w_0().text_size(px(14.)).child(Input::new(&self.ask_field).id("ask").appearance(false)))
-                    .child(primary_button("send", "Send", m).on_click(cx.listener(|this, _, window, cx| this.send(window, cx))).test_support()),
+                    .child(primary_button(&c, "send", "Send", m).on_click(cx.listener(|this, _, window, cx| this.send(window, cx))).test_support()),
             ))
     }
 
     /// Left to right: whether the page is saved, then a newer build's Restart, Feedback once a
     /// link is saved, and the provider, which opens the key screen like Cmd-Comma.
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
         let saved = match &self.saved {
             Saved::Saved => "Saved".to_string(),
             Saved::Pending => "Editing".to_string(),
@@ -713,18 +729,18 @@ impl Inkling {
             .pt_2()
             .pb(px(14.))
             .text_size(px(12.))
-            .text_color(rgb(color::MUTED))
+            .text_color(c.muted)
             .child(div().flex_1().min_w_0().truncate().child(saved))
             .children(self.render_restart(cx))
             .when(self.feedback_on, |footer| {
                 footer.child(
-                    footer_button("open-feedback", "Feedback")
+                    footer_button(&c, "open-feedback", "Feedback")
                         .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
                         .test_support(),
                 )
             })
             .child(
-                footer_button("open-keys", key)
+                footer_button(&c, "open-keys", key)
                     .on_click(cx.listener(|this, _, window, cx| this.on_open_keys(&OpenKeys, window, cx)))
                     .test_support(),
             )
@@ -733,6 +749,7 @@ impl Inkling {
 
 impl Render for Inkling {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let c = self.theme().c;
         let m = self.metrics();
         let root = div()
             .id("inkling")
@@ -741,8 +758,8 @@ impl Render for Inkling {
             .relative()
             .flex()
             .flex_col()
-            .bg(rgb(color::GROUND))
-            .text_color(rgb(color::INK))
+            .bg(c.ground)
+            .text_color(c.ink)
             .font_family(SANS)
             .on_action(cx.listener(Self::on_open_keys));
         if let Some(screen) = &self.key_screen {
@@ -758,7 +775,7 @@ impl Render for Inkling {
         root.child(self.render_bar(cx))
             .child(
                 div().flex_1().min_h_0().w_full().flex().justify_center().px(m.gutter).pt(px(48.)).pb(px(24.)).child(
-                    div().w_full().max_w(m.column).h_full().child(page),
+                    div().w_full().max_w(self.theme().body.column).h_full().child(page),
                 ),
             )
             .children(self.render_sheet(cx))
@@ -766,7 +783,7 @@ impl Render for Inkling {
                 div().w_full().flex().justify_center().px(m.gutter).pb(px(12.)).child(
                     div()
                         .w_full()
-                        .max_w(m.column)
+                        .max_w(self.theme().body.column)
                         .flex()
                         .flex_col()
                         .gap_2()
@@ -783,6 +800,7 @@ impl Inkling {
     /// tapped change, then the quick actions and the ask field, which the host keeps above the
     /// keyboard.
     fn render_phone(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let c = self.theme().c;
         let m = self.metrics();
         let top = match self.render_version_bar(cx) {
             Some(bar) => bar,
@@ -806,7 +824,7 @@ impl Inkling {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .when(reviewing, |bottom| bottom.bg(rgb(color::SURFACE)))
+                    .when(reviewing, |bottom| bottom.bg(c.surface))
                     .children(self.render_message())
                     .child(self.render_asks(cx)),
             )
@@ -816,6 +834,7 @@ impl Inkling {
     /// iPhone, outside a review: whether the page is saved, the way to the key screen, and
     /// Done while a field has the keyboard.
     fn render_status_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
         let m = self.metrics();
         let saved = match &self.saved {
             Saved::Saved => "Saved".to_string(),
@@ -833,19 +852,19 @@ impl Inkling {
             .items_center()
             .gap_1()
             .text_size(px(14.))
-            .text_color(rgb(color::MUTED))
+            .text_color(c.muted)
             .child(div().flex_1().min_w_0().truncate().child(saved))
             .when(self.feedback_on, |row| {
                 row.child(
-                    ghost_button("open-feedback", "Feedback")
+                    ghost_button(&c, "open-feedback", "Feedback")
                         .h(m.control)
-                        .text_color(rgb(color::INK))
+                        .text_color(c.ink)
                         .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
                         .test_support(),
                 )
             })
             .child(
-                ghost_button("open-keys", "")
+                ghost_button(&c, "open-keys", "")
                     .h(m.control)
                     .child(key)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -856,11 +875,11 @@ impl Inkling {
             )
             .when(self.typing(window, cx), |row| {
                 row.child(
-                    ghost_button("done", "Done")
+                    ghost_button(&c, "done", "Done")
                         .h(m.control)
                         .text_size(px(15.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(color::INK))
+                        .text_color(c.ink)
                         .on_click(cx.listener(|this, _, window, cx| this.done_typing(window, cx)))
                         .test_support(),
                 )
@@ -872,7 +891,7 @@ fn bar_row() -> Div {
     div().flex().items_center().gap(px(10.))
 }
 
-pub(crate) fn ghost_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+pub(crate) fn ghost_button(c: &Colors, id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(32.))
@@ -881,13 +900,13 @@ pub(crate) fn ghost_button(id: &'static str, label: &'static str) -> Stateful<Di
         .items_center()
         .rounded(px(6.))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(color::MUTED))
+        .text_color(c.muted)
         .cursor_pointer()
         .child(label)
 }
 
 /// A Mac footer action: a small outlined pill, so it reads as a button beside the footer's text.
-pub(crate) fn footer_button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
+pub(crate) fn footer_button(c: &Colors, id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -895,17 +914,17 @@ pub(crate) fn footer_button(id: &'static str, label: impl Into<SharedString>) ->
         .px(px(10.))
         .flex()
         .items_center()
-        .bg(rgb(color::SURFACE))
+        .bg(c.surface)
         .border_1()
-        .border_color(rgb(color::HAIRLINE))
+        .border_color(c.hairline)
         .rounded(px(13.))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(color::INK))
+        .text_color(c.ink)
         .cursor_pointer()
         .child(label.into())
 }
 
-pub(crate) fn primary_button(id: &'static str, label: &'static str, m: Metrics) -> Stateful<Div> {
+pub(crate) fn primary_button(c: &Colors, id: &'static str, label: &'static str, m: Metrics) -> Stateful<Div> {
     let height = if m.control > px(32.) { m.control } else { px(32.) };
     div()
         .id(id)
@@ -914,8 +933,8 @@ pub(crate) fn primary_button(id: &'static str, label: &'static str, m: Metrics) 
         .flex()
         .items_center()
         .rounded(px(8.))
-        .bg(rgb(color::INK))
-        .text_color(rgb(color::SURFACE))
+        .bg(c.ink)
+        .text_color(c.surface)
         .text_size(px(13.))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()

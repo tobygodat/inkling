@@ -3,7 +3,7 @@
 //! reading it back. The link field is the only feedback UI shown before a link is saved.
 
 use crate::app::{Inkling, ghost_button, primary_button};
-use crate::{FormFactor, SERIF, color};
+use crate::FormFactor;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -144,8 +144,9 @@ impl Inkling {
     }
 
     pub(crate) fn render_keys(&self, screen: &KeyScreen, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
         let m = self.metrics();
-        let label = |text: String| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(color::MUTED)).child(text);
+        let label = |text: String| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(c.muted).child(text);
         let field = |input: &Entity<InputState>, id: &'static str, masked: bool| {
             let input = Input::new(input).id(id).appearance(false);
             let input = if masked { input.mask_toggle() } else { input };
@@ -154,14 +155,14 @@ impl Inkling {
                 .px(px(14.))
                 .flex()
                 .items_center()
-                .bg(rgb(color::SURFACE))
+                .bg(c.surface)
                 .border_1()
-                .border_color(rgb(color::HAIRLINE))
+                .border_color(c.hairline)
                 .rounded(px(12.))
                 .text_size(px(15.))
                 .child(div().flex_1().child(input))
         };
-        let tabs = div().flex().gap_1().p_1().bg(rgb(color::SEGMENT)).rounded(px(12.)).children(Provider::ALL.map(|p| {
+        let tabs = div().flex().gap_1().p_1().bg(c.segment).rounded(px(12.)).children(Provider::ALL.map(|p| {
             let on = p == screen.provider;
             div()
                 .id(p.id())
@@ -173,8 +174,8 @@ impl Inkling {
                 .rounded(px(9.))
                 .text_size(px(14.))
                 .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
-                .text_color(rgb(if on { color::INK } else { color::MUTED }))
-                .when(on, |tab| tab.bg(rgb(color::SURFACE)).border_1().border_color(rgb(color::HAIRLINE)))
+                .text_color(if on { c.ink } else { c.muted })
+                .when(on, |tab| tab.bg(c.surface).border_1().border_color(c.hairline))
                 .cursor_pointer()
                 .child(p.label())
                 .on_click(cx.listener(move |this, _, window, cx| this.pick_provider(p, window, cx)))
@@ -206,7 +207,7 @@ impl Inkling {
                 .gap_6()
                 .child(
                     div().flex().child(
-                        ghost_button("back-to-page", "‹ Back to the page")
+                        ghost_button(&c, "back-to-page", "‹ Back to the page")
                             .h(m.control.max(px(32.)))
                             .on_click(cx.listener(|this, _, window, cx| this.close_keys(window, cx)))
                             .test_support(),
@@ -214,7 +215,7 @@ impl Inkling {
                 )
                 .child(
                     div()
-                        .font_family(SERIF)
+                        .font_family(self.theme().body.face)
                         .text_size(px(30.))
                         .line_height(relative(1.2))
                         .font_weight(FontWeight::SEMIBOLD)
@@ -231,7 +232,7 @@ impl Inkling {
                                 .flex()
                                 .justify_between()
                                 .child(label(format!("{} API key", provider.label())))
-                                .children(status.map(|s| div().text_size(px(13.)).text_color(rgb(color::INK)).child(s))),
+                                .children(status.map(|s| div().text_size(px(13.)).text_color(c.ink).child(s))),
                         )
                         .child(field(&screen.key, "key", true))
                         .child(
@@ -239,7 +240,7 @@ impl Inkling {
                                 .id("where")
                                 .when(self.form == FormFactor::Phone, |link| link.min_h(m.control).flex().items_center())
                                 .text_size(px(14.))
-                                .text_color(rgb(color::LINK))
+                                .text_color(c.link)
                                 .cursor_pointer()
                                 .child("Where do I get a key?")
                                 .on_click(move |_, _, cx| cx.open_url(key_page(provider))),
@@ -247,14 +248,14 @@ impl Inkling {
                 )
                 .child(div().flex().flex_col().gap_2().child(label("Model".into())).child(field(&screen.model, "model", false)))
                 .child(
-                    primary_button("save-key", "Save key", m)
+                    primary_button(&c, "save-key", "Save key", m)
                         .h(if self.form == FormFactor::Phone { px(52.) } else { px(48.) })
                         .justify_center()
                         .text_size(px(15.))
                         .on_click(cx.listener(|this, _, window, cx| this.save_keys(window, cx)))
                         .test_support(),
                 )
-                .child(div().h(px(1.)).bg(rgb(color::HAIRLINE)))
+                .child(div().h(px(1.)).bg(c.hairline))
                 .child(
                     div()
                         .flex()
@@ -267,20 +268,20 @@ impl Inkling {
                                 .gap_3()
                                 .child(label("Feedback link".into()))
                                 .children(link_status.map(|s| {
-                                    div().id("link-status").text_size(px(13.)).text_color(rgb(color::INK)).text_right().child(s)
+                                    div().id("link-status").text_size(px(13.)).text_color(c.ink).text_right().child(s)
                                 })),
                         )
                         .child(field(&screen.link, "feedback-link", true))
                         .child(
                             div().flex().child(
-                                ghost_button("save-link", "Save link")
+                                ghost_button(&c, "save-link", "Save link")
                                     .h(m.control.max(px(32.)))
                                     .px(px(14.))
                                     .border_1()
-                                    .border_color(rgb(color::HAIRLINE))
+                                    .border_color(c.hairline)
                                     .rounded(px(8.))
                                     .text_size(px(14.))
-                                    .text_color(rgb(color::INK))
+                                    .text_color(c.ink)
                                     .on_click(cx.listener(|this, _, window, cx| this.save_link(window, cx)))
                                     .test_support(),
                             ),

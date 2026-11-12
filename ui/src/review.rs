@@ -3,7 +3,8 @@
 
 use crate::app::{Inkling, ghost_button};
 use crate::inline::{InlineText, ROOM, room_for, width_of};
-use crate::{FormFactor, SANS, SERIF, color};
+use crate::theme::Colors;
+use crate::{FormFactor, SANS};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::{Change, ChangeId, Decision, Segment};
@@ -17,34 +18,34 @@ const TEXTAREA_INSET: Pixels = px(10.);
 const TEXTAREA_TOP: Pixels = px(8.);
 const TEXTAREA_RIGHT: Pixels = px(20.);
 
-fn removed() -> HighlightStyle {
+fn removed(c: &Colors) -> HighlightStyle {
     HighlightStyle {
-        color: Some(rgb(color::REMOVED_TEXT).into()),
-        background_color: Some(rgb(color::REMOVED_FILL).into()),
-        strikethrough: Some(StrikethroughStyle { thickness: px(1.5), color: Some(rgb(color::REMOVED_LINE).into()) }),
+        color: Some(c.removed_text.into()),
+        background_color: Some(c.removed_fill.into()),
+        strikethrough: Some(StrikethroughStyle { thickness: px(1.5), color: Some(c.removed_line.into()) }),
         ..Default::default()
     }
 }
 
-fn added() -> HighlightStyle {
+fn added(c: &Colors) -> HighlightStyle {
     HighlightStyle {
-        color: Some(rgb(color::ADDED_TEXT).into()),
-        background_color: Some(rgb(color::ADDED_FILL).into()),
+        color: Some(c.added_text.into()),
+        background_color: Some(c.added_fill.into()),
         ..Default::default()
     }
 }
 
-fn kept() -> HighlightStyle {
+fn kept(c: &Colors) -> HighlightStyle {
     HighlightStyle {
-        color: Some(rgb(color::ADDED_TEXT).into()),
-        underline: Some(UnderlineStyle { thickness: px(2.), color: Some(rgb(color::ADDED_LINE).into()), wavy: false }),
+        color: Some(c.added_text.into()),
+        underline: Some(UnderlineStyle { thickness: px(2.), color: Some(c.added_line.into()), wavy: false }),
         ..Default::default()
     }
 }
 
-fn selected() -> HighlightStyle {
+fn selected(c: &Colors) -> HighlightStyle {
     HighlightStyle {
-        underline: Some(UnderlineStyle { thickness: px(2.), color: Some(rgb(color::INK).into()), wavy: false }),
+        underline: Some(UnderlineStyle { thickness: px(2.), color: Some(c.ink.into()), wavy: false }),
         ..Default::default()
     }
 }
@@ -79,8 +80,9 @@ impl Composed {
 
 impl Inkling {
     pub(crate) fn render_review(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let m = self.metrics();
-        let font = font(SERIF);
+        let t = self.theme();
+        let c = &t.c;
+        let font = font(t.body.face);
         if self.form == FormFactor::Phone && self.selected.is_none() {
             self.selected = self.revision.review().and_then(|r| r.next_pending(None));
         }
@@ -97,17 +99,17 @@ impl Inkling {
             };
             let start = out.text.len();
             let tapped = self.form == FormFactor::Phone && self.selected == Some(change.id);
-            let mark = |style: HighlightStyle| if tapped { HighlightStyle { underline: selected().underline, ..style } } else { style };
+            let mark = |style: HighlightStyle| if tapped { HighlightStyle { underline: selected(c).underline, ..style } } else { style };
             match change.decision {
                 Decision::Pending => {
-                    out.push(change.removed, Some(mark(removed())));
+                    out.push(change.removed, Some(mark(removed(c))));
                     if !change.removed.is_empty() && !change.added.is_empty() {
                         out.push(" ", Some(mark(HighlightStyle::default())));
                     }
-                    out.push(change.added, Some(mark(added())));
+                    out.push(change.added, Some(mark(added(c))));
                 }
                 Decision::Accepted => {
-                    out.push(change.added, Some(mark(kept())));
+                    out.push(change.added, Some(mark(kept(c))));
                 }
                 Decision::Rejected => {
                     out.push(change.removed, Some(mark(HighlightStyle::default())));
@@ -118,7 +120,7 @@ impl Inkling {
             out.changes.push((range, change.id));
             if self.form == FormFactor::Mac {
                 let (width, control) = self.change_controls(&change, ordinal, next == Some(change.id), window, cx);
-                out.control(width, control, &font, m.body, window);
+                out.control(width, control, &font, t.body.size, window);
             }
         }
 
@@ -129,10 +131,10 @@ impl Inkling {
             .id("review")
             .size_full()
             .overflow_y_scroll()
-            .font_family(SERIF)
-            .text_size(m.body)
-            .line_height(relative(m.line))
-            .text_color(rgb(color::INK))
+            .font_family(t.body.face)
+            .text_size(t.body.size)
+            .line_height(relative(t.body.line))
+            .text_color(c.ink)
             .child(div().pl(TEXTAREA_INSET).pr(TEXTAREA_RIGHT).pt(TEXTAREA_TOP).child(InlineText::new(styled, out.controls)))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 if this.form != FormFactor::Phone {
@@ -158,6 +160,7 @@ impl Inkling {
         cx: &mut Context<Self>,
     ) -> (Pixels, AnyElement) {
         let id = change.id;
+        let c = self.theme().c;
         match change.decision {
             Decision::Pending => {
                 let width = PENDING_CONTROLS + if change.more > 0 { MORE_BUTTON + 2. } else { 0. };
@@ -165,17 +168,17 @@ impl Inkling {
                     .flex()
                     .gap(px(2.))
                     .p(px(2.))
-                    .bg(rgb(color::SURFACE))
+                    .bg(c.surface)
                     .border_1()
-                    .border_color(rgb(color::HAIRLINE))
+                    .border_color(c.hairline)
                     .rounded(px(8.))
                     .child(
-                        icon_button(("accept", key), "✓", color::ADDED_TEXT, next.then_some(color::ADDED_FILL), self.metrics().control)
+                        icon_button(("accept", key), "✓", c.added_text, next.then_some(c.added_fill), self.metrics().control)
                             .on_click(cx.listener(move |this, _, window, cx| this.accept(id, window, cx)))
                             .test_support(),
                     )
                     .child(
-                        icon_button(("reject", key), "✕", color::REMOVED_TEXT, None, self.metrics().control)
+                        icon_button(("reject", key), "✕", c.removed_text, None, self.metrics().control)
                             .on_click(cx.listener(move |this, _, window, cx| this.reject(id, window, cx)))
                             .test_support(),
                     );
@@ -192,7 +195,7 @@ impl Inkling {
                             .font_family(SANS)
                             .text_size(px(12.))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(color::MUTED))
+                            .text_color(c.muted)
                             .cursor_pointer()
                             .child(format!("{} more", change.more))
                             .on_click(cx.listener(move |this, _, _, cx| this.toggle_wordings(id, cx)))
@@ -207,8 +210,8 @@ impl Inkling {
             }
             decision => {
                 let (mark, ink) = match decision {
-                    Decision::Accepted => ("✓ kept", color::ADDED_COUNT),
-                    _ => ("✕ rejected", color::REMOVED_TEXT),
+                    Decision::Accepted => ("✓ kept", c.added_count),
+                    _ => ("✕ rejected", c.removed_text),
                 };
                 let ui = Font { weight: FontWeight::MEDIUM, ..font(SANS) };
                 let width = 4. + 6. + 8. + f32::from(width_of(mark, &ui, px(11.), window) + width_of("Undo", &ui, px(11.), window));
@@ -221,13 +224,13 @@ impl Inkling {
                     .text_size(px(11.))
                     .font_weight(FontWeight::MEDIUM)
                     .whitespace_nowrap()
-                    .child(div().text_color(rgb(ink)).child(mark))
+                    .child(div().text_color(ink).child(mark))
                     .child(
                         div()
                             .id(("undo", key))
                             .px(px(4.))
                             .rounded(px(4.))
-                            .text_color(rgb(color::MUTED))
+                            .text_color(c.muted)
                             .underline()
                             .cursor_pointer()
                             .child("Undo")
@@ -244,14 +247,15 @@ impl Inkling {
     fn wordings_menu(&self, change: &Change<'_>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let id = change.id;
         let phone = self.form == FormFactor::Phone;
+        let c = self.theme().c;
         div()
             .when(!phone, |menu| menu.absolute().top(px(36.)).left(px(6.)).min_w(px(180.)).shadow_md())
             .p(px(4.))
             .flex()
             .flex_col()
-            .bg(rgb(color::SURFACE))
+            .bg(c.surface)
             .border_1()
-            .border_color(rgb(color::HAIRLINE))
+            .border_color(c.hairline)
             .rounded(px(8.))
             .font_family(SANS)
             .text_size(if phone { px(15.) } else { px(13.) })
@@ -266,7 +270,7 @@ impl Inkling {
                     .gap_2()
                     .rounded(px(6.))
                     .cursor_pointer()
-                    .when(chosen, |row| row.bg(rgb(color::ADDED_FILL)).text_color(rgb(color::ADDED_TEXT)))
+                    .when(chosen, |row| row.bg(c.added_fill).text_color(c.added_text))
                     .child(div().w(px(12.)).child(if chosen { "✓" } else { "" }))
                     .child(wording.clone())
                     .on_click(cx.listener(move |this, _, window, cx| this.choose(id, i, window, cx)))
@@ -282,6 +286,7 @@ impl Inkling {
         let review = self.revision.review()?;
         let change = review.change(self.selected?)?;
         let m = self.metrics();
+        let c = self.theme().c;
         let total = review.stats().total;
         let index = review.changes().position(|c| c.id == change.id).unwrap_or(0);
         let id = change.id;
@@ -298,7 +303,7 @@ impl Inkling {
         let (removed, added) = (change.removed.trim(), change.added.trim());
         let keep = if removed.is_empty() { "✕ Leave it out".to_string() } else { format!("✕ Keep {}", quote(removed)) };
         let take = if added.is_empty() { format!("✓ Cut {}", quote(removed)) } else { format!("✓ Use {}", quote(added)) };
-        let sheet_button = |id: &'static str, label: String, ink: u32, fill: u32| {
+        let sheet_button = |id: &'static str, label: String, ink: Rgba, fill: Rgba| {
             div()
                 .id(id)
                 .flex_1()
@@ -310,9 +315,9 @@ impl Inkling {
                 .justify_center()
                 .rounded(px(12.))
                 .border_1()
-                .border_color(rgb(color::HAIRLINE))
-                .bg(rgb(fill))
-                .text_color(rgb(ink))
+                .border_color(c.hairline)
+                .bg(fill)
+                .text_color(ink)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(div().min_w_0().truncate().child(label))
         };
@@ -325,9 +330,9 @@ impl Inkling {
                 .flex()
                 .flex_col()
                 .gap_3()
-                .bg(rgb(color::SURFACE))
+                .bg(c.surface)
                 .border_t_1()
-                .border_color(rgb(color::HAIRLINE))
+                .border_color(c.hairline)
                 .rounded_t(px(18.))
                 .text_size(m.ui)
                 .child(
@@ -340,14 +345,14 @@ impl Inkling {
                                 .pl_2()
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(rgb(color::MUTED))
+                                .text_color(c.muted)
                                 .child(format!("Change {} of {total}", index + 1)),
                         )
                         .child(
                             div()
                                 .flex()
-                                .child(icon_button("previous", "‹", color::INK, None, m.control).on_click(cx.listener(step(-1))).test_support())
-                                .child(icon_button("next", "›", color::INK, None, m.control).on_click(cx.listener(step(1))).test_support()),
+                                .child(icon_button("previous", "‹", c.ink, None, m.control).on_click(cx.listener(step(-1))).test_support())
+                                .child(icon_button("next", "›", c.ink, None, m.control).on_click(cx.listener(step(1))).test_support()),
                         ),
                 )
                 .child(
@@ -355,12 +360,12 @@ impl Inkling {
                         .flex()
                         .gap_2()
                         .child(
-                            sheet_button("keep", keep, color::REMOVED_TEXT, color::SURFACE)
+                            sheet_button("keep", keep, c.removed_text, c.surface)
                                 .on_click(cx.listener(move |this, _, window, cx| this.reject(id, window, cx)))
                                 .test_support(),
                         )
                         .child(
-                            sheet_button("use", take, color::ADDED_TEXT, color::ADDED_FILL)
+                            sheet_button("use", take, c.added_text, c.added_fill)
                                 .on_click(cx.listener(move |this, _, window, cx| this.accept(id, window, cx)))
                                 .test_support(),
                         ),
@@ -368,7 +373,7 @@ impl Inkling {
                 .when(change.more > 0, |sheet| {
                     let more = if change.more == 1 { "1 more word".to_string() } else { format!("{} more words", change.more) };
                     sheet.child(
-                        ghost_button("more-words", "")
+                        ghost_button(&c, "more-words", "")
                             .child(more)
                             .h(m.control)
                             .justify_center()
@@ -379,7 +384,7 @@ impl Inkling {
                 .when(self.wordings_open == Some(id), |sheet| sheet.child(self.wordings_menu(&change, cx)))
                 .when(change.decision != Decision::Pending, |sheet| {
                     sheet.child(
-                        ghost_button("undo", "Undo")
+                        ghost_button(&c, "undo", "Undo")
                             .h(m.control)
                             .justify_center()
                             .on_click(cx.listener(move |this, _, window, cx| this.undo(id, window, cx)))
@@ -391,7 +396,7 @@ impl Inkling {
     }
 }
 
-fn icon_button(id: impl Into<ElementId>, glyph: &'static str, ink: u32, fill: Option<u32>, size: Pixels) -> Stateful<Div> {
+fn icon_button(id: impl Into<ElementId>, glyph: &'static str, ink: Rgba, fill: Option<Rgba>, size: Pixels) -> Stateful<Div> {
     div()
         .id(id)
         .size(size)
@@ -399,11 +404,11 @@ fn icon_button(id: impl Into<ElementId>, glyph: &'static str, ink: u32, fill: Op
         .items_center()
         .justify_center()
         .rounded(px(6.))
-        .when_some(fill, |b, fill| b.bg(rgb(fill)))
+        .when_some(fill, |b, fill| b.bg(fill))
         .font_family(SANS)
         .text_size(px(14.))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(ink))
+        .text_color(ink)
         .cursor_pointer()
         .child(glyph)
 }
