@@ -85,6 +85,13 @@ the tapped byte, a double tap selects the word. A drag on a handle and a long pr
 the editor claims those touches to keep the page from scrolling under them. While the page has no
 focus it has no block of source: every block is drawn. `ios/README.md` has the bridge's side.
 
+Assistive technology reads the page as one multi-line text input, as it read the text area the
+live editor replaced. Its value is the source, with the source split into text runs so the
+selection can be reported as a place in the text. Each formula reads "Formula" and its TeX, and
+each image its alt text. GPUI builds that tree only while a screen reader asks for it, and
+`ui/src/live/a11y.rs` reads the editor only then. On iPhone gpui-mobile passes UIKit no tree, so
+VoiceOver reads the page only through the text-input bridge, once the page has focus.
+
 `Appearance::markdown` and `Appearance::maths` are the page's two switches.
 `Inkling::set_appearance` passes them, with the theme, to the editor, which redraws at once. With
 Markdown off, every block is its source and maths is off too, because `$` is Markdown here.

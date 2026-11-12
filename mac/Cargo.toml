@@ -8,9 +8,10 @@ name = "inkling"
 path = "src/main.rs"
 
 [features]
-snap = ["gpui-kit/test-support"]
+snap = ["gpui-kit/test-support", "dep:serde_json"]
 
 [dependencies]
 gpui-kit = { workspace = true, features = ["gpui-fast"] }
 inkling-core.workspace = true
 inkling-ui.workspace = true
+serde_json = { version = "1", optional = true }

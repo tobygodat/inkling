@@ -12,6 +12,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod a11y;
+
 const PARAGRAPHS: [&str; 4] = [
     "Every weekday the seven-forty ferry leaves without waiting for anyone, and every weekday i am almost not on it.",
     "I like teh crossing because nothing is asked of me. For twenty-two minutes I am between places.",

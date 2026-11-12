@@ -1,0 +1,25 @@
+{
+  "focused": true,
+  "page": {
+    "role": "MultilineTextInput",
+    "on_action": [
+      "Focus",
+      "SetValue"
+    ],
+    "value": "I like the **the** ferry, and $E = mc^2$ is still true.\n\nWe watched the **cold** grey water and don't talk."
+  },
+  "children": [
+    {
+      "role": "TextRun",
+      "value": "I like the **the** ferry, and $E = mc^2$ is still true.\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "We watched the **cold** grey water and don't talk."
+    }
+  ]
+}
