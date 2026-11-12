@@ -129,8 +129,13 @@ impl MarkdownPlugin for MathsPlugin {
         let block = div().w_full().flex().justify_center();
         let drawn = node.data::<Tex>().and_then(|tex| Some((tex, self.maths.formula(tex, self.size, window.scale_factor(), self.ink, cx)?)));
         match drawn {
-            Some((tex, f)) => block.child(self.maths.image(tex, &f, self.size)),
-            None => block.child(node.as_text().to_string()),
+            Some((tex, f)) => block
+                .id(SharedString::from(format!("formula {}", tex.source)))
+                .role(Role::Image)
+                .aria_label(format!("Formula {}", tex.source))
+                .child(self.maths.image(tex, &f, self.size))
+                .into_any_element(),
+            None => block.child(node.as_text().to_string()).into_any_element(),
         }
     }
 
