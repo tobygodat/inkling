@@ -73,7 +73,8 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 - **Feedback button.** 40 pt round, an ink outline and the message icon. Shown once a feedback link
   is saved.
 - **Appearance panel.** Header (artboard, "Appearance", Done), Light / Dark / Custom, Font, Text
-  size, Line spacing, Page width, Colours, Reset. Every change shows at once and is saved.
+  size, Line spacing, Page width, Drawing (a Markdown switch and a Maths switch), Colours, Reset.
+  Every change shows at once and is saved. A switch hands the caret back to the page.
 - **Colour picker.** Under the colour row it belongs to: ten swatches that suit that colour, then
   Custom, which adds a wheel (angle is hue, distance from the centre is strength), a lightness
   slider and a hex field.
@@ -82,9 +83,37 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 
 - Inline buttons are 28 pt on Mac. No control on iPhone is under 44 pt.
 
+## The live page
+On the Mac the page draws its Markdown and maths while the writer types. The draft on disk stays
+plain Markdown. Every block is drawn except the one that holds the caret, which shows its source.
+
+- **Headings.** Semibold in the body face, larger than body text by level. A heading keeps its size
+  while the caret is in it, so the line doesn't jump.
+- **Lists.** A bullet or a number in muted ink, then the item indented.
+- **Emphasis.** Bold, italic and struck-through text draw as they say.
+- **Code.** In a monospaced face on a Segment fill. A block has a Hairline border and its language
+  at the top right. Inline code takes the same fill.
+- **Tables.** Hairline rules between rows and columns, and the header row on Segment. Cells follow
+  the alignment row.
+- **Links.** In Link (accent), underlined. A click puts the caret there. Links never open from the
+  page.
+- **Images.** A local file draws at its size, inside the column. A path is read relative to the
+  draft's folder. A remote image draws as its alt text in brackets, muted, and is never fetched.
+- **Maths.** `$…$` draws inline, sitting on the text's baseline. `$$…$$` draws centred, as its own block.
+  Both are in Ink, at the body size. A formula that doesn't parse, and a price such as `$5`, stay text.
+- **The caret's block.** Its source, with the Markdown syntax (`#`, `**`, `-`, `$`, the backticks)
+  in muted ink and the words in Ink. A heading's source keeps the heading's size and code keeps
+  its fill.
+- **Markdown off.** Every block shows its source, in Ink, at the body size. Maths is off too,
+  because `$` is Markdown here, so the Maths switch is disabled and keeps its value.
+- **Maths off.** Formulas show their source. The rest still draws.
+- **During review.** The review draws the source, syntax included, so every change sits on the
+  bytes it replaces.
+
 ## Motion
 - One duration, 200 ms, with a quick ease-out (quint), for anything that appears or goes.
-- The cog's menu fades in while dropping 6 pt into place, and fades out the same way. It is the
-  only motion so far. It is short because the menu is reached for mid-sentence: it should feel
-  instant and still show where it came from.
+- The cog's menu fades in while dropping 6 pt into place, and fades out the same way. It is short
+  because the menu is reached for mid-sentence: it should feel instant and still show where it
+  came from.
+- The panel's switches slide their thumb with GPUI Kit's own spring.
 - Nothing on the page itself moves.
