@@ -90,8 +90,7 @@ impl Live {
                 })
             })
             .expect("a headless window");
-        let frames = std::env::var_os("INKLING_LIVE_FRAMES").map(|d| (PathBuf::from(d), 0));
-        let mut live = Live { cx, window, view, dir: dir.to_path_buf(), frames };
+        let mut live = Live { cx, window, view, dir: dir.to_path_buf(), frames: None };
         live.frame();
         live
     }
@@ -118,6 +117,11 @@ impl Live {
                 image.save(path).ok();
             }
         }
+    }
+
+    /// Saves every frame to `INKLING_LIVE_FRAMES`, when set, for the review video.
+    fn record(&mut self, on: bool) {
+        self.frames = std::env::var_os("INKLING_LIVE_FRAMES").filter(|_| on).map(|d| (PathBuf::from(d), 0));
     }
 
     fn press(&mut self, key: &str) {
@@ -231,6 +235,7 @@ pub fn run(dir: &Path) {
     let caret = find(SAMPLE, "in the middle") + 3;
     let on = Options { markdown: true, maths: true };
     let mut s = Live::open(SAMPLE, caret, on, &images, dir);
+    s.record(true);
 
     // Lane 1.
     let l = "live-01";
@@ -387,6 +392,7 @@ pub fn run(dir: &Path) {
     s.shot("live-08-undo");
 
     // Lane 9.
+    s.record(false);
     let l = "live-09";
     let at = s.head();
     s.update(|e, w, cx| e.replace_and_mark_text_in_range(None, "かな", Some(2..2), w, cx));
