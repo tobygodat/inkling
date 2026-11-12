@@ -5,13 +5,17 @@
 
 pub mod ai;
 pub mod ask;
+pub mod feedback;
+#[cfg(test)]
+mod mock;
 pub mod providers;
 pub mod review;
 pub mod store;
 
 pub use ai::{AiEvent, Backend, Cancel, Prompt, Provider, start};
 pub use ask::{AnswerError, Ask, BadRequest, Request, Revision, parse_alternatives};
+pub use feedback::{Build, BuildNumber, Desk};
 pub use review::{Change, ChangeId, Decision, Edit, Review, Segment, Stats};
-pub use store::{KeyStore, MemoryKeys, Paths, Settings, backend_for_request, default_keys};
+pub use store::{KeyStore, MemoryKeys, Paths, Secret, Settings, backend_for_request, default_keys, headless};
 #[cfg(target_vendor = "apple")]
 pub use store::KeychainKeys;

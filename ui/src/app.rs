@@ -3,7 +3,7 @@ use crate::{FormFactor, Metrics, SANS, SERIF, color};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use inkling_core::{AiEvent, Ask, Cancel, ChangeId, KeyStore, Paths, Provider, Request, Revision, Settings};
+use inkling_core::{AiEvent, Ask, Cancel, ChangeId, KeyStore, Paths, Provider, Request, Revision, Secret, Settings};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -101,7 +101,7 @@ impl Inkling {
         if form == FormFactor::Mac {
             page.read(cx).focus_handle(cx).focus(window, cx);
         }
-        let key_saved = keys.has(settings.provider);
+        let key_saved = keys.has(Secret::ApiKey(settings.provider));
         Inkling {
             form,
             paths,
@@ -428,7 +428,7 @@ impl Inkling {
         self.key_screen = None;
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
-        self.key_saved = self.keys.has(self.settings.provider);
+        self.key_saved = self.keys.has(Secret::ApiKey(self.settings.provider));
         if self.revision.review().is_none() {
             self.focus_page(window, cx);
         }

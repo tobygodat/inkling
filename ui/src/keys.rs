@@ -6,7 +6,7 @@ use crate::{FormFactor, SANS, SERIF, color};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use inkling_core::Provider;
+use inkling_core::{Provider, Secret};
 
 pub(crate) struct KeyScreen {
     pub provider: Provider,
@@ -36,7 +36,7 @@ impl KeyScreen {
 
     fn show(&mut self, provider: Provider, app: &Inkling, window: &mut Window, cx: &mut App) {
         self.provider = provider;
-        self.has_key = app.keys.has(provider);
+        self.has_key = app.keys.has(Secret::ApiKey(provider));
         self.status = None;
         self.clear_key(window, cx);
         let typed = app.settings.typed_model(provider).unwrap_or_default().to_string();
@@ -81,12 +81,12 @@ impl Inkling {
         let provider = screen.provider;
         let key = screen.key.read(cx).value().trim().to_string();
         let model = screen.model.read(cx).value().to_string();
-        let stored = if key.is_empty() { Ok(()) } else { self.keys.set(provider, &key) };
+        let stored = if key.is_empty() { Ok(()) } else { self.keys.set(Secret::ApiKey(provider), &key) };
         self.settings.provider = provider;
         self.settings.set_model(provider, &model);
         let written = self.settings.save(&self.paths).map_err(|e| format!("Couldn't save settings ({e})."));
         let status = stored.and(written);
-        self.key_saved = self.keys.has(provider);
+        self.key_saved = self.keys.has(Secret::ApiKey(provider));
         if let Some(screen) = &mut self.key_screen {
             screen.has_key = self.key_saved;
             screen.status = Some(status);
