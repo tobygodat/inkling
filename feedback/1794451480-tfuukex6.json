@@ -1,0 +1,6 @@
+{
+  "id": "1794451480-tfuukex6",
+  "outcome": "declined",
+  "reason": "Dark mode is already planned as part of the new Appearance screen (TOB-442), so it will come with that rather than as a quick change.",
+  "seconds_to_ship": 446
+}
