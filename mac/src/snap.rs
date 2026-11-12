@@ -3,7 +3,7 @@
 use super::*;
 use gpui_kit::test::TestWindowExt as _;
 use inkling_core::feedback::{Delivery, FeedbackId, Outcome, Record, SendError, Status};
-use inkling_core::{AiEvent, Appearance, Build, Face, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
+use inkling_core::{AiEvent, Appearance, Build, Face, Mode, Part, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
 use inkling_ui::{Menu, Restart};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -455,6 +455,33 @@ fn appearance(dir: &Path) {
     let saved = std::fs::read_to_string(paths.settings()).unwrap_or_default();
     check(saved.contains(&format!("\"text_size\": {size}")) && saved.contains(face.family()), "every change is saved to settings.json");
     s.shot("25-appearance-changed");
+
+    s.click(("mode", 1usize));
+    check(s.appearance().mode == Mode::Dark && s.appearance().tokens() == inkling_core::appearance::DARK, "Dark switches every colour to the dark set");
+    s.shot("26-dark");
+    let dark = s.appearance().palette();
+    s.click(("color", 3usize));
+    check(s.read(|v, _| v.picker_part()) == Some(Part::Accent), "a colour row opens the picker under it");
+    check(s.bounds(("swatch", 9usize)).is_some() && s.bounds("wheel").is_none(), "the picker shows ten swatches first");
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
+    s.click("custom");
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
+    let wheel = s.bounds("wheel").unwrap_or_else(|| fail("Custom shows the colour wheel"));
+    let r = wheel.size.width / 2.;
+    let (angle, reach) = (30f32.to_radians(), 0.9);
+    let to = point(wheel.center().x + r * angle.cos() * reach, wheel.center().y - r * angle.sin() * reach);
+    s.with(|w, cx| w.drag(wheel.center(), to, cx));
+    s.frame();
+    let a = s.appearance();
+    let (hue, strength, _) = a.custom.accent.hsl();
+    check(a.mode == Mode::Custom, "picking on the wheel switches to Custom");
+    check((hue - 30.).abs() < 4. && (strength - 0.9).abs() < 0.05, &format!("dragging on the wheel sets hue and strength ({hue:.0}°, {strength:.2})"));
+    check(Part::ALL.iter().all(|&p| p == Part::Accent || a.palette().get(p) == dark.get(p)), "the other colours stay as Dark had them");
+    let hex = s.read(|v, cx| v.hex_field(cx));
+    check(hex.as_deref() == Some(a.custom.accent.to_string().as_str()), "the hex field shows the colour picked");
+    s.shot("27-custom-accent");
     let before = s.appearance();
     s.click("appearance-done");
     check(!s.read(|v, _| v.appearance_open()), "Done closes the panel");
@@ -462,7 +489,7 @@ fn appearance(dir: &Path) {
 
     let mut s = Snap::open(dir);
     check(s.appearance() == before, "a relaunch restores the appearance");
-    s.shot("26-appearance-relaunched");
+    s.shot("28-appearance-relaunched");
     s.click("cog");
     s.click("menu-appearance");
     s.advance(200);

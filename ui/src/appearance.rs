@@ -3,6 +3,7 @@
 
 use crate::app::{Inkling, Screen, ghost_button};
 use crate::icons::Icon;
+use crate::picker::Picker;
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -76,6 +77,8 @@ impl Measure {
 /// Open while `Inkling::screen` is `Screen::Page(Some(_))`.
 pub(crate) struct AppearancePanel {
     sliders: [Entity<SliderState>; 3],
+    /// The colour row that is open, if any.
+    pub picker: Option<Picker>,
     _subs: Vec<Subscription>,
 }
 
@@ -99,7 +102,7 @@ impl AppearancePanel {
             }));
             slider
         });
-        AppearancePanel { sliders, _subs: subs }
+        AppearancePanel { sliders, picker: None, _subs: subs }
     }
 
     /// Moves each slider to what `appearance` holds, after a change that didn't come from it.
@@ -163,6 +166,7 @@ impl Inkling {
 
     /// Reset: the default Light look, with every slider back where it started.
     pub fn reset_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_picker(cx);
         self.set_appearance(|a| *a = Appearance::default(), window, cx);
         if let Screen::Page(Some(panel)) = &self.screen {
             panel.follow(&self.settings.appearance, window, cx);
@@ -251,8 +255,10 @@ impl Inkling {
                     .flex()
                     .flex_col()
                     .gap_6()
+                    .child(self.render_modes(&c, cx))
                     .child(section("Font").child(faces))
                     .child(div().flex().flex_col().gap_5().children(sliders))
+                    .child(section("Colours").child(self.render_colors(&c, cx)))
                     .child(
                         div().flex().child(
                             ghost_button(&c, "appearance-reset", "Reset")
@@ -262,7 +268,8 @@ impl Inkling {
                                 .on_click(cx.listener(|this, _, window, cx| this.reset_appearance(window, cx)))
                                 .test_support(),
                         ),
-                    ),
+                    )
+                    .test_support(),
             )
             .test_support()
     }

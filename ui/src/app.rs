@@ -305,9 +305,10 @@ impl Inkling {
         match key.key.as_str() {
             "escape" => self.escape(window, cx),
             "tab" | "enter" if self.revision.review().is_some() && matches!(self.screen, Screen::Page(_)) => {
-                let typing = key.key == "enter"
-                    && self.ask_field.read(cx).focus_handle(cx).is_focused(window)
-                    && !self.ask_field.read(cx).value().trim().is_empty();
+                let typing = self.typing_hex(window, cx)
+                    || key.key == "enter"
+                        && self.ask_field.read(cx).focus_handle(cx).is_focused(window)
+                        && !self.ask_field.read(cx).value().trim().is_empty();
                 if typing {
                     return false;
                 }
@@ -321,6 +322,8 @@ impl Inkling {
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.menu.is_open() {
             self.close_menu(cx);
+        } else if self.picker_part().is_some() {
+            self.close_picker(cx);
         } else if self.appearance_open() {
             self.close_appearance(cx);
         } else if self.screen.feedback().is_some() {

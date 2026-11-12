@@ -8,6 +8,7 @@ mod feedback;
 mod icons;
 mod inline;
 mod keys;
+mod picker;
 mod review;
 mod theme;
 
