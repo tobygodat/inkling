@@ -3,8 +3,8 @@
 use super::*;
 use gpui_kit::test::TestWindowExt as _;
 use inkling_core::feedback::{Delivery, FeedbackId, Outcome, Record, SendError, Status};
-use inkling_core::{AiEvent, Build, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
-use inkling_ui::Restart;
+use inkling_core::{AiEvent, Appearance, Build, Face, Mode, Part, BuildNumber, MemoryKeys, Paths, Provider, Review, Revision, Secret};
+use inkling_ui::{Menu, Restart};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -38,7 +38,7 @@ impl Snap {
     fn open_with(dir: &Path, form: FormFactor, keys: Arc<MemoryKeys>, build: Build) -> Self {
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(gpui_kit::assets::Assets),
+            Arc::new(inkling_ui::Assets),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(init);
@@ -83,6 +83,40 @@ impl Snap {
     fn bounds(&mut self, id: impl Into<ElementId>) -> Option<Bounds<Pixels>> {
         let id = id.into();
         self.with(|w, _| w.try_find(id).map(|e| e.bounds()))
+    }
+
+    fn hover(&mut self, id: impl Into<ElementId>) {
+        let id = id.into();
+        self.with(|w, cx| w.hover(id, cx));
+        self.frame();
+    }
+
+    /// Plays an animation out. Animations run on the executor's clock, which is the test clock.
+    fn settle(&mut self) {
+        self.cx.advance_clock(Duration::from_millis(260));
+        self.update(|_, _, cx| cx.notify());
+        self.frame();
+    }
+
+    /// Drags a panel slider's thumb to `fraction` of its track.
+    fn slide(&mut self, id: &'static str, from: f32, to: f32) {
+        let track = self.bounds(id).unwrap_or_else(|| fail(&format!("the {id} slider is laid out")));
+        let at = |f: f32| point(track.left() + track.size.width * f, track.center().y);
+        self.with(|w, cx| w.drag(at(from), at(to), cx));
+        self.frame();
+    }
+
+    /// The height of the page's first line, which follows the text size.
+    fn first_line(&mut self) -> Pixels {
+        self.read(|v, cx| v.page().read(cx).range_to_bounds(&(0..1)).map(|b| b.size.height)).unwrap_or_default()
+    }
+
+    fn appearance(&mut self) -> Appearance {
+        self.read(|v, _| v.appearance().clone())
+    }
+
+    fn menu(&mut self) -> Menu {
+        self.read(|v, _| v.menu())
     }
 
     fn advance(&mut self, ms: u64) {
@@ -188,6 +222,7 @@ pub fn run(dir: &Path) {
         "the bundled Source Serif 4 and Inter are loaded",
     );
     s.shot("01-empty");
+    cog(&mut s);
 
     for (i, p) in PARAGRAPHS.iter().enumerate() {
         if i > 0 {
@@ -334,8 +369,12 @@ pub fn run(dir: &Path) {
     s.shot("11-keys");
     s.press("escape");
     check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()).is_none(), "Escape closes the key screen");
-    s.click("open-keys");
-    check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()) == Some(Provider::Claude), "clicking the provider in the footer opens the key screen");
+    check(s.bounds("open-keys").is_none(), "the Mac footer has no provider button");
+    s.click("cog");
+    s.click("menu-provider");
+    check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()) == Some(Provider::Claude), "Provider in the cog's menu opens the key screen");
+    check(s.menu() != Menu::Open { pinned: true }, "choosing Provider closes the menu");
+    check(s.bounds("cog").is_some(), "the cog is on the key screen too");
     s.press("escape");
 
     drop(s);
@@ -344,6 +383,121 @@ pub fn run(dir: &Path) {
     drop(relaunch);
     phone(dir, &expected);
     feedback(dir);
+    appearance(dir);
+}
+
+/// The cog at the top left: hover peeks at the menu, a click pins it, and it never covers the text.
+fn cog(s: &mut Snap) {
+    let cog = s.bounds("cog").unwrap_or_else(|| fail("the window has a cog"));
+    check(cog.left() < px(24.) && cog.top() < px(24.), "the cog sits in the top left corner");
+    // The headless pointer starts at the window's origin, over the cog.
+    s.hover("column");
+    s.advance(200);
+    check(s.bounds("menu").is_none() && s.menu() == Menu::Closed, "the cog's menu starts closed");
+    s.hover("cog");
+    s.settle();
+    check(s.menu() == Menu::Open { pinned: false }, "hovering the cog opens its menu");
+    let menu = s.bounds("menu").unwrap_or_else(|| fail("the open menu is drawn"));
+    let column = s.bounds("column").unwrap_or_else(|| fail("the text column is laid out"));
+    check(menu.right() < column.left(), "the menu never reaches the text column");
+    let rows = s.bounds("menu-appearance").zip(s.bounds("menu-provider"));
+    check(rows.is_some_and(|(a, p)| a.bottom() <= p.top()), "the menu lists Appearance, then Provider");
+    check(menu.size.width < px(180.), "the menu is only as wide as its rows need");
+    s.shot("22-menu-open");
+    s.hover("column");
+    check(s.menu() == Menu::Closing, "leaving the cog closes an unpinned menu");
+    s.advance(200);
+    check(s.menu() == Menu::Closed && s.bounds("menu").is_none(), "and it is gone once it has faded");
+    s.click("cog");
+    s.hover("column");
+    check(s.menu() == Menu::Open { pinned: true }, "a click pins the menu open");
+    s.click("cog");
+    s.advance(200);
+    check(s.menu() == Menu::Closed, "a second click closes it");
+    s.click("cog");
+    s.press("escape");
+    s.advance(200);
+    check(s.menu() == Menu::Closed && s.text().is_empty(), "Escape closes it and leaves the page alone");
+    s.shot("23-menu-closed");
+}
+
+/// The Appearance panel beside the page: every change shows on the page at once, is saved, and
+/// comes back after a relaunch.
+fn appearance(dir: &Path) {
+    let paths = Paths::mac();
+    let mut s = Snap::open(dir);
+    s.hover("column");
+    s.advance(200);
+    let line = s.first_line();
+    let narrow = s.bounds("column").unwrap_or_else(|| fail("the column is laid out"));
+    s.click("cog");
+    s.click("menu-appearance");
+    s.advance(200);
+    check(s.read(|v, _| v.appearance_open()), "Appearance in the cog's menu opens the panel");
+    let panel = s.bounds("appearance").unwrap_or_else(|| fail("the panel is drawn"));
+    let column = s.bounds("column").unwrap_or_else(|| fail("the page stays on screen"));
+    check(panel.left() == px(0.) && panel.size.width == px(300.), "the panel is 300 pt wide on the left");
+    check(column.left() >= panel.right(), "the page sits beside the panel, not under it");
+    check(s.bounds(("face", 0usize)).is_some() && s.bounds(("face", 1usize)).is_some(), "the font list offers Source Serif 4 and this Mac's faces");
+    s.shot("24-appearance-open");
+
+    let face = s.read(|v, _| v.faces().get(1).copied()).unwrap_or_else(|| fail("this Mac has a second face"));
+    s.click(("face", 1usize));
+    check(s.appearance().face == face, &format!("choosing {} sets the body face", face.family()));
+    s.slide("text-size", 6. / 17., 15. / 17.);
+    let size = s.appearance().text_size.get();
+    check(size > 27 && s.first_line() > line, &format!("a bigger text size ({size} pt) takes effect on the page"));
+    s.slide("page-width", 220. / 480., 1.);
+    let wide = s.bounds("column").unwrap_or_else(|| fail("the column is laid out"));
+    check(s.appearance().page_width.get() == 960 && wide.size.width > column.size.width, "a wider page width widens the column");
+    s.slide("line-spacing", 0.55, 0.2);
+    check(s.appearance().line_spacing.get() < 175, "the line spacing slider sets the spacing");
+    let saved = std::fs::read_to_string(paths.settings()).unwrap_or_default();
+    check(saved.contains(&format!("\"text_size\": {size}")) && saved.contains(face.family()), "every change is saved to settings.json");
+    s.shot("25-appearance-changed");
+
+    s.click(("mode", 1usize));
+    check(s.appearance().mode == Mode::Dark && s.appearance().tokens() == inkling_core::appearance::DARK, "Dark switches every colour to the dark set");
+    s.shot("26-dark");
+    let dark = s.appearance().palette();
+    s.click(("color", 3usize));
+    check(s.read(|v, _| v.picker_part()) == Some(Part::Accent), "a colour row opens the picker under it");
+    check(s.bounds(("swatch", 9usize)).is_some() && s.bounds("wheel").is_none(), "the picker shows ten swatches first");
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
+    s.click("custom");
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
+    let wheel = s.bounds("wheel").unwrap_or_else(|| fail("Custom shows the colour wheel"));
+    let r = wheel.size.width / 2.;
+    let (angle, reach) = (30f32.to_radians(), 0.9);
+    let to = point(wheel.center().x + r * angle.cos() * reach, wheel.center().y - r * angle.sin() * reach);
+    s.with(|w, cx| w.drag(wheel.center(), to, cx));
+    s.frame();
+    let a = s.appearance();
+    let (hue, strength, _) = a.custom.accent.hsl();
+    check(a.mode == Mode::Custom, "picking on the wheel switches to Custom");
+    check((hue - 30.).abs() < 4. && (strength - 0.9).abs() < 0.05, &format!("dragging on the wheel sets hue and strength ({hue:.0}°, {strength:.2})"));
+    check(Part::ALL.iter().all(|&p| p == Part::Accent || a.palette().get(p) == dark.get(p)), "the other colours stay as Dark had them");
+    let hex = s.read(|v, cx| v.hex_field(cx));
+    check(hex.as_deref() == Some(a.custom.accent.to_string().as_str()), "the hex field shows the colour picked");
+    s.shot("27-custom-accent");
+    let before = s.appearance();
+    s.click("appearance-done");
+    check(!s.read(|v, _| v.appearance_open()), "Done closes the panel");
+    drop(s);
+
+    let mut s = Snap::open(dir);
+    check(s.appearance() == before, "a relaunch restores the appearance");
+    s.shot("28-appearance-relaunched");
+    s.click("cog");
+    s.click("menu-appearance");
+    s.advance(200);
+    s.click("appearance-reset");
+    check(s.appearance() == Appearance::default(), "Reset returns to the default look");
+    let column = s.bounds("column").map(|b| b.size.width);
+    check(s.first_line() == line && column == Some(narrow.size.width.min(px(700.))), "and the page is as it was");
+    check(Face::default() == s.appearance().face, "in Source Serif 4");
 }
 
 /// The same views laid out for iPhone: no inline controls, a tap selects, a sheet acts.
@@ -408,7 +562,17 @@ fn feedback(dir: &Path) {
     s.shot("14-feedback-link");
     s.press("escape");
     let feedback = s.bounds("open-feedback");
-    check(feedback.is_some_and(|b| b.size.height >= px(24.)), "the footer offers Feedback as a button, not bare text");
+    let window = s.with(|w, _| w.viewport_size());
+    check(
+        feedback.is_some_and(|b| b.size.width == b.size.height && b.size.width >= px(40.) && b.right() > window.width - px(24.) && b.bottom() > window.height - px(24.)),
+        "a round feedback button sits in the bottom right corner",
+    );
+    s.input("i like teh ferry. ");
+    s.click("fix-grammar");
+    s.wait(5000, reviewing);
+    check(reviewing(&s.revision()) && s.bounds("open-feedback").is_some(), "the feedback button stays during a review");
+    s.shot("21-feedback-button-in-review");
+    s.press("escape");
 
     s.click("open-feedback");
     check(s.read(|v, _| v.feedback_open()), "Feedback opens the feedback screen");

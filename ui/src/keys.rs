@@ -2,8 +2,8 @@
 //! Keys and the link go only to the key store, and the screen says one is saved without ever
 //! reading it back. The link field is the only feedback UI shown before a link is saved.
 
-use crate::app::{Inkling, ghost_button, primary_button};
-use crate::{FormFactor, SERIF, color};
+use crate::app::{Inkling, Screen, ghost_button, primary_button};
+use crate::FormFactor;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -100,16 +100,16 @@ fn key_page(provider: Provider) -> &'static str {
 
 impl Inkling {
     fn pick_provider(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(mut screen) = self.key_screen.take() else { return };
+        let Screen::Keys(mut screen) = std::mem::replace(&mut self.screen, Screen::Page(None)) else { return };
         screen.show(provider, self, window, cx);
-        self.key_screen = Some(screen);
+        self.screen = Screen::Keys(screen);
         cx.notify();
     }
 
     /// Writes the key through the key store and the provider and model through `Settings`.
     /// An empty key field keeps the key already saved.
     pub fn save_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(screen) = &self.key_screen else { return };
+        let Some(screen) = self.screen.keys() else { return };
         let provider = screen.provider;
         let key = screen.key.read(cx).value().trim().to_string();
         let model = screen.model.read(cx).value().to_string();
@@ -119,7 +119,7 @@ impl Inkling {
         let written = self.settings.save(&self.paths).map_err(|e| format!("Couldn't save settings ({e})."));
         let status = stored.and(written);
         self.key_saved = self.keys.has(Secret::ApiKey(provider));
-        if let Some(screen) = &mut self.key_screen {
+        if let Screen::Keys(screen) = &mut self.screen {
             screen.has_key = self.key_saved;
             screen.status = Some(status);
             screen.clear_key(window, cx);
@@ -129,14 +129,14 @@ impl Inkling {
 
     /// Save link, or Return in the link field. An empty field keeps the link already saved.
     pub fn save_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(screen) = &self.key_screen else { return };
+        let Some(screen) = self.screen.keys() else { return };
         let pasted = screen.link.read(cx).value().trim().to_string();
         if pasted.is_empty() {
             return;
         }
         let status = Desk::save_link(self.keys.as_ref(), &pasted);
         self.feedback_on = Desk::has_link(self.keys.as_ref());
-        if let Some(screen) = &mut self.key_screen {
+        if let Screen::Keys(screen) = &mut self.screen {
             screen.link_status = Some(status);
             screen.clear_link(self.feedback_on, window, cx);
         }
@@ -144,8 +144,9 @@ impl Inkling {
     }
 
     pub(crate) fn render_keys(&self, screen: &KeyScreen, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
         let m = self.metrics();
-        let label = |text: String| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(color::MUTED)).child(text);
+        let label = |text: String| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(c.muted).child(text);
         let field = |input: &Entity<InputState>, id: &'static str, masked: bool| {
             let input = Input::new(input).id(id).appearance(false);
             let input = if masked { input.mask_toggle() } else { input };
@@ -154,14 +155,14 @@ impl Inkling {
                 .px(px(14.))
                 .flex()
                 .items_center()
-                .bg(rgb(color::SURFACE))
+                .bg(c.surface)
                 .border_1()
-                .border_color(rgb(color::HAIRLINE))
+                .border_color(c.hairline)
                 .rounded(px(12.))
                 .text_size(px(15.))
                 .child(div().flex_1().child(input))
         };
-        let tabs = div().flex().gap_1().p_1().bg(rgb(color::SEGMENT)).rounded(px(12.)).children(Provider::ALL.map(|p| {
+        let tabs = div().flex().gap_1().p_1().bg(c.segment).rounded(px(12.)).children(Provider::ALL.map(|p| {
             let on = p == screen.provider;
             div()
                 .id(p.id())
@@ -173,8 +174,8 @@ impl Inkling {
                 .rounded(px(9.))
                 .text_size(px(14.))
                 .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
-                .text_color(rgb(if on { color::INK } else { color::MUTED }))
-                .when(on, |tab| tab.bg(rgb(color::SURFACE)).border_1().border_color(rgb(color::HAIRLINE)))
+                .text_color(if on { c.ink } else { c.muted })
+                .when(on, |tab| tab.bg(c.surface).border_1().border_color(c.hairline))
                 .cursor_pointer()
                 .child(p.label())
                 .on_click(cx.listener(move |this, _, window, cx| this.pick_provider(p, window, cx)))
@@ -206,7 +207,7 @@ impl Inkling {
                 .gap_6()
                 .child(
                     div().flex().child(
-                        ghost_button("back-to-page", "‹ Back to the page")
+                        ghost_button(&c, "back-to-page", "‹ Back to the page")
                             .h(m.control.max(px(32.)))
                             .on_click(cx.listener(|this, _, window, cx| this.close_keys(window, cx)))
                             .test_support(),
@@ -214,7 +215,7 @@ impl Inkling {
                 )
                 .child(
                     div()
-                        .font_family(SERIF)
+                        .font_family(self.theme().body.face)
                         .text_size(px(30.))
                         .line_height(relative(1.2))
                         .font_weight(FontWeight::SEMIBOLD)
@@ -231,7 +232,7 @@ impl Inkling {
                                 .flex()
                                 .justify_between()
                                 .child(label(format!("{} API key", provider.label())))
-                                .children(status.map(|s| div().text_size(px(13.)).text_color(rgb(color::INK)).child(s))),
+                                .children(status.map(|s| div().text_size(px(13.)).text_color(c.ink).child(s))),
                         )
                         .child(field(&screen.key, "key", true))
                         .child(
@@ -239,7 +240,7 @@ impl Inkling {
                                 .id("where")
                                 .when(self.form == FormFactor::Phone, |link| link.min_h(m.control).flex().items_center())
                                 .text_size(px(14.))
-                                .text_color(rgb(color::LINK))
+                                .text_color(c.link)
                                 .cursor_pointer()
                                 .child("Where do I get a key?")
                                 .on_click(move |_, _, cx| cx.open_url(key_page(provider))),
@@ -247,14 +248,14 @@ impl Inkling {
                 )
                 .child(div().flex().flex_col().gap_2().child(label("Model".into())).child(field(&screen.model, "model", false)))
                 .child(
-                    primary_button("save-key", "Save key", m)
+                    primary_button(&c, "save-key", "Save key", m)
                         .h(if self.form == FormFactor::Phone { px(52.) } else { px(48.) })
                         .justify_center()
                         .text_size(px(15.))
                         .on_click(cx.listener(|this, _, window, cx| this.save_keys(window, cx)))
                         .test_support(),
                 )
-                .child(div().h(px(1.)).bg(rgb(color::HAIRLINE)))
+                .child(div().h(px(1.)).bg(c.hairline))
                 .child(
                     div()
                         .flex()
@@ -267,20 +268,20 @@ impl Inkling {
                                 .gap_3()
                                 .child(label("Feedback link".into()))
                                 .children(link_status.map(|s| {
-                                    div().id("link-status").text_size(px(13.)).text_color(rgb(color::INK)).text_right().child(s)
+                                    div().id("link-status").text_size(px(13.)).text_color(c.ink).text_right().child(s)
                                 })),
                         )
                         .child(field(&screen.link, "feedback-link", true))
                         .child(
                             div().flex().child(
-                                ghost_button("save-link", "Save link")
+                                ghost_button(&c, "save-link", "Save link")
                                     .h(m.control.max(px(32.)))
                                     .px(px(14.))
                                     .border_1()
-                                    .border_color(rgb(color::HAIRLINE))
+                                    .border_color(c.hairline)
                                     .rounded(px(8.))
                                     .text_size(px(14.))
-                                    .text_color(rgb(color::INK))
+                                    .text_color(c.ink)
                                     .on_click(cx.listener(|this, _, window, cx| this.save_link(window, cx)))
                                     .test_support(),
                             ),

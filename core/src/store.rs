@@ -1,4 +1,5 @@
 use crate::ai::{Backend, Provider};
+use crate::appearance::{Appearance, lenient};
 use crate::ask::Request;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -58,11 +59,14 @@ pub struct Settings {
     pub provider: Provider,
     #[serde(default)]
     models: BTreeMap<Provider, String>,
+    /// Missing in a file written before the Appearance panel, and then the default look.
+    #[serde(default, deserialize_with = "lenient")]
+    pub appearance: Appearance,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { provider: Provider::Claude, models: BTreeMap::new() }
+        Settings { provider: Provider::Claude, models: BTreeMap::new(), appearance: Appearance::default() }
     }
 }
 

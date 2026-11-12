@@ -30,8 +30,8 @@ point() {
     use) echo "295 746" ;;
     accept-rest) echo "324 93" ;;
     back) echo "80 105" ;;
-    key-field) echo "200 434" ;;
-    reveal-key) echo "355 434" ;;
+    key-field) echo "200 357" ;;
+    reveal-key) echo "355 357" ;;
     open-keys) echo "360 84" ;;       # header, "Claude" once a key is saved
     feedback-link) echo "200 690" ;;  # key screen, scrolled to the bottom
     open-feedback) echo "282 84" ;;   # header, left of the provider

@@ -19,5 +19,5 @@ to the provider the writer picked.
 - It should be fun to use, not just quiet.
 
 ## Accessibility
-Text and labels meet 4.5:1 contrast. Touch targets on iPhone are at least 44 pt. Accepted and rejected
+Text and labels meet 4.5:1 contrast in Light and Dark; a Custom look is the writer's own. Touch targets on iPhone are at least 44 pt. Accepted and rejected
 changes differ by more than colour.

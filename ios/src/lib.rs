@@ -19,7 +19,7 @@ pub unsafe extern "C" fn inkling_ios_register(data_dir: *const c_char) {
     let _ = log::set_logger(&NsLog).map(|()| log::set_max_level(log::LevelFilter::Info));
     std::panic::set_hook(Box::new(|info| nslog(&format!("INKLING PANIC: {info}"))));
     let dir = PathBuf::from(unsafe { CStr::from_ptr(data_dir) }.to_string_lossy().into_owned());
-    gpui_mobile::ios::ffi::set_asset_source(gpui_kit::assets::Assets);
+    gpui_mobile::ios::ffi::set_asset_source(inkling_ui::Assets);
     gpui_mobile::ios::ffi::set_app_callback(Box::new(move |cx: &mut App| {
         gpui_kit::init(cx);
         inkling_ui::init(cx);
