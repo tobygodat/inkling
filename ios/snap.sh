@@ -39,6 +39,12 @@ point() {
     feedback-done) echo "355 105" ;;
     feedback-back) echo "80 105" ;;
     send-feedback) echo "200 337" ;;
+    # The live lanes. Their drafts are below; a change to either moves these.
+    line-one-end) echo "300 148" ;;   # after "river", first line of the two-block draft
+    word-light) echo "70 148" ;;      # "light", first line
+    word-paragraph) echo "140 190" ;; # "paragraph", second block
+    line-two-end) echo "380 190" ;;   # after "here", second block
+    start-handle) echo "97 170" ;;    # the knob over the start of "paragraph", once selected
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -114,6 +120,36 @@ expect_draft() {
     sleep 0.2
   done
   fail "draft is \"$got\", expected \"$1\""
+}
+
+# Waits up to 5 s for the saved draft to equal `$1` whatever its capitals.
+expect_draft_letters() {
+  local got
+  for _ in $(seq 25); do
+    got="$(draft | tr '[:upper:]' '[:lower:]')"
+    [ "$got" = "$1" ] && return 0
+    sleep 0.2
+  done
+  fail "draft is \"$got\", expected \"$1\" in any capitals"
+}
+
+# Relaunches on a draft of `$1`, with the page unfocused and the keyboard down.
+open_draft() {
+  printf '%s' "$1" >"$(data_dir)/draft.md"
+  "$ad" open "$app" --relaunch --launch-args --fake-ai >/dev/null
+  sleep 2.5
+}
+
+# Presses `$1` in UIKit's edit menu.
+menu() {
+  "$ad" press "role=\"cell\" label=\"$1\"" >/dev/null || fail "the edit menu has no $1"
+  sleep 0.8
+}
+
+expect_clipboard() {
+  local got
+  got="$("$ad" clipboard read)"
+  [ "$got" = "$1" ] || fail "the clipboard is \"$got\", expected \"$1\""
 }
 
 rm -rf "$shots"
@@ -216,6 +252,95 @@ tap feedback-field
 tap feedback-done
 tap send-feedback 1.5
 [ "$(grep -c '"id"' "$sent")" = 1 ] || fail "a failed send was added to sent-feedback.json"
+shot
+
+# The live editor on iPhone: the ten lanes of TOB-444's L3. The sixteen steps above are lane 1.
+two_blocks="The light held over the river
+
+Second paragraph with **bold** text here"
+maths='# The river
+
+The light held and i dont know wich way teh river went. Euler wrote $e^{i\pi} + 1 = 0$ and it **held**.
+
+$$
+\int_0^1 x^2\,dx = \frac{1}{3}
+$$'
+
+begin live-typed
+open_draft ""
+tap page
+./keys.sh "$ad" "the light held"
+expect_draft "The light held"
+"$ad" is visible 'role="button" label="Paste"' >/dev/null || fail "the keyboard is not up"
+shot
+
+begin live-heading
+open_draft ""
+tap page
+./keys.sh "$ad" "# title//the end"
+expect_draft_letters "# title
+
+the end"
+shot
+
+begin live-autocorrect
+./keys.sh "$ad" " becuase "
+expect_draft_letters "# title
+
+the end because "
+shot
+
+begin live-suggestion
+./keys.sh "$ad" "rive"
+sleep 0.8
+"$ad" press 'role="button" label="river"' >/dev/null || fail "the keyboard suggests no \"river\""
+expect_draft_letters "# title
+
+the end because river "
+shot
+
+begin live-select
+open_draft "$two_blocks"
+tap line-one-end 1.5
+"$ad" press $(point word-light) --double-tap >/dev/null
+sleep 1.5
+shot
+menu Copy
+expect_clipboard "light"
+
+begin live-handles
+"$ad" press $(point word-paragraph) --double-tap >/dev/null
+sleep 1.5
+"$ad" gesture pan $(point start-handle) -30 -38 900 >/dev/null
+sleep 1.5
+shot
+menu Copy
+expect_clipboard "light held over the river
+
+Second paragraph"
+
+begin live-paste
+tap line-two-end
+"$ad" press 'role="button" label="Paste"' >/dev/null
+expect_draft "${two_blocks}light held over the river
+
+Second paragraph"
+shot
+
+begin live-maths
+open_draft "$maths"
+[ "$(draft)" = "$maths" ] || fail "opening the draft changed it"
+shot
+[ "$(sips -g pixelWidth "$shots/$(printf %02d "$step")-$name.png" | awk '/pixelWidth/ {print $2}')" = 1206 ] || fail "the screenshot is not at 3x"
+
+begin live-review
+open_draft "The light held and i dont know wich way teh river went"
+tap fix-grammar 3
+tap use
+tap keep
+tap keep
+tap keep 1.5
+expect_draft "The light held and I don't know wich way teh river went"
 shot
 
 echo "all $step steps passed; screenshots in $shots"
