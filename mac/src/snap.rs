@@ -324,6 +324,13 @@ pub fn run(dir: &Path) {
     let settings = std::fs::read_to_string(paths.settings()).unwrap_or_default();
     check(!settings.is_empty() && !settings.contains(key), "Save writes settings.json without the key");
     check(s.view.read_with(&s.cx, |v, _| v.key_saved()), "the key screen says Saved from KeyStore::has");
+    // A caption under the title or under Save key would push what follows down by a line.
+    let below_back = s.bounds("back-to-page").zip(s.bounds("key")).map(|(b, k)| k.top() - b.bottom());
+    let below_save = s.bounds("save-key").zip(s.bounds("feedback-link")).map(|(b, l)| l.top() - b.bottom());
+    check(
+        below_back.is_some_and(|g| g < px(228.)) && below_save.is_some_and(|g| g < px(96.)),
+        "the key screen has no caption under its title or under Save key",
+    );
     s.shot("11-keys");
     s.press("escape");
     check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()).is_none(), "Escape closes the key screen");
@@ -415,6 +422,8 @@ fn feedback(dir: &Path) {
     s.input("Make the margins wider on the Mac.");
     s.click("send-feedback");
     check(s.statuses() == ["pending"] && s.field().is_empty(), "a send lands in the list as waiting for a build");
+    let below_send = s.bounds("send-feedback").zip(s.bounds(("feedback-item", 0usize))).map(|(b, i)| i.top() - b.bottom());
+    check(below_send.is_some_and(|g| g < px(64.)), "nothing sits between Send and the list");
     let log = std::fs::read_to_string(paths.sent_feedback()).unwrap_or_default();
     let draft_in_log = PARAGRAPHS.iter().any(|p| log.contains(&p[..24]));
     check(log.contains("Make the margins wider on the Mac.") && !draft_in_log, "the sent log holds the text and not the draft");

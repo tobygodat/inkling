@@ -3,7 +3,7 @@
 //! reading it back. The link field is the only feedback UI shown before a link is saved.
 
 use crate::app::{Inkling, ghost_button, primary_button};
-use crate::{FormFactor, SANS, SERIF, color};
+use crate::{FormFactor, SERIF, color};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -145,7 +145,6 @@ impl Inkling {
 
     pub(crate) fn render_keys(&self, screen: &KeyScreen, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let m = self.metrics();
-        let device = if self.form == FormFactor::Phone { "iPhone" } else { "Mac" };
         let label = |text: String| div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(color::MUTED)).child(text);
         let field = |input: &Entity<InputState>, id: &'static str, masked: bool| {
             let input = Input::new(input).id(id).appearance(false);
@@ -215,20 +214,11 @@ impl Inkling {
                 )
                 .child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .child(
-                            div()
-                                .font_family(SERIF)
-                                .text_size(px(30.))
-                                .line_height(relative(1.2))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Bring your own key"),
-                        )
-                        .child(div().text_size(px(15.)).line_height(relative(1.5)).text_color(rgb(color::MUTED)).child(format!(
-                            "Inkling has no account and no server. It talks to the model you choose with your own key, kept in this {device}'s Keychain."
-                        ))),
+                        .font_family(SERIF)
+                        .text_size(px(30.))
+                        .line_height(relative(1.2))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Bring your own key"),
                 )
                 .child(div().flex().flex_col().gap_2().child(label("Writing partner".into())).child(tabs))
                 .child(
@@ -257,26 +247,12 @@ impl Inkling {
                 )
                 .child(div().flex().flex_col().gap_2().child(label("Model".into())).child(field(&screen.model, "model", false)))
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .child(
-                            primary_button("save-key", "Save key", m)
-                                .h(if self.form == FormFactor::Phone { px(52.) } else { px(48.) })
-                                .justify_center()
-                                .text_size(px(15.))
-                                .on_click(cx.listener(|this, _, window, cx| this.save_keys(window, cx)))
-                                .test_support(),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(rgb(color::MUTED))
-                                .text_center()
-                                .font_family(SANS)
-                                .child("Your key and your writing go only to the provider you pick."),
-                        ),
+                    primary_button("save-key", "Save key", m)
+                        .h(if self.form == FormFactor::Phone { px(52.) } else { px(48.) })
+                        .justify_center()
+                        .text_size(px(15.))
+                        .on_click(cx.listener(|this, _, window, cx| this.save_keys(window, cx)))
+                        .test_support(),
                 )
                 .child(div().h(px(1.)).bg(rgb(color::HAIRLINE)))
                 .child(
@@ -308,10 +284,7 @@ impl Inkling {
                                     .on_click(cx.listener(|this, _, window, cx| this.save_link(window, cx)))
                                     .test_support(),
                             ),
-                        )
-                        .child(div().text_size(px(13.)).line_height(relative(1.5)).text_color(rgb(color::MUTED)).child(format!(
-                            "Paste the link from T3 Code to send what should change from this {device}. Only what you type there is sent."
-                        ))),
+                        ),
                 ),
         )
     }

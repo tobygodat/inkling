@@ -274,13 +274,6 @@ impl Inkling {
                                 .when(*delivery == Delivery::Sending, |b| b.opacity(0.6))
                                 .on_click(cx.listener(|this, _, window, cx| this.send_feedback(window, cx)))
                                 .test_support(),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(rgb(color::MUTED))
-                                .text_center()
-                                .child("Goes to the agent on your Mac. Never your writing or your keys."),
                         ),
                 )
                 .child(
