@@ -2,6 +2,7 @@
 //! renders it, except the block holding the caret, which shows its source with the syntax muted.
 //! The draft stays plain Markdown; `Draft` owns it and every change.
 
+mod a11y;
 mod element;
 mod input;
 mod maths;
@@ -55,6 +56,8 @@ struct View {
     node: BlockNode,
     /// The leaf keys in `node`, in `SourceMap` order. Empty for a block drawn as source.
     keys: Vec<u64>,
+    /// Each local image drawn: its leaf key, the drawn byte of its atom, and its alt text.
+    images: Vec<(u64, usize, SharedString)>,
     drawn: bool,
 }
 
@@ -263,7 +266,7 @@ impl LiveEditor {
         let source = self.draft.source()[block.range.clone()].to_string();
         let source_view = |source: String| {
             let node = BlockNode::Paragraph(source_paragraph(&source, id << LEAF_BITS));
-            View { id, source, node, keys: vec![], drawn: false }
+            View { id, source, node, keys: vec![], images: vec![], drawn: false }
         };
         let Some(map) = block.map.as_ref().filter(|m| self.options.markdown && m.leaves.len() < (1 << LEAF_BITS) - 1)
         else {
@@ -275,14 +278,14 @@ impl LiveEditor {
             self.mismatches.push(source.clone());
             return source_view(source);
         };
-        let mut keyer = Keyer { next: id << LEAF_BITS, keys: vec![], texts: vec![] };
+        let mut keyer = Keyer { next: id << LEAF_BITS, keys: vec![], texts: vec![], images: vec![] };
         let node = keyer.block(node);
         let expected: Vec<&str> = map.leaves.iter().map(|l| l.text()).collect();
         if keyer.texts != expected {
             self.mismatches.push(source.clone());
             return source_view(source);
         }
-        View { id, source, node, keys: keyer.keys, drawn: true }
+        View { id, source, node, keys: keyer.keys, images: keyer.images, drawn: true }
     }
 
     /// The source range drawn for block `ix` while it holds the caret: the block, plus the blank
@@ -548,6 +551,10 @@ fn distance(b: Bounds<Pixels>, at: Point<Pixels>) -> (f32, f32) {
     (gap(b.top(), b.bottom(), at.y).as_f32(), gap(b.left(), b.right(), at.x).as_f32())
 }
 
+fn alt_text(image: &eh::ImageNode) -> SharedString {
+    image.alt.clone().filter(|a| !a.is_empty()).unwrap_or_else(|| "image".into())
+}
+
 fn is_remote(url: &str) -> bool {
     url.split_once(':').is_some_and(|(scheme, _)| scheme.len() > 1 && scheme != "file")
 }
@@ -558,6 +565,7 @@ struct Keyer {
     next: u64,
     keys: Vec<u64>,
     texts: Vec<String>,
+    images: Vec<(u64, usize, SharedString)>,
 }
 
 impl Keyer {
@@ -575,8 +583,8 @@ impl Keyer {
             for c in p.children() {
                 match c.as_image() {
                     Some(i) if is_remote(&i.url) => {
-                        let alt = format!("[{}]", i.alt.as_deref().unwrap_or("image"));
-                        out.push(InlineNode::custom(MarkdownNode::new(REMOTE_IMAGE, ()).text(alt)));
+                        let alt = alt_text(i);
+                        out.push(InlineNode::custom(MarkdownNode::new(REMOTE_IMAGE, ()).text(format!("[{alt}]")).accessibility_label(alt)));
                     }
                     _ => out.push(c.clone()),
                 }
@@ -585,9 +593,17 @@ impl Keyer {
         } else {
             p
         };
-        let text: String = p.children().iter().map(|c| if c.as_image().is_some() || c.as_custom().is_some() { ATOM } else { c.text() }).collect();
+        let mut text = String::new();
+        let mut images = vec![];
+        for c in p.children() {
+            if let Some(i) = c.as_image() {
+                images.push((text.len(), alt_text(i)));
+            }
+            text.push_str(if c.as_image().is_some() || c.as_custom().is_some() { ATOM } else { c.text() });
+        }
         self.texts.push(text);
         let key = self.key();
+        self.images.extend(images.into_iter().map(|(at, alt)| (key, at, alt)));
         p.with_leaf_key(key)
     }
 

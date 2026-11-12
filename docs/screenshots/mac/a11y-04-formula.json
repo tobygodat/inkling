@@ -1,0 +1,65 @@
+{
+  "focused": true,
+  "page": {
+    "role": "MultilineTextInput",
+    "on_action": [
+      "Focus",
+      "SetValue"
+    ],
+    "value": "# Ferry notes\n\nEnergy is $E = mc^2$ and a gull ![a gull](gull.svg) by ![the harbour](https://img.example/harbour.png).\n\n$$\n\\sum_{k=1}^{n} k\n$$\n\nThe caret starts in this last paragraph."
+  },
+  "children": [
+    {
+      "role": "GenericContainer",
+      "label": "Formula E = mc^2"
+    },
+    {
+      "role": "GenericContainer",
+      "label": "the harbour"
+    },
+    {
+      "role": "Image",
+      "label": "Formula \\sum_{k=1}^{n} k"
+    },
+    {
+      "role": "TextRun",
+      "value": "# Ferry notes\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "Energy is $E = mc^2$ and a gull ![a gull](gull.svg) by ![the harbour](https://img.example/harbour.png).\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "$$\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "\\sum_{k=1}^{n} k\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "$$\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "\n"
+    },
+    {
+      "role": "TextRun",
+      "value": "The caret starts in this last paragraph."
+    },
+    {
+      "role": "Image",
+      "label": "a gull"
+    }
+  ]
+}

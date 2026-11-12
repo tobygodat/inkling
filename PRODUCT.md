@@ -22,4 +22,5 @@ to the provider the writer picked.
 
 ## Accessibility
 Text and labels meet 4.5:1 contrast in Light and Dark; a Custom look is the writer's own. Touch targets on iPhone are at least 44 pt. Accepted and rejected
-changes differ by more than colour.
+changes differ by more than colour. VoiceOver reads the page as an editable text whose value is the
+Markdown source, a formula as "Formula" and its TeX, and an image as its alt text.

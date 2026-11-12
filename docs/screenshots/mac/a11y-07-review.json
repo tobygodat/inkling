@@ -1,0 +1,19 @@
+{
+  "page": null,
+  "nodes": [
+    {
+      "role": "TextInput",
+      "on_action": [
+        "Focus",
+        "SetValue"
+      ],
+      "label": "Ask for fixes, words or a nudge",
+      "value": "",
+      "placeholder": "Ask for fixes, words or a nudge"
+    },
+    {
+      "role": "Window",
+      "label": "Inkling"
+    }
+  ]
+}

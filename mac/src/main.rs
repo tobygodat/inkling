@@ -60,6 +60,10 @@ fn main() {
         return snap_live::run(std::path::Path::new(&dir));
     }
     #[cfg(feature = "snap")]
+    if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-a11y").nth(1) {
+        return snap::a11y::run(std::path::Path::new(&dir));
+    }
+    #[cfg(feature = "snap")]
     if let Some(page) = std::env::args().skip_while(|a| a != "--bench-typing").nth(1) {
         return snap_live::bench(&page);
     }

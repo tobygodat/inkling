@@ -343,4 +343,36 @@ tap keep 1.5
 expect_draft "The light held and I don't know wich way teh river went"
 shot
 
+# VoiceOver on iPhone: lanes 8 and 9 of TOB-444's L4. gpui-mobile hands UIKit no accessibility
+# tree, so the page is read through the text-input bridge, which UIKit reports once the page has
+# focus, as it did for the text-area page.
+# Prints `<value>\t<focused>\t<height>` of the page's node in the accessibility snapshot.
+page_node() {
+  "$ad" snapshot --json | python3 -c '
+import json, sys
+nodes = json.load(sys.stdin)
+nodes = nodes.get("data", nodes).get("nodes", nodes)
+page = next((n for n in nodes if n.get("role") == "GPUITextInputView"), None)
+if page:
+    print(json.dumps(page.get("value", "")), page.get("focused", False), page["rect"]["height"], sep="\t")
+'
+}
+
+begin a11y-ios
+open_draft "$two_blocks"
+tap line-one-end 1.5
+node="$(page_node)"
+[ -n "$node" ] || fail "the focused page is not in the accessibility snapshot"
+want="$(printf '%s' "$two_blocks" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))')"
+[ "$(cut -f1 <<<"$node")" = "$want" ] || fail "the page reads $(cut -f1 <<<"$node"), expected the draft"
+[ "$(cut -f2 <<<"$node")" = True ] || fail "the page is not the focused element"
+echo "ok   a11y-08 the focused page reads the draft's source"
+shot
+
+begin a11y-target
+height="$(cut -f3 <<<"$node")"
+python3 -c "import sys; sys.exit(0 if float('$height') >= 44 else 1)" || fail "the page's target is $height pt tall"
+echo "ok   a11y-09 the page's target is $height pt tall"
+shot
+
 echo "all $step steps passed; screenshots in $shots"

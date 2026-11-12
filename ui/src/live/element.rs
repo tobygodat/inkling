@@ -4,6 +4,7 @@
 use super::*;
 use gpui_kit::base::text::TextViewStyle;
 use gpui_kit::base::text::editor_host::{FlowPosition, RenderContext};
+use gpui_kit::prelude::FluentBuilder as _;
 
 impl LiveEditor {
     fn style(&self) -> TextViewStyle {
@@ -145,9 +146,25 @@ impl Render for LiveEditor {
         let body = &self.theme.body;
         let column = div().w_full().children(children).on_children_prepainted(move |bounds, _, _| frame.borrow_mut().blocks = bounds);
         let placeholder = self.placeholder.clone().filter(|_| self.draft.source().is_empty());
+        let reading = window.is_a11y_active().then(|| a11y::Reading {
+            source: self.draft.source().to_string(),
+            selection: self.draft.selection(),
+            images: self.views.iter().enumerate().filter(|(ix, _)| Some(*ix) != self.active).flat_map(|(_, v)| v.images.iter().cloned()).collect(),
+            frame: self.frame.clone(),
+            scale: window.scale_factor(),
+        });
+        let editor = cx.entity();
         let page = div()
             .id("live-editor")
             .key_context("LiveEditor")
+            .role(Role::MultilineTextInput)
+            .when_some(self.placeholder.clone(), |page, label| page.aria_label(label.clone()).aria_placeholder(label))
+            .when_some(reading.as_ref(), |page, r| page.aria_value(r.source.clone()))
+            .on_a11y_action(AccessibleAction::SetValue, move |data, _, cx| {
+                if let Some(accesskit::ActionData::Value(value)) = data {
+                    editor.update(cx, |e, cx| e.replace(0..e.value().len(), &value[..], cx));
+                }
+            })
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()
@@ -176,7 +193,7 @@ impl Render for LiveEditor {
                             .children(placeholder.map(|text| div().absolute().top_0().left_0().text_color(self.theme.c.muted).child(text))),
                     ),
             );
-        input::actions(page, cx)
+        a11y::Accessible { inner: input::actions(page, cx), reading }
     }
 }
 

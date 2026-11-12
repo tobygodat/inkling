@@ -262,6 +262,8 @@ about three and a half minutes, the build included.
 | Tap the end of the second block, Paste | the saved draft is the two blocks and then the copied source | `23-live-paste` |
 | Relaunch on a draft with a heading, an inline formula and a block formula | the draft is unchanged and the shot is 1206 px wide (3x); both formulas are drawn and sharp (by eye) | `24-live-maths` |
 | Relaunch on a misspelt line, Fix grammar, Use the first change, Keep the other three | the saved draft holds that one change | `25-live-review` |
+| Relaunch on two blocks, tap the first line | the accessibility snapshot's focused page reads the draft's source | `26-a11y-ios` |
+| The same page | its node is at least 44 pt tall | `27-a11y-target` |
 
 After every tap it also checks that Inkling is still the foreground app, so a crash fails the
 step. The pasted part carries the misspellings the fake Fix grammar corrects (`i`, `dont`,
@@ -303,6 +305,11 @@ iPhone build carries their records.
   fields and the feedback field, still reads the pasteboard without consent, so it pastes only
   what Inkling copied. Text from another app goes through the Paste control above the keyboard.
   Removing the kit's item needs a kit option.
+- **VoiceOver reads only the focused input.** gpui-mobile implements no
+  `PlatformWindow::a11y_tree_update`, so the tree GPUI builds for the Mac never reaches UIKit.
+  UIKit reports the bridge's text input view, with the document as its value, once an input has
+  focus. Before the page is tapped VoiceOver finds no page, and it never hears the formulas'
+  and images' labels, the review, the chips or the header. The text-area page read the same.
 - **The masked key is readable by accessibility.** The bridge answers UIKit's `textInRange:` with
   the document's real text, and the accessibility tree reads it back, so the key field's value
   is visible there (and to VoiceOver) while the field shows dots. The bridge needs to know a field

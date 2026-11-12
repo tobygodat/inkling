@@ -3726,6 +3726,7 @@ dependencies = [
  "gpui-kit",
  "inkling-core",
  "inkling-ui",
+ "serde_json",
 ]
 
 [[package]]
