@@ -2,11 +2,13 @@
 //! the host passes the form factor, the data folder and the key store.
 
 mod app;
+mod feedback;
 mod inline;
 mod keys;
 mod review;
 
 pub use app::{Inkling, OpenKeys, Saved};
+pub use feedback::Restart;
 
 use gpui_kit::*;
 use std::borrow::Cow;
@@ -31,6 +33,14 @@ pub(crate) struct Metrics {
 }
 
 impl FormFactor {
+    /// For the feedback body: "mac" or "phone".
+    pub fn id(self) -> &'static str {
+        match self {
+            FormFactor::Mac => "mac",
+            FormFactor::Phone => "phone",
+        }
+    }
+
     pub(crate) fn metrics(self) -> Metrics {
         match self {
             FormFactor::Mac => Metrics {

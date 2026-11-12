@@ -1,12 +1,13 @@
-//! The key screen: which provider writes with you, its key and its model. The key goes only to
-//! the key store, and the screen says a key is saved without ever reading it back.
+//! The key screen: which provider writes with you, its key and its model, and the feedback link.
+//! Keys and the link go only to the key store, and the screen says one is saved without ever
+//! reading it back. The link field is the only feedback UI shown before a link is saved.
 
 use crate::app::{Inkling, ghost_button, primary_button};
 use crate::{FormFactor, SANS, SERIF, color};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use inkling_core::{Provider, Secret};
+use inkling_core::{Desk, Provider, Secret};
 
 pub(crate) struct KeyScreen {
     pub provider: Provider,
@@ -16,20 +17,41 @@ pub(crate) struct KeyScreen {
     pub has_key: bool,
     /// What the last Save did.
     pub status: Option<Result<(), String>>,
-    _save_on_enter: Subscription,
+    /// Masked like the key. Its placeholder says whether a link is saved, never what it is.
+    pub link: Entity<InputState>,
+    /// What the last Save link did.
+    pub link_status: Option<Result<(), String>>,
+    _save_on_enter: [Subscription; 2],
 }
 
 impl KeyScreen {
     pub fn new(provider: Provider, app: &Inkling, window: &mut Window, cx: &mut Context<Inkling>) -> Self {
         let key = cx.new(|cx| InputState::new(window, cx).masked(true));
         let model = cx.new(|cx| InputState::new(window, cx));
-        let save_on_enter = cx.subscribe_in(&key, window, |this, _, event: &InputEvent, window, cx| {
+        let link = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let save_key = cx.subscribe_in(&key, window, |this, _, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 this.save_keys(window, cx);
                 window.dismiss_virtual_keyboard();
             }
         });
-        let mut screen = KeyScreen { provider, key, model, has_key: false, status: None, _save_on_enter: save_on_enter };
+        let save_link = cx.subscribe_in(&link, window, |this, _, event: &InputEvent, window, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                this.save_link(window, cx);
+                window.dismiss_virtual_keyboard();
+            }
+        });
+        let mut screen = KeyScreen {
+            provider,
+            key,
+            model,
+            has_key: false,
+            status: None,
+            link,
+            link_status: None,
+            _save_on_enter: [save_key, save_link],
+        };
+        screen.clear_link(app.feedback_on, window, cx);
         screen.show(provider, app, window, cx);
         screen
     }
@@ -52,6 +74,16 @@ impl KeyScreen {
     fn clear_key(&self, window: &mut Window, cx: &mut App) {
         let hint = if self.has_key { "Saved in the Keychain. Paste a new key to replace it." } else { "Paste your API key" };
         self.key.update(cx, |field, cx| {
+            field.set_value("", window, cx);
+            field.set_placeholder(hint, window, cx);
+        });
+    }
+}
+
+impl KeyScreen {
+    fn clear_link(&self, saved: bool, window: &mut Window, cx: &mut App) {
+        let hint = if saved { "Saved in the Keychain. Paste a new link to replace it." } else { "Paste the feedback link" };
+        self.link.update(cx, |field, cx| {
             field.set_value("", window, cx);
             field.set_placeholder(hint, window, cx);
         });
@@ -91,6 +123,22 @@ impl Inkling {
             screen.has_key = self.key_saved;
             screen.status = Some(status);
             screen.clear_key(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Save link, or Return in the link field. An empty field keeps the link already saved.
+    pub fn save_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(screen) = &self.key_screen else { return };
+        let pasted = screen.link.read(cx).value().trim().to_string();
+        if pasted.is_empty() {
+            return;
+        }
+        let status = Desk::save_link(self.keys.as_ref(), &pasted);
+        self.feedback_on = Desk::has_link(self.keys.as_ref());
+        if let Some(screen) = &mut self.key_screen {
+            screen.link_status = Some(status);
+            screen.clear_link(self.feedback_on, window, cx);
         }
         cx.notify();
     }
@@ -138,6 +186,12 @@ impl Inkling {
             Some(Ok(())) if screen.has_key => Some(format!("Saved. Inkling will write with {}.", screen.provider.label())),
             Some(Ok(())) => Some("Saved. Add a key to start asking.".to_string()),
             None if screen.has_key => Some("Saved".to_string()),
+            None => None,
+        };
+        let link_status = match &screen.link_status {
+            Some(Err(message)) => Some(message.clone()),
+            Some(Ok(())) => Some("Saved. Feedback is on.".to_string()),
+            None if self.feedback_on => Some("Saved".to_string()),
             None => None,
         };
         let provider = screen.provider;
@@ -223,6 +277,41 @@ impl Inkling {
                                 .font_family(SANS)
                                 .child("Your key and your writing go only to the provider you pick."),
                         ),
+                )
+                .child(div().h(px(1.)).bg(rgb(color::HAIRLINE)))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .gap_3()
+                                .child(label("Feedback link".into()))
+                                .children(link_status.map(|s| {
+                                    div().id("link-status").text_size(px(13.)).text_color(rgb(color::INK)).text_right().child(s)
+                                })),
+                        )
+                        .child(field(&screen.link, "feedback-link", true))
+                        .child(
+                            div().flex().child(
+                                ghost_button("save-link", "Save link")
+                                    .h(m.control.max(px(32.)))
+                                    .px(px(14.))
+                                    .border_1()
+                                    .border_color(rgb(color::HAIRLINE))
+                                    .rounded(px(8.))
+                                    .text_size(px(14.))
+                                    .text_color(rgb(color::INK))
+                                    .on_click(cx.listener(|this, _, window, cx| this.save_link(window, cx)))
+                                    .test_support(),
+                            ),
+                        )
+                        .child(div().text_size(px(13.)).line_height(relative(1.5)).text_color(rgb(color::MUTED)).child(format!(
+                            "Paste the link from T3 Code to send what should change from this {device}. Only what you type there is sent."
+                        ))),
                 ),
         )
     }
