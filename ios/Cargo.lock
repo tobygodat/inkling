@@ -3469,6 +3469,7 @@ dependencies = [
 name = "inkling-core"
 version = "0.1.0"
 dependencies = [
+ "ring",
  "security-framework",
  "serde",
  "serde_json",

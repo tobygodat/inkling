@@ -37,9 +37,14 @@ impl Paths {
     pub fn save_draft(&self, text: &str) -> io::Result<()> {
         write_atomic(&self.draft(), text.as_bytes())
     }
+
+    /// What this device has sent as feedback. See `feedback::Desk`.
+    pub fn sent_feedback(&self) -> PathBuf {
+        self.dir.join("sent-feedback.json")
+    }
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -84,40 +89,85 @@ impl Settings {
     }
 }
 
-/// API keys never go in the settings file.
-pub trait KeyStore: Send + Sync {
-    fn get(&self, provider: Provider) -> Option<String>;
-    fn set(&self, provider: Provider, key: &str) -> Result<(), String>;
-    fn remove(&self, provider: Provider) -> Result<(), String>;
+/// Everything Inkling keeps in the key store. Adding a secret is adding a variant here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Secret {
+    ApiKey(Provider),
+    FeedbackLink,
+}
 
-    /// Whether a key is saved for `provider`. Stores that can answer without reading the
-    /// secret do, so a settings screen can show "saved" without unlocking anything.
-    fn has(&self, provider: Provider) -> bool {
-        self.get(provider).is_some_and(|k| !k.trim().is_empty())
+impl Secret {
+    /// The Keychain account under service `com.tobygodat.inkling`. API keys keep the accounts
+    /// they had before the feedback link existed.
+    pub fn account(self) -> &'static str {
+        match self {
+            Secret::ApiKey(p) => p.id(),
+            Secret::FeedbackLink => "feedback-link",
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            Secret::ApiKey(p) => format!("{} key", p.label()),
+            Secret::FeedbackLink => "feedback link".into(),
+        }
+    }
+}
+
+/// API keys and the feedback link. Never the settings file.
+pub trait KeyStore: Send + Sync {
+    fn get(&self, secret: Secret) -> Option<String>;
+    fn set(&self, secret: Secret, value: &str) -> Result<(), String>;
+    fn remove(&self, secret: Secret) -> Result<(), String>;
+
+    /// Whether `secret` is saved. Stores that can answer without reading the secret do, so a
+    /// settings screen can show "saved" without unlocking anything.
+    fn has(&self, secret: Secret) -> bool {
+        self.get(secret).is_some_and(|k| !k.trim().is_empty())
+    }
+}
+
+/// One store shared by several views, so a headless run can relaunch the app and find what it
+/// saved, as it would in the Keychain.
+impl<T: KeyStore + ?Sized> KeyStore for std::sync::Arc<T> {
+    fn get(&self, secret: Secret) -> Option<String> {
+        (**self).get(secret)
+    }
+
+    fn set(&self, secret: Secret, value: &str) -> Result<(), String> {
+        (**self).set(secret, value)
+    }
+
+    fn remove(&self, secret: Secret) -> Result<(), String> {
+        (**self).remove(secret)
+    }
+
+    fn has(&self, secret: Secret) -> bool {
+        (**self).has(secret)
     }
 }
 
 #[derive(Default)]
-pub struct MemoryKeys(Mutex<HashMap<Provider, String>>);
+pub struct MemoryKeys(Mutex<HashMap<Secret, String>>);
 
 impl KeyStore for MemoryKeys {
-    fn get(&self, provider: Provider) -> Option<String> {
-        self.0.lock().unwrap().get(&provider).cloned()
+    fn get(&self, secret: Secret) -> Option<String> {
+        self.0.lock().unwrap().get(&secret).cloned()
     }
 
-    fn set(&self, provider: Provider, key: &str) -> Result<(), String> {
-        self.0.lock().unwrap().insert(provider, key.to_string());
+    fn set(&self, secret: Secret, value: &str) -> Result<(), String> {
+        self.0.lock().unwrap().insert(secret, value.to_string());
         Ok(())
     }
 
-    fn remove(&self, provider: Provider) -> Result<(), String> {
-        self.0.lock().unwrap().remove(&provider);
+    fn remove(&self, secret: Secret) -> Result<(), String> {
+        self.0.lock().unwrap().remove(&secret);
         Ok(())
     }
 }
 
-/// API keys in the Apple Keychain: generic passwords under service `com.tobygodat.inkling`,
-/// one account per `Provider::id()`.
+/// Secrets in the Apple Keychain: generic passwords under service `com.tobygodat.inkling`,
+/// one account per `Secret::account()`.
 #[cfg(target_vendor = "apple")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct KeychainKeys;
@@ -129,43 +179,47 @@ impl KeychainKeys {
 
 #[cfg(target_vendor = "apple")]
 impl KeyStore for KeychainKeys {
-    fn get(&self, provider: Provider) -> Option<String> {
-        let bytes = security_framework::passwords::get_generic_password(Self::SERVICE, provider.id()).ok()?;
+    fn get(&self, secret: Secret) -> Option<String> {
+        let bytes = security_framework::passwords::get_generic_password(Self::SERVICE, secret.account()).ok()?;
         String::from_utf8(bytes).ok()
     }
 
-    fn set(&self, provider: Provider, key: &str) -> Result<(), String> {
-        security_framework::passwords::set_generic_password(Self::SERVICE, provider.id(), key.trim().as_bytes())
-            .map_err(|e| format!("Couldn't save the {} key to the Keychain ({e}).", provider.label()))
+    fn set(&self, secret: Secret, value: &str) -> Result<(), String> {
+        security_framework::passwords::set_generic_password(Self::SERVICE, secret.account(), value.trim().as_bytes())
+            .map_err(|e| format!("Couldn't save the {} to the Keychain ({e}).", secret.label()))
     }
 
     /// Asks the Keychain whether the item exists without loading its data or attributes.
-    fn has(&self, provider: Provider) -> bool {
+    fn has(&self, secret: Secret) -> bool {
         use security_framework::item::{ItemClass, ItemSearchOptions};
         ItemSearchOptions::new()
             .class(ItemClass::generic_password())
             .service(Self::SERVICE)
-            .account(provider.id())
+            .account(secret.account())
             .search()
             .is_ok()
     }
 
-    fn remove(&self, provider: Provider) -> Result<(), String> {
+    fn remove(&self, secret: Secret) -> Result<(), String> {
         const NOT_FOUND: i32 = -25300; // errSecItemNotFound
-        match security_framework::passwords::delete_generic_password(Self::SERVICE, provider.id()) {
+        match security_framework::passwords::delete_generic_password(Self::SERVICE, secret.account()) {
             Err(e) if e.code() != NOT_FOUND => {
-                Err(format!("Couldn't remove the {} key from the Keychain ({e}).", provider.label()))
+                Err(format!("Couldn't remove the {} from the Keychain ({e}).", secret.label()))
             }
             _ => Ok(()),
         }
     }
 }
 
-/// The key store an app should use: the Keychain on Apple platforms. `INKLING_FAKE_AI` or
-/// `INKLING_MEMORY_KEYS` keeps keys in memory instead, so headless runs never touch the Keychain.
+/// Whether this is a headless run: `INKLING_FAKE_AI` or `INKLING_MEMORY_KEYS`. A headless run
+/// keeps keys in memory and never sends feedback over the network.
+pub fn headless() -> bool {
+    ["INKLING_FAKE_AI", "INKLING_MEMORY_KEYS"].iter().any(|v| std::env::var_os(v).is_some())
+}
+
+/// The key store an app should use: the Keychain on Apple platforms, memory in a `headless()` run.
 pub fn default_keys() -> Box<dyn KeyStore> {
-    let in_memory = ["INKLING_FAKE_AI", "INKLING_MEMORY_KEYS"].iter().any(|v| std::env::var_os(v).is_some());
-    if in_memory || cfg!(not(target_vendor = "apple")) {
+    if headless() || cfg!(not(target_vendor = "apple")) {
         return Box::new(MemoryKeys::default());
     }
     keychain()
@@ -191,7 +245,7 @@ pub fn backend_for_request(settings: &Settings, keys: &dyn KeyStore, request: &R
         return Ok(Backend::Fake { text: request.fake_answer(), word_delay: Duration::from_millis(40) });
     }
     let provider = settings.provider;
-    let key = keys.get(provider).filter(|k| !k.trim().is_empty()).ok_or(provider)?;
+    let key = keys.get(Secret::ApiKey(provider)).filter(|k| !k.trim().is_empty()).ok_or(provider)?;
     Ok(Backend::Live { provider, model: settings.model(provider).to_string(), key })
 }
 
@@ -228,7 +282,7 @@ mod tests {
         let request = Request::new("Once", crate::ask::Ask::FixGrammar).unwrap();
         if std::env::var_os("INKLING_FAKE_AI").is_none() {
             assert_eq!(backend_for_request(&settings, &keys, &request), Err(Provider::Claude));
-            keys.set(Provider::Claude, "sk-test").unwrap();
+            keys.set(Secret::ApiKey(Provider::Claude), "sk-test").unwrap();
             assert!(matches!(backend_for_request(&settings, &keys, &request), Ok(Backend::Live { .. })));
         }
     }

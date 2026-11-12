@@ -12,4 +12,7 @@ profile=()
 [ "${CONFIGURATION:-Debug}" = Release ] && profile=(--release)
 unset SDKROOT
 export IPHONEOS_DEPLOYMENT_TARGET=18.0
+# The build number in the feedback body: the commit count, as mac/install.sh uses for the Mac.
+INKLING_BUILD="$(git -C .. rev-list --count HEAD)"
+export INKLING_BUILD
 cargo build --target "$target" ${profile[@]+"${profile[@]}"}

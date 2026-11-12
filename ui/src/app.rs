@@ -1,9 +1,12 @@
+use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
 use crate::{FormFactor, Metrics, SANS, SERIF, color};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use inkling_core::{AiEvent, Ask, Cancel, ChangeId, KeyStore, Paths, Provider, Request, Revision, Settings};
+use inkling_core::{
+    AiEvent, Ask, Build, BuildNumber, Cancel, ChangeId, Desk, KeyStore, Paths, Provider, Request, Revision, Secret, Settings,
+};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -59,14 +62,35 @@ pub struct Inkling {
     pub(crate) wordings_open: Option<ChangeId>,
     /// The change tapped on iPhone, which the sheet acts on.
     pub(crate) selected: Option<ChangeId>,
-    saved: Saved,
+    /// All feedback state. The views render it and keep no copy.
+    pub(crate) feedback: Desk,
+    /// Whether a feedback link is saved, asked at launch and after a link save, never on a frame.
+    /// False hides every way to feedback but the key screen's link field.
+    pub(crate) feedback_on: bool,
+    /// Lives here, not on the screen, so the text survives closing the screen and a failed send.
+    pub(crate) feedback_field: Entity<TextareaState>,
+    pub(crate) feedback_screen: Option<FeedbackScreen>,
+    /// The send on the background executor. Replaced, never cancelled: a POST that has left
+    /// can't be called back, and the webhook dedupes on the id.
+    pub(crate) sending: Task<()>,
+    /// The build on disk, as the Mac host last reported it.
+    pub(crate) installed: Option<BuildNumber>,
+    pub(crate) saved: Saved,
     save: Task<()>,
     pub(crate) focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
 
 impl Inkling {
-    pub fn new(form: FormFactor, paths: Paths, keys: Box<dyn KeyStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `build` is what the host is running: `Build::running()`, or the Mac snap's next build.
+    pub fn new(
+        form: FormFactor,
+        paths: Paths,
+        keys: Box<dyn KeyStore>,
+        build: Build,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = Settings::load(&paths);
         let draft = paths.load_draft();
         let page = cx.new(|cx| {
@@ -101,7 +125,17 @@ impl Inkling {
         if form == FormFactor::Mac {
             page.read(cx).focus_handle(cx).focus(window, cx);
         }
-        let key_saved = keys.has(settings.provider);
+        let key_saved = keys.has(Secret::ApiKey(settings.provider));
+        let feedback = Desk::open(paths.clone(), build);
+        let feedback_on = Desk::has_link(keys.as_ref());
+        let feedback_field = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .soft_wrap(true)
+                .auto_grow(3, 6)
+                .autocorrect(true)
+                .autocapitalize(Autocapitalize::Sentences)
+                .placeholder("Say what you'd like Inkling to do differently")
+        });
         Inkling {
             form,
             paths,
@@ -117,6 +151,12 @@ impl Inkling {
             key_screen: None,
             wordings_open: None,
             selected: None,
+            feedback,
+            feedback_on,
+            feedback_field,
+            feedback_screen: None,
+            sending: Task::ready(()),
+            installed: None,
             saved: Saved::Saved,
             save: Task::ready(()),
             focus: cx.focus_handle(),
@@ -151,6 +191,20 @@ impl Inkling {
     /// Whether the key store holds a key for the chosen provider.
     pub fn key_saved(&self) -> bool {
         self.key_saved
+    }
+
+    /// Whether a feedback link is saved, so the ways to feedback show.
+    pub fn feedback_on(&self) -> bool {
+        self.feedback_on
+    }
+
+    /// What the key screen's last Save link did.
+    pub fn link_status(&self) -> Option<&Result<(), String>> {
+        self.key_screen.as_ref()?.link_status.as_ref()
+    }
+
+    pub fn feedback_open(&self) -> bool {
+        self.feedback_screen.is_some()
     }
 
     pub fn notice(&self) -> Option<&str> {
@@ -199,12 +253,16 @@ impl Inkling {
     /// Keys the review, a running request, the key screen or a message own. Runs before any
     /// binding, so the editor never sees them while they mean something here.
     fn key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.feedback_screen.is_some() && key.key == "enter" && key.modifiers.platform {
+            self.send_feedback(window, cx);
+            return true;
+        }
         if key.modifiers.modified() {
             return false;
         }
         match key.key.as_str() {
             "escape" => self.escape(window, cx),
-            "tab" | "enter" if self.revision.review().is_some() && self.key_screen.is_none() => {
+            "tab" | "enter" if self.revision.review().is_some() && self.key_screen.is_none() && self.feedback_screen.is_none() => {
                 let typing = key.key == "enter"
                     && self.ask_field.read(cx).focus_handle(cx).is_focused(window)
                     && !self.ask_field.read(cx).value().trim().is_empty();
@@ -219,7 +277,9 @@ impl Inkling {
     }
 
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.key_screen.is_some() {
+        if self.feedback_screen.is_some() {
+            self.close_feedback(window, cx);
+        } else if self.key_screen.is_some() {
             self.close_keys(window, cx);
         } else if self.wordings_open.is_some() {
             self.wordings_open = None;
@@ -400,7 +460,7 @@ impl Inkling {
 
     /// On Mac the page takes focus back. On iPhone the page waits for a tap, which also
     /// raises the keyboard.
-    fn focus_page(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_page(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.form == FormFactor::Mac {
             self.page.read(cx).focus_handle(cx).focus(window, cx);
         }
@@ -418,6 +478,7 @@ impl Inkling {
     }
 
     pub fn open_keys(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
+        self.feedback_screen = None;
         let screen = KeyScreen::new(provider, self, window, cx);
         screen.key.read(cx).focus_handle(cx).focus(window, cx);
         self.key_screen = Some(screen);
@@ -428,7 +489,7 @@ impl Inkling {
         self.key_screen = None;
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
-        self.key_saved = self.keys.has(self.settings.provider);
+        self.key_saved = self.keys.has(Secret::ApiKey(self.settings.provider));
         if self.revision.review().is_none() {
             self.focus_page(window, cx);
         }
@@ -622,7 +683,9 @@ impl Inkling {
             ))
     }
 
-    fn render_footer(&self) -> impl IntoElement + use<> {
+    /// Left to right: whether the page is saved, then a newer build's Restart, Feedback once a
+    /// link is saved, and the provider.
+    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let saved = match &self.saved {
             Saved::Saved => "Saved".to_string(),
             Saved::Pending => "Editing".to_string(),
@@ -644,7 +707,20 @@ impl Inkling {
             .pb(px(14.))
             .text_size(px(12.))
             .text_color(rgb(color::MUTED))
-            .child(saved)
+            .child(div().flex_1().min_w_0().truncate().child(saved))
+            .children(self.render_restart(cx))
+            .when(self.feedback_on, |footer| {
+                footer.child(
+                    div()
+                        .id("open-feedback")
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(color::INK))
+                        .cursor_pointer()
+                        .child("Feedback")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
+                        .test_support(),
+                )
+            })
             .child(key)
     }
 }
@@ -665,6 +741,9 @@ impl Render for Inkling {
             .on_action(cx.listener(Self::on_open_keys));
         if let Some(screen) = &self.key_screen {
             return root.child(self.render_keys(screen, cx));
+        }
+        if self.feedback_screen.is_some() {
+            return root.child(self.render_feedback(window, cx));
         }
         if self.form == FormFactor::Phone {
             return root.child(self.render_phone(window, cx));
@@ -689,7 +768,7 @@ impl Render for Inkling {
                         .child(self.render_asks(cx)),
                 ),
             )
-            .child(self.render_footer())
+            .child(self.render_footer(cx))
     }
 }
 
@@ -750,6 +829,15 @@ impl Inkling {
             .text_size(px(14.))
             .text_color(rgb(color::MUTED))
             .child(div().flex_1().min_w_0().truncate().child(saved))
+            .when(self.feedback_on, |row| {
+                row.child(
+                    ghost_button("open-feedback", "Feedback")
+                        .h(m.control)
+                        .text_color(rgb(color::INK))
+                        .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
+                        .test_support(),
+                )
+            })
             .child(
                 ghost_button("open-keys", "")
                     .h(m.control)

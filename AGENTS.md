@@ -21,6 +21,8 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 - `ios/` is the iPhone app: a Swift UIKit host (`ios/app/`) over the static library `inkling-ios`,
   in its own Cargo workspace, with gpui-mobile patched from `ios/patches/`. The prototypes are at
   tag `prototypes-tob-428`.
+- `feedback/` holds one record per feedback sent from inside the app, `ship.sh`, which ships one, and
+  `AGENT.md`, the instructions for the thread that handles one.
 - `docs/screenshots/<app>/` holds each app's proof.
 
 ## Commands
@@ -39,13 +41,16 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
 - `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow on the Simulator,
-  with 12 checked steps. Any change under `ui/` or `ios/` reruns it. `ios/README.md` lists what is
+  with 16 checked steps. Any change under `ui/` or `ios/` reruns it. `ios/README.md` lists what is
   still driven by hand.
 - `ios/testflight.sh` archives the iPhone app in Release for a real device, signs it for the App
   Store (team Q6NAWA42Y2), refuses any build that imports a symbol missing from the public SDK
   headers, and uploads it to TestFlight. Xcode's signed-in account signs it, and `altool` uploads it
   with the App Store Connect API key in the login Keychain (service `inkling-app-store-connect`). It
   sends a build to Apple, so run it only when Toby asks for a TestFlight build.
+- `feedback/ship.sh done|declined <id> "<one line>"` ships one feedback from the standing checkout:
+  tests, clippy, `mac/snap.sh`, the record, a commit on `main`, `mac/install.sh` and a push. Only a
+  feedback thread runs it.
 - `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
   `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
@@ -76,6 +81,14 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - After a `FAIL`, check the fix against the step that failed, not the whole proof.
 - A finding outside the issue's "done when" becomes a line on the issue, not a fix round.
 - No review panel on an ordinary diff. `interrogate` is for a contested design.
+
+## Feedback threads
+
+- A thread that a T3 webhook starts with feedback from inside the app follows `feedback/AGENT.md`.
+- It works in the standing checkout on `main` and ships with `feedback/ship.sh`. It opens no Linear
+  issue, no worktree, no PR and no final check, and it installs before CI runs.
+- It never runs `ios/testflight.sh`.
+- Every other thread follows the rest of this file.
 
 ## Rules
 

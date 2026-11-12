@@ -207,6 +207,10 @@ about a minute.
 | Paste a fake key with the Paste control, reveal it | | `10-key-pasted` |
 | Return saves | `settings.json` appears only now | `11-key-saved` |
 | Back to the page | | `12-back-with-key` |
+| Scroll the key screen, paste a fake feedback link, Return saves it | no file in the data folder holds `#k=` | `13-link-saved` |
+| Back, then Feedback in the header | | `14-feedback-open` |
+| Type "bigger margins", Done, Send | `sent-feedback.json` holds "Bigger margins" and not the draft | `15-feedback-sent` |
+| Save a link on an `.invalid` host, send "a darker caret" | the failed send adds nothing to `sent-feedback.json` | `16-feedback-failed` |
 
 After every tap it also checks that Inkling is still the foreground app, so a crash fails the
 step. The pasted part carries the misspellings the fake Fix grammar corrects (`i`, `dont`,
@@ -215,6 +219,12 @@ clipboard is set with `agent-device clipboard write`, which iOS treats as anothe
 GPUI draws everything inside one view, so the accessibility tree has no handles for the page,
 the chips or the review; those taps are coordinates, all in `point()` at the top of the script.
 The Paste control is pressed by its label.
+
+Done and declined feedback and Restart are proved by `mac/snap.sh`, which also renders the
+phone layout of the list (`19-iphone-feedback`). The iPhone lists its items as waiting until a new
+iPhone build carries their records.
+
+`cargo-ios.sh` sets `INKLING_BUILD` to the commit count, so the feedback body names the build.
 
 
 ## Gaps
@@ -226,6 +236,9 @@ The Paste control is pressed by its label.
   the document's real text, and the accessibility tree reads it back, so the key field's value
   is visible there (and to VoiceOver) while the field shows dots. The bridge needs to know a field
   is masked (`isSecureTextEntry`), which `TextInputConfiguration` does not carry yet.
+- **The feedback link field is under the keyboard while it has focus.** The key screen does not
+  scroll a focused field into view, so the link is pasted with the Paste control above the
+  keyboard without the field in sight. Return saves it and puts the keyboard away.
 - **The Paste control shows for every input**, also when the clipboard holds nothing to paste,
   where iOS dims it. It takes 52 pt above the keyboard.
 - **No Ideas action.** The phone reference shows a fourth quick action, Ideas. The core has no

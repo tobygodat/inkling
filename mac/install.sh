@@ -1,16 +1,20 @@
 #!/bin/bash
 # Builds Inkling.app for the Mac in release, signs it with the Developer ID identity and installs it
 # in /Applications. It never opens the app. Usage: install.sh [destination folder]
+#
+# The build number is the commit count. It goes into the binary (INKLING_BUILD, read by
+# core/build.rs) and into CFBundleVersion, which the running app watches to offer Restart
+# (mac/src/main.rs reads the exact CFBundleVersion line written below).
 set -euo pipefail
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 cd "$(dirname "$0")/.."
 root="$(pwd)"
 dest="${1:-/Applications}"
 identity="Developer ID Application: Toby Godat (Q6NAWA42Y2)"
-version="$(cargo metadata --no-deps --format-version 1 | python3 -I -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="inkling-mac"))')"
+version="$(cargo metadata --no-deps --format-version 1 | python3 -I -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="inkling-core"))')"
 build="$(git rev-list --count HEAD)"
 
-cargo build --release -p inkling-mac
+INKLING_BUILD="$build" cargo build --release -p inkling-mac
 app="$root/target/release/Inkling.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -39,6 +43,12 @@ EOF
 codesign --force --options runtime --timestamp --sign "$identity" "$app"
 codesign --verify --strict --deep "$app"
 
-rm -rf "$dest/Inkling.app"
-ditto "$app" "$dest/Inkling.app"
+# Staged, so the running app's bundle is never half-copied and is missing only between the two
+# renames. A crash leaves at most a .new or .old, which the next run removes first.
+installed="$dest/Inkling.app"
+rm -rf "$installed.new" "$installed.old"
+ditto "$app" "$installed.new"
+[ ! -e "$installed" ] || mv "$installed" "$installed.old"
+mv "$installed.new" "$installed"
+rm -rf "$installed.old"
 echo "installed $dest/Inkling.app $version ($build)"

@@ -5,7 +5,7 @@
 extern crate gpui_mobile;
 
 use gpui_kit::*;
-use inkling_core::Paths;
+use inkling_core::{Build, Paths};
 use inkling_ui::{FormFactor, Inkling};
 use std::ffi::{CStr, c_char};
 use std::path::PathBuf;
@@ -24,7 +24,8 @@ pub unsafe extern "C" fn inkling_ios_register(data_dir: *const c_char) {
         gpui_kit::init(cx);
         inkling_ui::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| Inkling::new(FormFactor::Phone, Paths { dir }, inkling_core::default_keys(), window, cx))
+            let keys = inkling_core::default_keys();
+            cx.new(|cx| Inkling::new(FormFactor::Phone, Paths { dir }, keys, Build::running(), window, cx))
         })
         .expect("open the Inkling window");
     }));
