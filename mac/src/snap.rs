@@ -134,11 +134,11 @@ impl Snap {
 
     /// The top of a caret at source byte `at` on the live page, and its height.
     fn point_for(&mut self, at: usize) -> Option<(Point<Pixels>, Pixels)> {
-        self.read(|v, cx| v.page().live()?.read(cx).point_for(at))
+        self.read(|v, cx| v.page().live().read(cx).point_for(at))
     }
 
     fn live(&mut self) -> Snapshot {
-        self.read(|v, cx| v.page().live().map(|p| p.read(cx).snapshot())).unwrap_or_else(|| fail("the Mac page is the live editor"))
+        self.read(|v, cx| v.page().live().read(cx).snapshot())
     }
 
     /// A window point inside drawn text `needle`, `offset` bytes in, found by the kit's text.
@@ -150,7 +150,7 @@ impl Snap {
             .filter(|l| !l.is_source)
             .find_map(|l| l.text.find(needle).map(|i| (l.key, i + offset, l.line_height.unwrap_or(px(20.)))))
             .unwrap_or_else(|| fail(&format!("{needle:?} is drawn")));
-        let p = self.read(|v, cx| v.page().live().and_then(|e| e.read(cx).drawn_point(key, index))).unwrap_or_else(|| fail("the leaf is laid out"));
+        let p = self.read(|v, cx| v.page().live().read(cx).drawn_point(key, index)).unwrap_or_else(|| fail("the leaf is laid out"));
         point(p.x + px(1.), p.y + h / 2.)
     }
 

@@ -30,12 +30,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 enum Launch {
     /// Debug builds take `--fake-ai` (canned answers, keys in memory) and `--memory-keys`
     /// (keys in memory, real providers) so a Simulator run never reads the Keychain or calls
-    /// a paid API. Release builds ignore both.
+    /// a paid API, and `--probe-typing` (log each typed character's time to its painted frame).
+    /// Release builds ignore them.
     static func applyDebugFlags() {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--fake-ai") { setenv("INKLING_FAKE_AI", "1", 1) }
         if args.contains("--memory-keys") { setenv("INKLING_MEMORY_KEYS", "1", 1) }
+        if args.contains("--probe-typing") { setenv("INKLING_PROBE_TYPING", "1", 1) }
         #endif
     }
 

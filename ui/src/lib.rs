@@ -48,6 +48,12 @@ impl FormFactor {
         }
     }
 
+    /// Whether the system draws the page's caret, selection and handles. On iPhone UIKit does,
+    /// while the page has focus.
+    pub(crate) fn system_selection(self) -> bool {
+        self == FormFactor::Phone
+    }
+
     pub(crate) fn metrics(self) -> Metrics {
         match self {
             FormFactor::Mac => Metrics {

@@ -53,6 +53,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, c),
         KeyBinding::new("cmd-x", Cut, c),
         KeyBinding::new("cmd-v", Paste, c),
+        // The iPhone's edit menu and Paste control send these.
+        KeyBinding::new("ctrl-c", Copy, c),
+        KeyBinding::new("ctrl-x", Cut, c),
+        KeyBinding::new("ctrl-v", Paste, c),
         KeyBinding::new("cmd-z", Undo, c),
         KeyBinding::new("cmd-shift-z", Redo, c),
     ]);
@@ -245,39 +249,50 @@ impl LiveEditor {
     }
 }
 
-fn to16(s: &str, at: usize) -> usize {
-    s[..at.min(s.len())].encode_utf16().count()
-}
-
-fn from16(s: &str, units: usize) -> usize {
-    let mut n = 0;
-    for (i, c) in s.char_indices() {
-        if n >= units {
-            return i;
-        }
-        n += c.len_utf16();
+impl LiveEditor {
+    /// The source range a platform edit replaces: the one it names, else the marked text, else
+    /// the selection.
+    fn input_range(&self, range_utf16: Option<Range<usize>>) -> Range<usize> {
+        range_utf16.map(|r| self.draft.from_utf16(r)).or(self.marked.clone()).unwrap_or(self.draft.selection().range())
     }
-    s.len()
 }
 
 impl EntityInputHandler for LiveEditor {
     fn text_for_range(&mut self, range: Range<usize>, adjusted: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
-        let s = self.draft.source();
-        let r = from16(s, range.start)..from16(s, range.end);
-        *adjusted = Some(to16(s, r.start)..to16(s, r.end));
-        Some(s[r].to_string())
+        let r = self.draft.from_utf16(range);
+        *adjusted = Some(self.draft.to_utf16(r.clone()));
+        Some(self.draft.source()[r].to_string())
     }
 
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
-        let s = self.draft.source();
         let sel = self.draft.selection();
-        let r = sel.range();
-        Some(UTF16Selection { range: to16(s, r.start)..to16(s, r.end), reversed: sel.head < sel.anchor })
+        Some(UTF16Selection { range: self.draft.to_utf16(sel.range()), reversed: sel.head < sel.anchor })
+    }
+
+    /// The platform's own selection UI moved the selection: a handle on iPhone. The end that
+    /// moved becomes the caret, so a dragged start handle stays in view.
+    fn set_selected_text_range(&mut self, range: Range<usize>, _: &mut Window, cx: &mut Context<Self>) {
+        let was = self.draft.selection().range();
+        let r = self.draft.from_utf16(range);
+        let start_moved = r.end == was.end && r.start != was.start && !r.is_empty();
+        self.draft.seal();
+        if start_moved {
+            self.draft.set_selection(r.end, r.start);
+        } else {
+            self.draft.set_selection(r.start, r.end);
+        }
+        self.goal_x = None;
+        // A caret is brought into view. A range is not: its moved end is under the finger,
+        // and Select All leaves the page where it is.
+        if r.is_empty() {
+            self.moved(cx);
+        } else {
+            cx.notify();
+        }
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        let s = self.draft.source();
-        self.marked.as_ref().map(|m| to16(s, m.start)..to16(s, m.end))
+        self.marked.clone().map(|m| self.draft.to_utf16(m))
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -286,8 +301,7 @@ impl EntityInputHandler for LiveEditor {
     }
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
-        let s = self.draft.source();
-        let r = range.map(|r| from16(s, r.start)..from16(s, r.end)).or(self.marked.clone()).unwrap_or(self.draft.selection().range());
+        let r = self.input_range(range);
         self.edit(r, text, cx);
     }
 
@@ -299,21 +313,40 @@ impl EntityInputHandler for LiveEditor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let s = self.draft.source();
-        let r = range.map(|r| from16(s, r.start)..from16(s, r.end)).or(self.marked.clone()).unwrap_or(self.draft.selection().range());
+        let r = self.input_range(range);
         self.edit(r.clone(), text, cx);
-        self.marked = (!text.is_empty()).then(|| r.start..r.start + text.len());
+        let marked = r.start..r.start + text.len();
         if let Some(sel) = new_selection {
-            self.draft.set_selection(r.start + from16(text, sel.start), r.start + from16(text, sel.end));
+            let base = self.draft.to_utf16(marked.start..marked.start).start;
+            let sel = self.draft.from_utf16(base + sel.start..base + sel.end);
+            self.draft.set_selection(sel.start.min(marked.end), sel.end.min(marked.end));
         }
+        self.marked = (!text.is_empty()).then_some(marked);
     }
 
     fn bounds_for_range(&mut self, range: Range<usize>, _: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
-        let (p, h) = self.caret_at(from16(self.draft.source(), range.start))?;
-        Some(Bounds::new(p, size(px(2.), h)))
+        let r = self.draft.from_utf16(range);
+        self.line_rects(r.clone()).into_iter().next().or_else(|| self.caret_bounds(r.start))
+    }
+
+    fn selection_bounds_for_range(&mut self, range: Range<usize>, _: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Vec<Bounds<Pixels>> {
+        self.line_rects(self.draft.from_utf16(range))
     }
 
     fn character_index_for_point(&mut self, at: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
-        self.hit(at).map(|s| to16(self.draft.source(), s))
+        self.pressed(at).map(|s| self.draft.to_utf16(s..s).start)
+    }
+
+    fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        Some(self.draft.len_utf16())
+    }
+
+    fn text_input_configuration(&mut self, _: &mut Window, _: &mut Context<Self>) -> TextInputConfiguration {
+        TextInputConfiguration {
+            autocorrect: true,
+            autocapitalize: Autocapitalize::Sentences,
+            suggestions: true,
+            input_action: TextInputAction::Enter,
+        }
     }
 }

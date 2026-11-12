@@ -478,7 +478,7 @@ impl Inkling {
     /// step per change, and the page is editable again.
     pub fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for edit in self.revision.finish() {
-            self.page.replace(edit.range, &edit.text, window, cx);
+            self.page.replace(edit.range, &edit.text, cx);
         }
         self.back_to_page(window, cx);
     }
@@ -645,7 +645,7 @@ impl Inkling {
         if self.revision.review().is_some() {
             return self.render_review(window, cx);
         }
-        self.page.render(&self.theme())
+        self.page.render()
     }
 
     fn render_message(&self) -> Option<impl IntoElement + use<>> {

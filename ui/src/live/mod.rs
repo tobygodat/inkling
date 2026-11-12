@@ -22,6 +22,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// What the editor draws. With both off, every block is its source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +65,8 @@ struct Frame {
     leaves: HashMap<u64, LeafRef>,
     geometry: HashMap<u64, LeafGeometry>,
     blocks: Vec<Bounds<Pixels>>,
+    /// The caret as it was last painted.
+    caret: Option<Bounds<Pixels>>,
 }
 
 pub struct LiveEditor {
@@ -80,6 +83,10 @@ pub struct LiveEditor {
     /// The block drawn as source, kept still while a drag selects.
     active: Option<usize>,
     dragging: bool,
+    /// Shown on an empty page.
+    placeholder: Option<SharedString>,
+    /// The last single click: the source byte it landed on, where and when.
+    clicked: Option<(usize, Point<Pixels>, Instant)>,
     marked: Option<Range<usize>>,
     goal_x: Option<Pixels>,
     reveal: bool,
@@ -116,6 +123,8 @@ impl LiveEditor {
             revision: 0,
             active: None,
             dragging: false,
+            placeholder: None,
+            clicked: None,
             marked: None,
             goal_x: None,
             reveal: true,
@@ -126,7 +135,10 @@ impl LiveEditor {
         };
         editor.extensions = Arc::new(editor.build_extensions());
         editor.rebuild();
-        editor.focus.focus(window, cx);
+        // On iPhone the page waits for a tap, which also raises the keyboard.
+        if form == FormFactor::Mac {
+            editor.focus.focus(window, cx);
+        }
         editor
     }
 
@@ -163,6 +175,10 @@ impl LiveEditor {
 
     pub fn focus_handle(&self) -> &FocusHandle {
         &self.focus
+    }
+
+    pub fn set_placeholder(&mut self, text: impl Into<SharedString>) {
+        self.placeholder = Some(text.into());
     }
 
     pub fn set_options(&mut self, options: Options, cx: &mut Context<Self>) {
@@ -331,6 +347,63 @@ impl LiveEditor {
         let frame = self.frame.borrow();
         let g = frame.geometry.get(&key)?;
         Some((g.position_for_index(index), g.caret_height()))
+    }
+
+    /// A caret's box at source byte `at`. While an edit waits for its frame, the last caret
+    /// painted: the platform's text input asks between the two and needs a finite answer.
+    fn caret_bounds(&self, at: usize) -> Option<Bounds<Pixels>> {
+        self.caret_at(at).map(|(p, h)| Bounds::new(p, size(px(2.), h))).or(self.frame.borrow().caret)
+    }
+
+    /// The line boxes the source range covers, top to bottom, one per visual line of each leaf.
+    fn line_rects(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
+        let frame = self.frame.borrow();
+        if range.is_empty() || frame.revision != self.revision {
+            return vec![];
+        }
+        let mut rects: Vec<Bounds<Pixels>> = vec![];
+        for (key, &r) in &frame.leaves {
+            let (Some(view), Some(g)) = (self.leaf_for(r), frame.geometry.get(key)) else { continue };
+            let (source, text) = match view.leaf {
+                Some(leaf) => (leaf.source_range(), leaf.text()),
+                None => (view.start..view.start + view.len, &self.draft.source()[view.start..view.start + view.len]),
+            };
+            let (from, to) = (range.start.max(source.start), range.end.min(source.end));
+            if from >= to {
+                continue;
+            }
+            let drawn = view.leaf.map_or(from - view.start..to - view.start, |l| l.to_drawn(from)..l.to_drawn(to));
+            let height = g.line_height();
+            let mut line: Option<Bounds<Pixels>> = None;
+            let stops = text.get(drawn.clone()).into_iter().flat_map(|t| t.char_indices()).map(|(i, _)| drawn.start + i).chain([drawn.end]);
+            let on = |l: &Bounds<Pixels>, p: Point<Pixels>| (l.top() - p.y).abs() < px(1.) && p.x >= l.left();
+            for stop in stops {
+                // At a soft wrap one byte is two places: the end of the line above and the
+                // start of the line below.
+                let (end, start) = (g.position_for_caret(eh::Caret::upstream(stop)), g.position_for_caret(eh::Caret::new(stop)));
+                if let Some(l) = line.as_mut().filter(|l| on(l, end)) {
+                    l.size.width = end.x - l.left();
+                }
+                if !line.as_ref().is_some_and(|l| on(l, start)) {
+                    rects.extend(line.replace(Bounds::new(start, size(px(0.), height))));
+                }
+            }
+            rects.extend(line);
+        }
+        rects.retain(|r| r.size.width > px(0.));
+        rects.sort_by(|a, b| (a.top(), a.left()).partial_cmp(&(b.top(), b.left())).unwrap_or(std::cmp::Ordering::Equal));
+        rects
+    }
+
+    /// The source byte a press at `at` means. The first click can redraw its block as source
+    /// and move the text, so a press that follows it at once in the same place means the byte
+    /// the first one landed on: the second click of a double click, and UIKit's reading of it.
+    fn pressed(&self, at: Point<Pixels>) -> Option<usize> {
+        let near = |p: Point<Pixels>| (p.x - at.x).abs() < px(24.) && (p.y - at.y).abs() < px(24.);
+        match self.clicked {
+            Some((byte, p, when)) if near(p) && when.elapsed() < Duration::from_millis(500) => Some(byte),
+            _ => self.hit(at),
+        }
     }
 
     /// The source byte nearest the window point: the closest leaf, or the start of a block that
