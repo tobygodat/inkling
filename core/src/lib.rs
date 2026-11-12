@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod appearance;
+pub mod draft;
 pub mod ask;
 pub mod feedback;
 #[cfg(test)]

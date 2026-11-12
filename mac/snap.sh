@@ -11,3 +11,4 @@ data=$(mktemp -d)
 trap 'rm -rf "$data"' EXIT
 INKLING_FAKE_AI=1 INKLING_DATA_DIR="$data/fake" "$bin" --snap "$out"
 env -u INKLING_FAKE_AI INKLING_MEMORY_KEYS=1 INKLING_DATA_DIR="$data/nokey" "$bin" --snap "$out"
+INKLING_FAKE_AI=1 INKLING_DATA_DIR="$data/live" "$bin" --snap-live "$out"
