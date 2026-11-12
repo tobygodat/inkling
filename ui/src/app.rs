@@ -690,7 +690,7 @@ impl Inkling {
     }
 
     /// Left to right: whether the page is saved, then a newer build's Restart, Feedback once a
-    /// link is saved, and the provider.
+    /// link is saved, and the provider, which opens the key screen like Cmd-Comma.
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let saved = match &self.saved {
             Saved::Saved => "Saved".to_string(),
@@ -723,7 +723,11 @@ impl Inkling {
                         .test_support(),
                 )
             })
-            .child(key)
+            .child(
+                footer_button("open-keys", key)
+                    .on_click(cx.listener(|this, _, window, cx| this.on_open_keys(&OpenKeys, window, cx)))
+                    .test_support(),
+            )
     }
 }
 
@@ -883,7 +887,7 @@ pub(crate) fn ghost_button(id: &'static str, label: &'static str) -> Stateful<Di
 }
 
 /// A Mac footer action: a small outlined pill, so it reads as a button beside the footer's text.
-pub(crate) fn footer_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+pub(crate) fn footer_button(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -898,7 +902,7 @@ pub(crate) fn footer_button(id: &'static str, label: &'static str) -> Stateful<D
         .font_weight(FontWeight::MEDIUM)
         .text_color(rgb(color::INK))
         .cursor_pointer()
-        .child(label)
+        .child(label.into())
 }
 
 pub(crate) fn primary_button(id: &'static str, label: &'static str, m: Metrics) -> Stateful<Div> {

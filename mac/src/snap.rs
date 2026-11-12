@@ -326,6 +326,10 @@ pub fn run(dir: &Path) {
     check(s.view.read_with(&s.cx, |v, _| v.key_saved()), "the key screen says Saved from KeyStore::has");
     s.shot("11-keys");
     s.press("escape");
+    check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()).is_none(), "Escape closes the key screen");
+    s.click("open-keys");
+    check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()) == Some(Provider::Claude), "clicking the provider in the footer opens the key screen");
+    s.press("escape");
 
     drop(s);
     let mut relaunch = Snap::open(dir);
