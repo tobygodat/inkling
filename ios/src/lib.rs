@@ -16,7 +16,9 @@ use std::path::PathBuf;
 /// `data_dir` is a NUL-terminated UTF-8 path that outlives the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn inkling_ios_register(data_dir: *const c_char) {
-    let _ = log::set_logger(&NsLog).map(|()| log::set_max_level(log::LevelFilter::Info));
+    // The typing probe's times are logged at Debug, by gpui-mobile.
+    let level = if std::env::var_os("INKLING_PROBE_TYPING").is_some() { log::LevelFilter::Debug } else { log::LevelFilter::Info };
+    let _ = log::set_logger(&NsLog).map(|()| log::set_max_level(level));
     std::panic::set_hook(Box::new(|info| nslog(&format!("INKLING PANIC: {info}"))));
     let dir = PathBuf::from(unsafe { CStr::from_ptr(data_dir) }.to_string_lossy().into_owned());
     gpui_mobile::ios::ffi::set_asset_source(inkling_ui::Assets);
@@ -25,10 +27,21 @@ pub unsafe extern "C" fn inkling_ios_register(data_dir: *const c_char) {
         inkling_ui::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             let keys = inkling_core::default_keys();
-            cx.new(|cx| Inkling::new(FormFactor::Phone, Paths { dir }, keys, Build::running(), window, cx))
+            let app = cx.new(|cx| Inkling::new(FormFactor::Phone, Paths { dir }, keys, Build::running(), window, cx));
+            let page = app.read(cx).page().focus_handle(cx);
+            window.on_focus_in(&page, cx, |_, _| system_selection_ui(true)).detach();
+            window.on_focus_out(&page, cx, |_, _, _| system_selection_ui(false)).detach();
+            app
         })
         .expect("open the Inkling window");
     }));
+}
+
+/// UIKit draws the caret, the handles and the edit menu for the page. The kit's own inputs
+/// draw theirs, so the page turns UIKit's on only while it has focus.
+fn system_selection_ui(enabled: bool) {
+    use gpui_mobile::ios::ffi::{gpui_ios_get_window, gpui_ios_set_system_selection_ui};
+    unsafe { gpui_ios_set_system_selection_ui(gpui_ios_get_window(), enabled) };
 }
 
 struct NsLog;

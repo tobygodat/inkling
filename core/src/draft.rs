@@ -580,6 +580,62 @@ impl Draft {
             .map_or(self.source.len(), |(i, w)| at + i + w.len())
     }
 
+    /// The line holding `at`, without its line ending.
+    pub fn line_at(&self, at: usize) -> Range<usize> {
+        let at = self.floor(at);
+        let start = self.source[..at].rfind('\n').map_or(0, |i| i + 1);
+        start..self.source[at..].find('\n').map_or(self.source.len(), |i| at + i)
+    }
+
+    /// The word a double click at `at` selects: the one under it, else the one ending there,
+    /// else nothing.
+    pub fn word_at(&self, at: usize) -> Range<usize> {
+        let at = self.floor(at);
+        let line = self.line_at(at);
+        let mut words = self.source[line.clone()]
+            .split_word_bound_indices()
+            .filter(|(_, w)| !w.trim().is_empty())
+            .map(|(i, w)| line.start + i..line.start + i + w.len());
+        let mut ending = None;
+        words
+            .find(|w| {
+                if w.end == at {
+                    ending = Some(w.clone());
+                }
+                w.start <= at && at < w.end
+            })
+            .or(ending)
+            .unwrap_or(at..at)
+    }
+
+    /// The source's length in UTF-16 code units, the unit the platform's text input counts in.
+    pub fn len_utf16(&self) -> usize {
+        self.source.encode_utf16().count()
+    }
+
+    /// A byte range of the source in UTF-16 code units.
+    pub fn to_utf16(&self, range: Range<usize>) -> Range<usize> {
+        let (from, to) = (self.floor(range.start), self.floor(range.end.max(range.start)));
+        let start = self.source[..from].encode_utf16().count();
+        start..start + self.source[from..to].encode_utf16().count()
+    }
+
+    /// A range in UTF-16 code units as bytes of the source. A unit past the end is the end, and
+    /// one inside a surrogate pair is the start of its character, so no edit splits a character.
+    pub fn from_utf16(&self, range: Range<usize>) -> Range<usize> {
+        let at = |units: usize| {
+            let mut n = 0;
+            for (i, c) in self.source.char_indices() {
+                n += c.len_utf16();
+                if n > units {
+                    return i;
+                }
+            }
+            self.source.len()
+        };
+        at(range.start)..at(range.end.max(range.start))
+    }
+
     fn reparse(&mut self) {
         self.blocks.clear();
         self.definitions.clear();
@@ -745,6 +801,30 @@ mod tests {
         assert_eq!(leaf.to_drawn(leaf.to_source(drawn)), drawn, "the end round-trips");
     }
 
+    /// Bytes and UTF-16 code units convert both ways: a range on character boundaries
+    /// round-trips, and a unit inside a surrogate pair lands on the start of its character.
+    /// The word at a byte holds it and no white space.
+    fn assert_utf16(draft: &Draft, a: usize, b: usize) {
+        let source = draft.source();
+        let units: Vec<u16> = source.encode_utf16().collect();
+        assert_eq!(draft.len_utf16(), units.len());
+        let (a, b) = (boundary(source, a), boundary(source, b));
+        let bytes = a.min(b)..a.max(b);
+        let range = draft.to_utf16(bytes.clone());
+        assert_eq!(String::from_utf16_lossy(&units[range.clone()]), source[bytes.clone()], "{bytes:?} is {range:?} in UTF-16");
+        assert_eq!(draft.from_utf16(range), bytes);
+        let (word, line) = (draft.word_at(a), draft.line_at(a));
+        assert!(line.start <= word.start && word.start <= a && a <= word.end && word.end <= line.end, "the word at {a} is {word:?} in line {line:?}");
+        assert!(!source[word.clone()].contains(char::is_whitespace), "{:?} is one word", &source[word]);
+        for unit in 0..=units.len() + 1 {
+            let at = draft.from_utf16(unit..unit).start;
+            assert!(source.is_char_boundary(at));
+            let back = draft.to_utf16(at..at).start;
+            let low_surrogate = units.get(unit).is_some_and(|u| (0xDC00..0xE000).contains(u));
+            assert_eq!(back, if low_surrogate { unit - 1 } else { unit.min(units.len()) }, "unit {unit} of {source:?}");
+        }
+    }
+
     fn assert_maps(draft: &Draft) {
         for block in draft.blocks() {
             if let Some(map) = &block.map {
@@ -759,7 +839,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(300))]
 
         #[test]
-        fn draft_maps_drawn_text_and_undo_restores((source, expected) in document(), edits in edits()) {
+        fn draft_maps_drawn_text_and_undo_restores((source, expected) in document(), edits in edits(), (a, b) in any::<(usize, usize)>()) {
             let mut draft = Draft::new(source.clone(), claim());
             let drawn: Vec<Vec<String>> = draft
                 .blocks()
@@ -768,6 +848,7 @@ mod tests {
                 .collect();
             prop_assert_eq!(&drawn, &expected);
             assert_maps(&draft);
+            assert_utf16(&draft, a, b);
 
             let mut versions = vec![source.clone()];
             for op in edits {
@@ -786,6 +867,7 @@ mod tests {
                 }
                 versions.push(draft.source().to_string());
                 assert_maps(&draft);
+                assert_utf16(&draft, a, b);
             }
             let last = draft.source().to_string();
             while draft.undo() {

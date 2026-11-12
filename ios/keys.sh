@@ -1,8 +1,8 @@
 #!/bin/bash
 # Types on the Simulator's on-screen keyboard by tapping its keys (iPhone 18 Pro, portrait,
 # English QWERTY, points). Usage: keys.sh <agent-device> "<text>" where text uses lowercase
-# letters, space, '<' for delete and '/' for return. Tapping keys, not `agent-device type`,
-# keeps the software keyboard up and sends input the way a finger does.
+# letters, space, '<' for delete, '/' for return and '#' followed by a space. Tapping keys, not
+# `agent-device type`, keeps the software keyboard up and sends input the way a finger does.
 set -euo pipefail
 ad="$1"
 text="$2"
@@ -19,6 +19,13 @@ key() {
   esac
 }
 for ((i = 0; i < ${#text}; i++)); do
+  # '#' is on the second symbol layer: 123, then #+=. The space after it brings letters back.
+  if [ "${text:i:1}" = '#' ]; then
+    "$ad" press 28 780 >/dev/null
+    "$ad" press 28 727 >/dev/null
+    "$ad" press 180 618 >/dev/null
+    continue
+  fi
   # shellcheck disable=SC2046
   "$ad" press $(key "${text:i:1}") >/dev/null
 done
