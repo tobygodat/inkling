@@ -30,6 +30,9 @@ outcome="$1" id="$2" line="$3"
 case "$outcome" in done | declined) ;; *) usage ;; esac
 # Only for path safety; the record writer's parser is the authority on ids.
 [[ "$id" =~ ^[0-9]{1,20}-[a-z2-7]{8}$ ]] || { echo "ship.sh: \"$id\" is not a feedback id" >&2; exit 2; }
+# Caught here so a bad line costs nothing; the record writer checks it again after the checks.
+[[ -n "${line// /}" && "$line" != *$'\n'* && ${#line} -le 160 ]] ||
+  { echo "ship.sh: the line must be one line of at most 160 characters" >&2; exit 2; }
 
 # One ship at a time per checkout: target/, the checkout and the install folder are shared. The
 # kernel drops the lock when the process dies, so a crash leaves no stale lock.
