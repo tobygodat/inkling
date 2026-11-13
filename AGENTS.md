@@ -12,12 +12,15 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
 ## Layout
 
-- The root `Cargo.toml` is a workspace of `core`, `books`, `ui` and `mac`.
+- The root `Cargo.toml` is a workspace of `core`, `books`, `mcp`, `ui` and `mac`.
 - `core/` is `inkling-core`: the requests, the providers, the review model, settings and key storage.
   No UI framework may be a dependency of it.
 - `books/` is `inkling-books`: EPUBs and text PDFs parsed into one `Book`, the library on disk and
   the folder search. No UI framework may be a dependency of it. Its real-file tests read books that
   `books/fetch-fixtures.sh` downloads into `target/fixtures`, so run it once before `cargo test`.
+- `mcp/` is `inkling-mcp`: the MCP server an agent reads the library and the draft through
+  (ADR 0004). `inkling-mcp --stdio` serves the Mac's data folder and never writes to it. No UI
+  framework may be a dependency of it.
 - `ui/` is `inkling-ui`: every view, shared by the Mac app and the iPhone host. It takes its form
   factor as a value and never reads the platform.
 - `mac/` is the Mac app, on GPUI Kit's `gpui-fast` feature.
@@ -60,6 +63,9 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `feedback/ship.sh done|declined <id> "<one line>"` ships one feedback from the standing checkout:
   tests, clippy, `mac/snap.sh`, the record, a commit on `main`, `mac/install.sh` and a push. Only a
   feedback thread runs it.
+- `cargo install --path mcp --locked` installs `inkling-mcp` in `~/.cargo/bin`, and
+  `claude mcp add inkling -- ~/.cargo/bin/inkling-mcp --stdio` connects Claude Code to it. Claude
+  Desktop takes the same command in `claude_desktop_config.json`.
 - `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
   `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`

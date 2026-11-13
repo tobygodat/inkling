@@ -1,0 +1,16 @@
+[package]
+name = "inkling-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+doctest = false
+
+[dependencies]
+inkling-books = { workspace = true }
+inkling-core = { workspace = true }
+serde_json = "1"
+
+[dev-dependencies]
+proptest = "1.12"
+tempfile = "3"

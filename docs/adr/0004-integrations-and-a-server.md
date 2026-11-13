@@ -1,6 +1,6 @@
 # 0004. Integrations: an MCP server, Readwise, and a server of Inkling's own
 
-Status: Proposed, 2026-11-13
+Status: Accepted, 2026-11-13
 
 ## Context
 
