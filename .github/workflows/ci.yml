@@ -31,5 +31,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      - uses: actions/cache@v4
+        with:
+          path: target/fixtures
+          key: book-fixtures-${{ hashFiles('books/fetch-fixtures.sh') }}
+
+      - name: Fetch the real books inkling-books tests read
+        run: books/fetch-fixtures.sh
+
       - name: Tests
         run: cargo test --workspace

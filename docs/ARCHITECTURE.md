@@ -1,13 +1,20 @@
 # Architecture
 
 ## Crates
-One Cargo workspace at the root holds three crates. `ios/` is a separate workspace for the iPhone
+One Cargo workspace at the root holds four crates. `ios/` is a separate workspace for the iPhone
 app.
 
 - `core/` is `inkling-core`. It has no UI dependency. It holds the requests (`Ask`, `Request`), the
   three providers, the review model (`Review`, `Change`, `Decision`), `Revision`, feedback
   (`feedback::Desk`, `Build`), settings with the writer's `Appearance`, and key storage. Its build script compiles the feedback
   records in `feedback/` into the crate.
+- `books/` is `inkling-books`, ported from the reader's `reader-core` (ADR 0003). It has no UI
+  dependency. It parses an EPUB (chapters from the navigation document, the cover it names) or a
+  PDF with a text layer (pages in sections of ten, running headers and footers dropped) into one
+  `Book` of chapters and blocks. `Library` keeps `library.json`, each parsed book as
+  `books/<sha-256>.json` and covers in `covers/`, writing each file atomically, with each book's
+  reading position. `scan` finds books in folders that the library doesn't have yet. No screen uses
+  it yet.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store. It bundles Source Serif 4 and
   Inter (SIL OFL, licences in `ui/fonts/`) and six one-colour icons (`ui/icons/`, sources and terms

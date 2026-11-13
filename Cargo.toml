@@ -1,11 +1,38 @@
 [workspace]
-members = ["core", "ui", "mac"]
+members = ["core", "books", "ui", "mac"]
 resolver = "3"
 
 [workspace.dependencies]
 gpui-kit = "=0.9.1"
+inkling-books = { path = "books" }
 inkling-core = { path = "core" }
 inkling-ui = { path = "ui" }
 
 [profile.release]
 strip = true
+
+# Book parsing builds optimized even in debug: inkling-books' tests and the debug app spend their
+# time in these crates, which run 4 to 8 times faster this way (measured in ios-reader, TOB-402).
+[profile.dev.package.lopdf]
+opt-level = 2
+
+[profile.dev.package.pdf-extract]
+opt-level = 2
+
+[profile.dev.package.zip]
+opt-level = 2
+
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+
+[profile.dev.package.flate2]
+opt-level = 2
+
+[profile.dev.package.quick-xml]
+opt-level = 2
+
+[profile.dev.package.encoding_rs]
+opt-level = 2
+
+[profile.dev.package.sha2]
+opt-level = 2

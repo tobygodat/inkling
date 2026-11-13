@@ -12,9 +12,12 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
 ## Layout
 
-- The root `Cargo.toml` is a workspace of `core`, `ui` and `mac`.
+- The root `Cargo.toml` is a workspace of `core`, `books`, `ui` and `mac`.
 - `core/` is `inkling-core`: the requests, the providers, the review model, settings and key storage.
   No UI framework may be a dependency of it.
+- `books/` is `inkling-books`: EPUBs and text PDFs parsed into one `Book`, the library on disk and
+  the folder search. No UI framework may be a dependency of it. Its real-file tests read books that
+  `books/fetch-fixtures.sh` downloads into `target/fixtures`, so run it once before `cargo test`.
 - `ui/` is `inkling-ui`: every view, shared by the Mac app and the iPhone host. It takes its form
   factor as a value and never reads the platform.
 - `mac/` is the Mac app, on GPUI Kit's `gpui-fast` feature.
