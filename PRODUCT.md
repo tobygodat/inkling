@@ -5,12 +5,14 @@ One writer, first Toby, who drafts on a Mac and an iPhone and already pays for a
 
 ## Purpose
 A place to write that stays out of the way, with an AI editor that proposes changes the writer accepts
-or rejects one at a time.
+or rejects one at a time. It also reads: EPUBs and PDFs with text, reflowed in the same look as the
+page, with the place in each book kept.
 
 ## Positioning
 Not a chat window beside a document and not a subscription. The AI is bring-your-own-key: Claude,
 Gemini or ChatGPT. There is no account and no server. Keys live in the Keychain and writing goes only
-to the provider the writer picked.
+to the provider the writer picked. Books stay on the device: Find books only looks through folders
+on it, and nothing about a book is sent anywhere.
 
 ## Principles
 - The page comes first. Nothing shows that the writer didn't ask for.

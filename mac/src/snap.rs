@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod a11y;
+pub mod books;
 
 const PARAGRAPHS: [&str; 4] = [
     "Every weekday the seven-forty ferry leaves without waiting for anyone, and every weekday i am almost not on it.",

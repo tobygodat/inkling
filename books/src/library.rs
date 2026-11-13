@@ -123,8 +123,7 @@ impl Library {
     }
 
     pub fn load(&self, id: &BookId) -> io::Result<Book> {
-        let bytes = fs::read(book_path(&self.dir, id))?;
-        serde_json::from_slice(&bytes).map_err(io::Error::other)
+        load(&self.dir, id)
     }
 
     pub fn set_position(&mut self, id: &BookId, position: Position) -> io::Result<()> {
@@ -172,6 +171,12 @@ pub fn prepare(dir: &Path, path: &Path) -> Result<Prepared, ImportError> {
         prepared.cover = store_cover(dir, &id, &bytes);
     }
     Ok(prepared)
+}
+
+/// Reads a stored book from the library in `dir`, without the index, so it runs on any thread.
+pub fn load(dir: &Path, id: &BookId) -> io::Result<Book> {
+    let bytes = fs::read(book_path(dir, id))?;
+    serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
 
 /// Saves the EPUB's cover and returns its file name. A cover that can't be saved only costs the

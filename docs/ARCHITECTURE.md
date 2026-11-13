@@ -13,14 +13,16 @@ app.
   PDF with a text layer (pages in sections of ten, running headers and footers dropped) into one
   `Book` of chapters and blocks. `Library` keeps `library.json`, each parsed book as
   `books/<sha-256>.json` and covers in `covers/`, writing each file atomically, with each book's
-  reading position. `scan` finds books in folders that the library doesn't have yet. No screen uses
-  it yet.
+  reading position. `scan` finds books in folders that the library doesn't have yet. The Library
+  and Reading screens in `ui/` use it.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
-  passes a `FormFactor`, the data folder (`Paths`) and the key store. It bundles Source Serif 4 and
-  Inter (SIL OFL, licences in `ui/fonts/`) and six one-colour icons (`ui/icons/`, sources and terms
+  passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
+  `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and eight
+  one-colour icons (`ui/icons/`, sources and terms
   in `SOURCES.md`), which it serves with GPUI Kit's own through `inkling_ui::Assets`. Both hosts
   register that asset source.
-- `mac/` is the Mac binary. It turns on GPUI Kit's `gpui-fast` feature and opens one window.
+- `mac/` is the Mac binary. It turns on GPUI Kit's `gpui-fast` feature and opens one window. It lends
+  the library the open panel and the Desktop, Documents and Downloads folders.
 - `ios/` is `inkling-ios`, a static library the Swift host in `ios/app/` links. It runs on
   `gpui-pre` through a patched `gpui-mobile`, passes the sandbox's Application Support folder as
   `Paths`, and uses the Keychain through `default_keys()`. The host keeps the view between the top
@@ -107,8 +109,29 @@ The review keeps drawing the source text, syntax included, so each change sits o
 replaces. On the Mac its text starts where the live page's does, so nothing moves when a review
 opens.
 
+## Books
+The library is `<data>/library/`, an `inkling_books::Library` that `Inkling` opens at launch. The
+host lends it a `BookHost`: the folders Find books searches and a `pick` callback that shows its
+open panel and resolves to the files chosen. `ui/` never reads the platform, so without a host the
+library has no Add and no Find books. The iPhone host doesn't pass one yet.
+
+- **Library** (`ui/src/library.rs`). The books newest first, each with its cover or its title on a
+  plain tile, and a progress line once started. Add calls `pick`; Find books runs `scan` over the
+  host's folders and lists what isn't in the library, EPUBs ticked and PDFs not. Each file is parsed
+  and stored by `inkling_books::prepare` on the background executor, then recorded with
+  `Library::add` on the UI thread. A file that can't be added shows `ImportError`'s words.
+- **Reading** (`ui/src/reading.rs`). The book is loaded on the background executor, then one
+  chapter at a time is set in the page's column from `Theme`: the body face, size, line spacing,
+  page width and colours. It draws the chapter title, headings, quotes and scene breaks, a link
+  back a chapter and Next at the end. It scrolls; paged mode isn't built yet.
+- **The place.** A `Position` is the chapter and how far its column has scrolled. It is saved with
+  `Library::set_position` 500 ms after the last scroll, on a chapter turn and on leaving the book.
+  The timer holds the scroll handle, so it still saves after the writer has moved on. Opening the
+  book scrolls back to it once the chapter is laid out.
+
 ## What is open
-`Inkling::screen` is one `Screen`: the page, the key screen or the feedback screen. The page
+`Inkling::screen` is one `Screen`: the page, the key screen, the feedback screen, the library or a
+book being read. The library carries `Option<Finding>` while Find books is open over it. The page
 carries `Option<AppearancePanel>`, and the panel carries `Option<Picker>`, whose `Option<Custom>`
 holds the wheel. So the panel exists only beside the page, a picker only inside the panel, and
 opening a screen drops whatever the one before held. The cog's `Menu` (`Closed`, `Open { pinned }`,
@@ -128,6 +151,7 @@ Use the sheet moves to the next pending change.
   after the last edit. Settings hold the provider, the models and the appearance.
 - API keys and the feedback link are in the Apple Keychain (`KeychainKeys`, keyed by `Secret`),
   never in a file. The key screen shows "Saved" from `KeyStore::has`, which never reads them.
+- The books are under `library/` in the data folder: `library.json`, each parsed book and the covers.
 - What this device sent as feedback is `sent-feedback.json` in the data folder. What happened to
   it is compiled into the build.
 

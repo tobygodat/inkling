@@ -2,7 +2,9 @@ pub(crate) use crate::chrome::Menu;
 use crate::appearance::AppearancePanel;
 use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
+use crate::library::{Books, Finding};
 use crate::page::Page;
+use crate::reading::Reading;
 use crate::theme::{Colors, Theme};
 use crate::{FormFactor, Metrics, SANS};
 use gpui_kit::component::input::{Input, InputEvent, InputState, TextareaState};
@@ -52,6 +54,9 @@ pub(crate) enum Screen {
     Page(Option<AppearancePanel>),
     Keys(KeyScreen),
     Feedback(FeedbackScreen),
+    /// The books, with Find books over them while that is open.
+    Library(Option<Finding>),
+    Reading(Reading),
 }
 
 impl Screen {
@@ -109,6 +114,10 @@ pub struct Inkling {
     save: Task<()>,
     /// The body faces this device has, asked of the text system once at launch.
     pub(crate) faces: Vec<Face>,
+    /// The library on disk and what the host lends it.
+    pub(crate) books: Books,
+    /// Counts scrolls and chapter turns, so only the last one's timer saves the reading place.
+    pub(crate) saves: u64,
     pub(crate) focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -162,6 +171,7 @@ impl Inkling {
                 cx.notify();
             }
         });
+        let books = Books::open(paths.dir.join("library"));
         let inkling = Inkling {
             form,
             paths,
@@ -187,6 +197,8 @@ impl Inkling {
             save: Task::ready(()),
             focus: cx.focus_handle(),
             faces,
+            books,
+            saves: 0,
             _subs: vec![edited, sent, intercept, feedback_edited],
         };
         inkling.theme().apply_to_kit(cx);
@@ -317,6 +329,12 @@ impl Inkling {
             self.close_feedback(window, cx);
         } else if self.screen.keys().is_some() {
             self.close_keys(window, cx);
+        } else if matches!(self.screen, Screen::Library(Some(_))) {
+            self.close_finding(cx);
+        } else if matches!(self.screen, Screen::Reading(_)) {
+            self.close_book(cx);
+        } else if matches!(self.screen, Screen::Library(None)) {
+            self.back_to_writing(window, cx);
         } else if self.wordings_open.is_some() {
             self.wordings_open = None;
         } else if self.revision.is_busy() {
@@ -752,8 +770,11 @@ impl Render for Inkling {
             .text_color(t.c.ink)
             .font_family(SANS)
             .on_action(cx.listener(Self::on_open_keys));
+        self.restore_place(cx);
         let screen = match &self.screen {
             Screen::Keys(keys) => self.render_keys(keys, cx).into_any_element(),
+            Screen::Library(finding) => self.render_library(finding.as_ref(), cx).into_any_element(),
+            Screen::Reading(reading) => self.render_reading(reading, cx).into_any_element(),
             Screen::Feedback(_) => self.render_feedback(window, cx).into_any_element(),
             Screen::Page(_) if self.form == FormFactor::Phone => self.render_phone(window, cx),
             Screen::Page(None) => self.render_mac_page(window, cx),

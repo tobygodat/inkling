@@ -8,9 +8,11 @@ mod feedback;
 mod icons;
 mod inline;
 mod keys;
+mod library;
 pub mod live;
 mod page;
 mod picker;
+mod reading;
 mod review;
 mod theme;
 
@@ -18,6 +20,7 @@ pub use app::{Inkling, OpenKeys, Saved};
 pub use chrome::Menu;
 pub use feedback::Restart;
 pub use icons::Assets;
+pub use library::BookHost;
 pub use page::Page;
 
 use gpui_kit::*;

@@ -1,6 +1,6 @@
 use gpui_kit::*;
 use inkling_core::{Build, BuildNumber, KeyStore};
-use inkling_ui::{FormFactor, Inkling, Restart};
+use inkling_ui::{BookHost, FormFactor, Inkling, Restart};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -60,6 +60,10 @@ fn main() {
         return snap_live::run(std::path::Path::new(&dir));
     }
     #[cfg(feature = "snap")]
+    if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-books").nth(1) {
+        return snap::books::run(std::path::Path::new(&dir));
+    }
+    #[cfg(feature = "snap")]
     if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-a11y").nth(1) {
         return snap::a11y::run(std::path::Path::new(&dir));
     }
@@ -73,12 +77,30 @@ fn main() {
         cx.on_window_closed(|cx, _| cx.quit()).detach();
         let (_, view) = open(cx, FormFactor::Mac, true, true, inkling_core::default_keys(), Build::running())
             .expect("open the window");
+        view.update(cx, |v, cx| v.set_book_host(book_host(), cx));
         if let Some(bundle) = running_bundle() {
             watch_bundle(&view, bundle.clone(), cx);
             cx.subscribe(&view, move |_, _: &Restart, cx| restart(&bundle, cx)).detach();
         }
         cx.activate(true);
     });
+}
+
+/// The Mac's side of the library: the open panel for Add, and the folders Find books searches.
+fn book_host() -> BookHost {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    BookHost {
+        folders: ["Desktop", "Documents", "Downloads"].map(|f| home.join(f)).to_vec(),
+        pick: Box::new(|cx: &mut App| {
+            let chosen = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: true,
+                prompt: Some("Add".into()),
+            });
+            cx.spawn(async move |_| chosen.await.ok().and_then(Result::ok).flatten().unwrap_or_default())
+        }),
+    }
 }
 
 /// The `.app` this process was launched from, or `None` under `cargo run`. The path stays valid

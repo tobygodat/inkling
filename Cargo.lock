@@ -3786,6 +3786,7 @@ name = "inkling-mac"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "inkling-books",
  "inkling-core",
  "inkling-ui",
  "serde_json",
@@ -3796,6 +3797,7 @@ name = "inkling-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "inkling-books",
  "inkling-core",
  "ratex-layout",
  "ratex-parser",
