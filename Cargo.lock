@@ -3796,11 +3796,15 @@ dependencies = [
 name = "inkling-mcp"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "inkling-books",
  "inkling-core",
  "proptest",
+ "ring",
+ "serde",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]

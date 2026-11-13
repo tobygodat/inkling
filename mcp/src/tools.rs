@@ -73,11 +73,11 @@ fn load(store: &impl Store, arguments: &Value) -> Result<Book, String> {
     store.book(&BookId(id.to_string())).map_err(|e| format!("That book couldn't be read: {e}"))
 }
 
-fn chapter_title(chapter: &Chapter, at: usize) -> String {
+pub(crate) fn chapter_title(chapter: &Chapter, at: usize) -> String {
     chapter.title.clone().unwrap_or_else(|| format!("Chapter {}", at + 1))
 }
 
-fn markdown(chapter: &Chapter, at: usize) -> String {
+pub(crate) fn markdown(chapter: &Chapter, at: usize) -> String {
     let mut text = format!("# {}\n", chapter_title(chapter, at));
     for block in &chapter.blocks {
         text.push('\n');

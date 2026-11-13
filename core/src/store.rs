@@ -154,6 +154,8 @@ impl Settings {
 pub enum Secret {
     ApiKey(Provider),
     FeedbackLink,
+    /// The server's address, this device's client id there and its refresh token, as JSON.
+    ServerSignIn,
 }
 
 impl Secret {
@@ -163,6 +165,7 @@ impl Secret {
         match self {
             Secret::ApiKey(p) => p.id(),
             Secret::FeedbackLink => "feedback-link",
+            Secret::ServerSignIn => "server-sign-in",
         }
     }
 
@@ -172,11 +175,12 @@ impl Secret {
         match self {
             Secret::ApiKey(p) => format!("{} key", p.label()),
             Secret::FeedbackLink => "feedback link".into(),
+            Secret::ServerSignIn => "server sign-in".into(),
         }
     }
 }
 
-/// API keys and the feedback link. Never the settings file.
+/// API keys, the feedback link and the server sign-in. Never the settings file.
 pub trait KeyStore: Send + Sync {
     fn get(&self, secret: Secret) -> Option<String>;
     fn set(&self, secret: Secret, value: &str) -> Result<(), String>;
