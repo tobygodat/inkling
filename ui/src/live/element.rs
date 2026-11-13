@@ -256,6 +256,9 @@ impl LiveEditor {
     }
 }
 
+/// The painted caret's width: a hairline that still reads at body size.
+const CARET_WIDTH: Pixels = px(1.5);
+
 /// Prepaints the blocks inside a geometry scope, then paints the caret and marked text and
 /// registers the editor for text input.
 struct Host {
@@ -308,11 +311,13 @@ impl Element for Host {
         if let Some((p, h)) = caret {
             editor.frame.borrow_mut().caret = Some(Bounds::new(p, size(px(2.), h)));
         }
+        // A selection shows as its highlight alone, as on the rest of the Mac: no caret beside it.
         if editor.focus.is_focused(window)
             && !editor.form.system_selection()
+            && editor.draft.selection().is_empty()
             && let Some((p, h)) = caret
         {
-            window.paint_quad(fill(Bounds::new(p, size(px(2.), h)), ink));
+            window.paint_quad(fill(Bounds::new(p, size(CARET_WIDTH, h)), ink).corner_radii(CARET_WIDTH / 2.));
         }
         let reveal = editor.reveal;
         let view = editor.scroll.bounds();
