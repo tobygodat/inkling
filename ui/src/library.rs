@@ -33,12 +33,15 @@ pub(crate) struct Books {
     pub errors: Vec<String>,
     /// The book being loaded to open, until it opens or the reader goes elsewhere.
     pub opening: Option<BookId>,
+    /// Whether reading was last left in a book rather than the library, so Read goes back there.
+    /// False at launch: Read starts at the library.
+    pub left_in_book: bool,
 }
 
 impl Books {
     pub fn open(dir: PathBuf) -> Self {
         let library = Library::open(dir).map_err(|e| format!("The library couldn't be opened ({e})."));
-        Books { library, host: None, adding: 0, errors: vec![], opening: None }
+        Books { library, host: None, adding: 0, errors: vec![], opening: None, left_in_book: false }
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -71,6 +74,7 @@ impl Inkling {
     pub fn open_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu(cx);
         self.save_position();
+        self.books.left_in_book = false;
         self.screen = Screen::Library(None);
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
@@ -245,6 +249,7 @@ impl Inkling {
                         if let Ok(library) = &mut this.books.library {
                             let _ = library.opened(&book.id);
                         }
+                        this.books.left_in_book = true;
                         this.screen = Screen::Reading(Reading::new(book, position));
                     }
                     Err(e) => this.books.errors = vec![format!("The book couldn't be opened ({e}).")],

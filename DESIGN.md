@@ -90,7 +90,8 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 - **Write and Read toggle.** One pill on Segment holding two square halves, pen then book, 28 pt on
   the Mac and 44 pt on iPhone. The view on screen sits on a lighter square (the surface on a light
   ground, the hairline tone on a dark one) with its icon in ink; the other is muted. Write goes to the
-  draft; Read reopens the last book where it was left, or the library when no book has been read.
+  draft; Read goes back to where reading was left: the library, or the last book at its place (the
+  library before any reading since launch). Keep reading in the cog's menu always opens the last book.
   Cmd-1 and Cmd-2 do the same; each half has a tooltip and a label, "Writing" and "Reading".
 - **Feedback button.** 40 pt round, an ink outline and the message icon. Shown once a feedback link
   is saved.

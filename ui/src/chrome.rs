@@ -231,8 +231,9 @@ impl Inkling {
             .test_support()
     }
 
-    /// Write or Read in the toggle, or Cmd-1 and Cmd-2. Read opens the book read last where it was
-    /// left, or the library when there is none. The view already on screen stays as it is.
+    /// Write or Read in the toggle, or Cmd-1 and Cmd-2. Read goes back to where reading was left:
+    /// the library, or the book read last at its place. Before any reading since launch it is the
+    /// library. The view already on screen stays as it is.
     pub fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
         if self.view() == view {
             return;
@@ -244,7 +245,7 @@ impl Inkling {
         }
         match view {
             View::Writing => self.back_to_writing(window, cx),
-            View::Reading if self.last_book().is_some() => self.keep_reading(window, cx),
+            View::Reading if self.books.left_in_book && self.last_book().is_some() => self.keep_reading(window, cx),
             View::Reading => self.open_library(window, cx),
         }
     }

@@ -168,6 +168,7 @@ impl Inkling {
     pub fn close_book(&mut self, cx: &mut Context<Self>) {
         self.save_position();
         self.books.opening = None;
+        self.books.left_in_book = false;
         self.screen = Screen::Library(None);
         cx.notify();
     }

@@ -289,6 +289,9 @@ pub fn run(dir: &Path) {
     drop(s);
 
     let mut s = open(dir, &folder, &picked);
+    s.click("show-reading");
+    check(s.read(|v, _| v.library_open()), "after a relaunch, Read starts at the library");
+    s.click("show-writing");
     s.click("cog");
     check(s.bounds("menu-keep-reading").is_some(), "after a relaunch the cog's menu offers Keep reading");
     s.click("menu-keep-reading");
@@ -309,6 +312,18 @@ pub fn run(dir: &Path) {
     settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
     s.frame();
     check(position(&mut s) == Some(kept), "Read from the page reopens the last book where it was left");
+    s.click("back-to-library");
+    s.click("show-writing");
+    s.click("show-reading");
+    settle_work(&mut s, |s| s.read(|v, _| v.library_open()));
+    check(s.read(|v, _| v.library_open() && v.reading().is_none()), "left in the library, Read goes back to the library, not the book");
+    check(entries(&mut s)[1].position == kept, "and the book keeps its place");
+    s.click(("book", 1usize));
+    settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
+    s.click("show-writing");
+    s.click("show-reading");
+    settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
+    check(s.read(|v, _| v.reading().is_some()), "left in a book, Read goes back to the book");
     drop(s);
 
     let mut s = Snap::open_sized(dir, size(px(1000.), px(640.)));
