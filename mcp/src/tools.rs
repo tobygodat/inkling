@@ -7,63 +7,16 @@ use serde_json::{Value, json};
 use std::fmt::Write;
 use std::ops::Range;
 
+/// As `search_library`'s `limit` in `tools.json` says.
 const DEFAULT_HITS: usize = 20;
 const MAX_HITS: usize = 100;
 /// Characters of context on each side of a match.
 const CONTEXT: usize = 120;
 
+/// The tools' definitions. `mcp/tools.json` is the one copy: the Cloudflare Worker serves the same
+/// file (ADR 0004), so an agent sees the same tools on the Mac and away from it.
 pub fn list() -> Value {
-    let read_only = json!({ "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false });
-    json!([
-        {
-            "name": "list_books",
-            "title": "List books",
-            "description": "Lists the books in the writer's Inkling library, newest first, with each one's id, \
-                title, author, format, number of chapters and where the writer is in it.",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-            "annotations": read_only,
-        },
-        {
-            "name": "read_book",
-            "title": "Read a book",
-            "description": "Without a chapter, gives a book's contents: its chapters, numbered from 0. With a \
-                chapter, gives that chapter's text as Markdown.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "book_id": { "type": "string", "description": "The id list_books gives." },
-                    "chapter": { "type": "integer", "minimum": 0, "description": "Counted from 0." },
-                },
-                "required": ["book_id"],
-                "additionalProperties": false,
-            },
-            "annotations": read_only,
-        },
-        {
-            "name": "search_library",
-            "title": "Search the library",
-            "description": "Finds text in the library's books, ignoring case. Each hit gives the book, the \
-                chapter and the passage around it.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "minLength": 1 },
-                    "book_id": { "type": "string", "description": "Search only this book." },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_HITS, "default": DEFAULT_HITS },
-                },
-                "required": ["query"],
-                "additionalProperties": false,
-            },
-            "annotations": read_only,
-        },
-        {
-            "name": "read_draft",
-            "title": "Read the draft",
-            "description": "Gives the writer's current draft, as the Markdown they are writing.",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-            "annotations": read_only,
-        },
-    ])
+    serde_json::from_str(include_str!("../tools.json")).expect("mcp/tools.json is valid JSON")
 }
 
 /// `None` when there is no tool by that name.
@@ -245,6 +198,12 @@ mod tests {
 
     fn fold(s: &str) -> String {
         s.chars().flat_map(char::to_lowercase).collect()
+    }
+
+    #[test]
+    fn the_search_limits_are_the_ones_tools_json_states() {
+        let limit = list()[2]["inputSchema"]["properties"]["limit"].clone();
+        assert_eq!((limit["default"].as_u64(), limit["maximum"].as_u64()), (Some(DEFAULT_HITS as u64), Some(MAX_HITS as u64)));
     }
 
     proptest! {
