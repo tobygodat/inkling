@@ -3,6 +3,10 @@
 A minimalist EPUB and PDF reader for Mac and iPhone, in Rust on [Rune](https://github.com/anomalyco/rune).
 Work is tracked in Linear issue TOB-402.
 
+This folder was the `tobygodat/ios-reader` repository until it moved into `inkling/reader/` with its
+history. It is still its own Cargo workspace, so run every command below from `reader/`. The
+root `CLAUDE.md` rules for Inkling (CI, snap scripts, final check) don't cover it.
+
 ## Layout
 
 - `crates/reader-core` holds the book model, EPUB and PDF parsing, settings and the on-disk library. No Rune.

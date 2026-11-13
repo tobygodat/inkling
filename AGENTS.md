@@ -24,6 +24,9 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 - `feedback/` holds one record per feedback sent from inside the app, `ship.sh`, which ships one, and
   `AGENT.md`, the instructions for the thread that handles one.
 - `docs/screenshots/<app>/` holds each app's proof.
+- `reader/` is the EPUB and PDF reader (TOB-402), moved here from `tobygodat/ios-reader` with its
+  history. It is a separate app on Rune in its own Cargo workspace, and shares no crate with Inkling.
+  `reader/AGENTS.md` has its commands, run from `reader/`. CI and the root workspace leave it out.
 
 ## Commands
 
