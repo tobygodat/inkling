@@ -40,6 +40,23 @@ impl Snap {
         Self::open_with(dir, form, Arc::default(), Build::with_records(None, []))
     }
 
+    /// A Mac window of `window_size` instead of 1280 by 800.
+    fn open_sized(dir: &Path, window_size: Size<Pixels>) -> Self {
+        let mut cx = HeadlessAppContext::with_platform(
+            gpui_kit::platform::current_platform(true).text_system(),
+            Arc::new(inkling_ui::Assets),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        cx.update(init);
+        let keys: Box<dyn inkling_core::KeyStore> = Box::new(Arc::new(MemoryKeys::default()));
+        let (window, view) = cx
+            .update(|cx| open_sized(cx, FormFactor::Mac, window_size, false, false, keys, Build::with_records(None, [])))
+            .expect("open a headless window");
+        let mut snap = Snap { cx, window, view, dir: dir.to_path_buf(), frames: None };
+        snap.frame();
+        snap
+    }
+
     /// `keys` outlives the view, so a relaunch finds what was saved, as it would in the Keychain.
     fn open_with(dir: &Path, form: FormFactor, keys: Arc<MemoryKeys>, build: Build) -> Self {
         let mut cx = HeadlessAppContext::with_platform(
@@ -569,12 +586,19 @@ fn appearance(dir: &Path) {
 fn phone(dir: &Path, draft: &str) {
     let mut s = Snap::open_as(dir, FormFactor::Phone);
     check(s.text() == draft, "the iPhone layout opens the same draft");
+    let halves = s.bounds("show-writing").zip(s.bounds("show-reading"));
+    check(
+        halves.is_some_and(|(w, r)| w.size.height >= px(44.) && w.size.width >= px(44.) && r.size.width >= px(44.) && w.top() == px(0.)),
+        "on iPhone the Write and Read toggle has 44 pt halves in the status row",
+    );
+    s.shot("13a-iphone-toggle");
     let still = draft.find("still").expect("the word");
     s.select(still..still + 5);
     s.click("find-word");
     s.wait(5000, reviewing);
     check(s.bounds("open-feedback").is_none(), "with no feedback link the iPhone offers no feedback");
     check(s.bounds(("accept", 0usize)).is_none(), "iPhone draws no inline controls");
+    check(s.bounds("views").is_none(), "and the toggle steps aside for the version bar");
     check(s.bounds("keep").is_some() && s.bounds("use").is_some(), "the sheet offers Keep and Use for the change");
     s.shot("13-iphone-review");
     s.click("use");

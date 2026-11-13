@@ -4,14 +4,14 @@
 use crate::app::{Inkling, Screen, ghost_button};
 use crate::icons::Icon;
 use crate::picker::Picker;
-use crate::theme::Colors;
+use crate::theme::{Colors, Theme};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::appearance::{LineSpacing, PageWidth, TextSize};
-use inkling_core::{Appearance, Face};
+use inkling_core::{Appearance, Face, Mode, PageMode, Settings, View};
 
 pub(crate) const PANEL_WIDTH: Pixels = px(300.);
 
@@ -77,16 +77,18 @@ impl Measure {
     }
 }
 
-/// Open while `Inkling::screen` is `Screen::Page(Some(_))`.
+/// Open while `Inkling::panel` is `Some`, beside the page, the library or a book.
 pub(crate) struct AppearancePanel {
     sliders: [Entity<SliderState>; 3],
     /// The colour row that is open, if any.
     pub picker: Option<Picker>,
+    /// The view whose look the sliders show.
+    view: View,
     _subs: Vec<Subscription>,
 }
 
 impl AppearancePanel {
-    fn new(appearance: &Appearance, window: &mut Window, cx: &mut Context<Inkling>) -> Self {
+    fn new(appearance: &Appearance, view: View, window: &mut Window, cx: &mut Context<Inkling>) -> Self {
         let mut subs = vec![];
         let sliders = Measure::ALL.map(|measure| {
             let (min, max, step) = measure.range();
@@ -105,11 +107,11 @@ impl AppearancePanel {
             }));
             slider
         });
-        AppearancePanel { sliders, picker: None, _subs: subs }
+        AppearancePanel { sliders, picker: None, view, _subs: subs }
     }
 
     /// Moves each slider to what `appearance` holds, after a change that didn't come from it.
-    fn follow(&self, appearance: &Appearance, window: &mut Window, cx: &mut App) {
+    pub(crate) fn follow(&self, appearance: &Appearance, window: &mut Window, cx: &mut App) {
         for (slider, measure) in self.sliders.iter().zip(Measure::ALL) {
             slider.update(cx, |s, cx| s.set_value(f32::from(measure.get(appearance)), window, cx));
         }
@@ -117,31 +119,29 @@ impl AppearancePanel {
 }
 
 impl Inkling {
-    /// The Appearance row of the cog's menu. The panel opens beside the page, and the page stays.
+    /// The Appearance row of the cog's menu. The panel opens beside the view on screen and edits
+    /// that view's look: the page's, or the library's and the books'.
     pub fn open_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu(cx);
-        if matches!(self.screen, Screen::Page(Some(_))) {
+        if self.panel.is_some() {
             return;
         }
-        if !matches!(self.screen, Screen::Page(None)) {
-            self.save_position();
-            self.screen = Screen::Page(None);
+        if self.screen.keys().is_some() || self.screen.feedback().is_some() {
+            self.screen = Screen::Page;
             self.focus_page(window, cx);
         }
-        let panel = AppearancePanel::new(&self.settings.appearance, window, cx);
-        self.screen = Screen::Page(Some(panel));
+        self.panel = Some(AppearancePanel::new(self.settings.look(self.view()), self.view(), window, cx));
         cx.notify();
     }
 
     pub fn close_appearance(&mut self, cx: &mut Context<Self>) {
-        if let Screen::Page(panel) = &mut self.screen {
-            *panel = None;
-            cx.notify();
-        }
+        self.panel = None;
+        cx.notify();
     }
 
+    /// The look of the view on screen, which the panel edits.
     pub fn appearance(&self) -> &Appearance {
-        &self.settings.appearance
+        self.settings.look(self.view())
     }
 
     /// The body faces this device has, in the panel's order.
@@ -150,33 +150,176 @@ impl Inkling {
     }
 
     pub fn appearance_open(&self) -> bool {
-        matches!(self.screen, Screen::Page(Some(_)))
+        self.panel.is_some()
     }
 
-    /// Changes the appearance, draws it everywhere at once and saves it.
+    /// Changes the look of the view on screen (and the other's, while they are synced), draws it
+    /// everywhere at once and saves it.
     pub fn set_appearance(&mut self, change: impl FnOnce(&mut Appearance), window: &mut Window, cx: &mut Context<Self>) {
-        let before = self.settings.appearance.clone();
-        change(&mut self.settings.appearance);
-        if self.settings.appearance == before {
+        let view = self.view();
+        self.change_settings(|s| s.change_look(view, change), window, cx);
+    }
+
+    /// Turns "Same look for reading and writing" on or off. Turning it on gives the other view the
+    /// look on screen.
+    pub fn set_synced(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let view = self.view();
+        self.change_settings(|s| s.set_synced(on, view), window, cx);
+    }
+
+    /// Scroll or Paged, for reading.
+    pub fn set_page_mode(&mut self, pages: PageMode, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self.settings.reading.pages;
+        if before != pages {
+            self.pages_changed(before);
+        }
+        self.change_settings(|s| s.reading.pages = pages, window, cx);
+    }
+
+    fn change_settings(&mut self, change: impl FnOnce(&mut Settings), window: &mut Window, cx: &mut Context<Self>) {
+        let before = self.settings.clone();
+        change(&mut self.settings);
+        if self.settings == before {
             return;
         }
         if let Err(e) = self.settings.save(&self.paths) {
             self.notice = Some(format!("Couldn't save the appearance ({e}).").into());
         }
-        let theme = self.theme();
-        theme.apply_to_kit(cx);
-        self.page.set_look(&self.settings.appearance, theme, cx);
+        self.theme().apply_to_kit(cx);
+        if self.settings.appearance != before.appearance {
+            let writing = Theme::new(self.form, &self.settings.appearance, &self.faces);
+            self.page.set_look(&self.settings.appearance, writing, cx);
+        }
         window.refresh();
         cx.notify();
     }
 
-    /// Reset: the default Light look, with every slider back where it started.
+    /// Reset: the default Light look for the view on screen, with every slider back where it started.
     pub fn reset_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_picker(cx);
-        self.set_appearance(|a| *a = Appearance::default(), window, cx);
-        if let Screen::Page(Some(panel)) = &self.screen {
-            panel.follow(&self.settings.appearance, window, cx);
+        let view = self.view();
+        self.set_appearance(
+            |a| match view {
+                View::Writing => *a = Appearance::default(),
+                View::Reading => a.take_look(&Appearance::default()),
+            },
+            window,
+            cx,
+        );
+        self.follow_view(window, cx);
+    }
+
+    /// After the view changes under an open panel, or a reset, its sliders show the look on screen.
+    pub(crate) fn follow_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = self.view();
+        if let Some(panel) = &mut self.panel {
+            panel.follow(self.settings.look(view), window, cx);
+            panel.view = view;
         }
+    }
+
+    /// Called on every frame: a panel left showing the other view's look catches up.
+    pub(crate) fn panel_follows_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panel.as_ref().is_some_and(|p| p.view != self.view()) {
+            self.follow_view(window, cx);
+        }
+    }
+
+    /// "Same look for reading and writing": while on, a change in either view shows in both.
+    fn render_sync(&self, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let on = self.settings.reading.synced;
+        let view = cx.entity().downgrade();
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .p(px(10.))
+            .rounded(px(10.))
+            .bg(c.segment)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .text_size(px(13.))
+                    .child(Icon::Link.draw(px(15.), if on { c.link } else { c.muted }))
+                    .child(div().flex_1().min_w_0().child("Same look for reading and writing")),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .id("sync")
+                    .child(Switch::new(("sync", 1usize)).checked(on).color(c.link).accessibility_label("Same look for reading and writing").on_click(
+                        move |next, window, cx| {
+                            let next = *next;
+                            view.update(cx, |this, cx| this.set_synced(next, window, cx)).ok();
+                        },
+                    ))
+                    .test_support(),
+            )
+    }
+
+    /// The reader's paper tones, each a swatch of its page with "Aa" in its ink.
+    fn render_tones(&self, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let mode = self.appearance().mode;
+        div().flex().gap(px(6.)).children(Mode::TONES.map(|tone| {
+            let t = Appearance { mode: tone, ..Appearance::default() }.tokens();
+            let on = mode == tone;
+            div()
+                .id(("mode", tone as usize))
+                .flex_1()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(4.))
+                .cursor_pointer()
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(34.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(8.))
+                        .bg(rgb(t.ground.hex()))
+                        .text_color(rgb(t.ink.hex()))
+                        .font_family(self.theme().body.face)
+                        .text_size(px(15.))
+                        .border(if on { px(2.) } else { px(1.) })
+                        .border_color(if on { c.link } else { c.hairline })
+                        .child("Aa"),
+                )
+                .child(div().text_size(px(11.)).text_color(if on { c.ink } else { c.muted }).child(tone.label()))
+                .on_click(cx.listener(move |this, _, window, cx| this.set_appearance(|a| a.mode = tone, window, cx)))
+                .test_support()
+        }))
+    }
+
+    /// Scroll or Paged.
+    fn render_pages(&self, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let pages = self.settings.reading.pages;
+        div().id("pages").flex().gap_1().p_1().bg(c.segment).rounded(px(10.)).children([(PageMode::Scroll, "Scroll"), (PageMode::Paged, "Paged")].into_iter().enumerate().map(|(i, (mode, label))| {
+            let on = pages == mode;
+            div()
+                .id(("pages", i))
+                .flex_1()
+                .h(px(30.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(7.))
+                .text_size(px(13.))
+                .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                .text_color(if on { c.ink } else { c.muted })
+                .when(on, |tab| tab.bg(c.surface).border_1().border_color(c.hairline))
+                .cursor_pointer()
+                .child(label)
+                .on_click(cx.listener(move |this, _, window, cx| this.set_page_mode(mode, window, cx)))
+                .test_support()
+        }))
     }
 
     /// Markdown, then maths. Maths is drawn only with Markdown, so its switch is disabled while
@@ -226,7 +369,8 @@ impl Inkling {
 
     pub(crate) fn render_appearance(&self, panel: &AppearancePanel, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let c = self.theme().c;
-        let a = &self.settings.appearance;
+        let a = self.appearance();
+        let view = self.view();
         let label = |text: &'static str| {
             div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(c.muted).child(text)
         };
@@ -280,13 +424,12 @@ impl Inkling {
                 div()
                     .h(px(56.))
                     .flex_none()
-                    .pl(px(56.))
+                    .pl(self.corner_width())
                     .pr(px(10.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(Icon::Artboard.draw(px(16.), c.ink))
-                    .child(div().flex_1().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Appearance"))
+                    .child(div().id("appearance-title").flex_1().min_w_0().truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Appearance").test_support())
                     .child(
                         ghost_button(&c, "appearance-done", "Done")
                             .text_color(c.ink)
@@ -306,10 +449,14 @@ impl Inkling {
                     .flex()
                     .flex_col()
                     .gap_6()
-                    .child(self.render_modes(&c, cx))
+                    .child(self.render_sync(&c, cx))
+                    .child(div().flex().flex_col().gap_3().child(self.render_modes(&c, cx)).child(self.render_tones(&c, cx)))
                     .child(section("Font").child(faces))
                     .child(div().flex().flex_col().gap_5().children(sliders))
-                    .child(section("Drawing").child(self.render_switches(&c, cx)))
+                    .map(|body| match view {
+                        View::Writing => body.child(section("Drawing").child(self.render_switches(&c, cx))),
+                        View::Reading => body.child(section("Pages").child(self.render_pages(&c, cx))),
+                    })
                     .child(section("Colours").child(self.render_colors(&c, cx)))
                     .child(
                         div().flex().child(

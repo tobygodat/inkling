@@ -32,6 +32,9 @@ pub struct Entry {
     /// The cover's file name in `covers/`, for a book that has one.
     #[serde(default)]
     pub cover: Option<String>,
+    /// When the book was last opened, in seconds since the Unix epoch, or 0 if never.
+    #[serde(default)]
+    pub opened: u64,
 }
 
 impl Entry {
@@ -107,6 +110,7 @@ impl Library {
                     added: now(),
                     chapters: book.chapters,
                     cover: book.cover.clone(),
+                    opened: 0,
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -124,6 +128,18 @@ impl Library {
 
     pub fn load(&self, id: &BookId) -> io::Result<Book> {
         load(&self.dir, id)
+    }
+
+    /// The book opened most recently, for going back to it.
+    pub fn last_opened(&self) -> Option<&Entry> {
+        self.entries.iter().filter(|e| e.opened > 0).max_by_key(|e| e.opened)
+    }
+
+    /// Records that the book was opened now.
+    pub fn opened(&mut self, id: &BookId) -> io::Result<()> {
+        let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(()) };
+        entry.opened = now().max(entry.opened + 1);
+        self.save()
     }
 
     pub fn set_position(&mut self, id: &BookId, position: Position) -> io::Result<()> {
@@ -246,6 +262,11 @@ mod tests {
         assert_eq!(reopened.entries()[0].title, "A Small Book");
         assert_eq!(reopened.load(&id).unwrap().chapters.len(), 3);
         assert!((reopened.entries()[0].progress() - 0.5).abs() < 1e-6);
+
+        assert_eq!(reopened.last_opened(), None);
+        let mut reopened = reopened;
+        reopened.opened(&id).unwrap();
+        assert_eq!(Library::open(dir.path().join("data")).unwrap().last_opened().map(|e| &e.id), Some(&id), "the last book opened is kept");
 
         let leftovers = fs::read_dir(lib.dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
         assert_eq!(leftovers, 0);

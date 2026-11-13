@@ -1,5 +1,5 @@
 use crate::ai::{Backend, Provider};
-use crate::appearance::{Appearance, lenient};
+use crate::appearance::{Appearance, ReadingLook, View, lenient};
 use crate::ask::Request;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -55,18 +55,45 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "Stored")]
 pub struct Settings {
     pub provider: Provider,
+    models: BTreeMap<Provider, String>,
+    /// The writing look. Missing in a file written before the Appearance panel, and then the
+    /// default look.
+    pub appearance: Appearance,
+    /// Reading's look and layout. Change a look through `change_look` and `set_synced`, which keep
+    /// the two in step while they are synced.
+    pub reading: ReadingLook,
+}
+
+/// `settings.json` as read, before the two looks are put in step.
+#[derive(Deserialize)]
+struct Stored {
+    provider: Provider,
     #[serde(default)]
     models: BTreeMap<Provider, String>,
-    /// Missing in a file written before the Appearance panel, and then the default look.
     #[serde(default, deserialize_with = "lenient")]
-    pub appearance: Appearance,
+    appearance: Appearance,
+    /// Missing in a file written before reading had its own look, and junk reads as missing:
+    /// then reading takes the writing look, synced.
+    #[serde(default, deserialize_with = "lenient")]
+    reading: Option<ReadingLook>,
+}
+
+impl From<Stored> for Settings {
+    fn from(s: Stored) -> Self {
+        let mut reading = s.reading.unwrap_or_default();
+        if reading.synced {
+            reading.look.take_look(&s.appearance);
+        }
+        Settings { provider: s.provider, models: s.models, appearance: s.appearance, reading }
+    }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { provider: Provider::Claude, models: BTreeMap::new(), appearance: Appearance::default() }
+        Settings { provider: Provider::Claude, models: BTreeMap::new(), appearance: Appearance::default(), reading: ReadingLook::default() }
     }
 }
 
@@ -86,6 +113,35 @@ impl Settings {
     /// The model the writer typed for `provider`, or `None` when they left the default.
     pub fn typed_model(&self, provider: Provider) -> Option<&str> {
         self.models.get(&provider).map(String::as_str).filter(|m| !m.trim().is_empty())
+    }
+
+    /// The look `view` draws with.
+    pub fn look(&self, view: View) -> &Appearance {
+        match view {
+            View::Writing => &self.appearance,
+            View::Reading => &self.reading.look,
+        }
+    }
+
+    /// Changes `view`'s look. While the two are synced the other takes the same look; its own
+    /// page switches stay as they are.
+    pub fn change_look(&mut self, view: View, change: impl FnOnce(&mut Appearance)) {
+        let (changed, other) = match view {
+            View::Writing => (&mut self.appearance, &mut self.reading.look),
+            View::Reading => (&mut self.reading.look, &mut self.appearance),
+        };
+        change(changed);
+        if self.reading.synced {
+            other.take_look(changed);
+        }
+    }
+
+    /// Turns sync on or off. Turning it on gives the other view `from`'s look.
+    pub fn set_synced(&mut self, on: bool, from: View) {
+        self.reading.synced = on;
+        if on {
+            self.change_look(from, |_| ());
+        }
     }
 
     pub fn set_model(&mut self, provider: Provider, model: &str) {

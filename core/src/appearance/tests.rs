@@ -1,5 +1,6 @@
 use super::*;
 use crate::{Paths, Provider, Settings};
+use super::{PageMode, ReadingLook, View};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
@@ -50,7 +51,7 @@ proptest! {
     #[test]
     fn an_appearance_on_disk_loads_valid_survives_a_reload_and_light_never_changes(
         shape in prop::sample::select(vec!["object", "absent", "junk"]),
-        mode in field(prop::sample::select(vec![json!("light"), json!("dark"), json!("custom")])),
+        mode in field(prop::sample::select(vec![json!("light"), json!("dark"), json!("custom"), json!("sepia"), json!("night")])),
         custom in field(prop::collection::vec(color(), 4).prop_map(|c| json!({"background": c[0], "foreground": c[1], "text": c[2], "accent": c[3]}))),
         face in field(prop::sample::select(Face::ALL.map(|f| json!(f.family())).to_vec())),
         sizes in (field(number()), field(number()), field(number())),
@@ -128,9 +129,131 @@ proptest! {
     }
 }
 
+/// One change a writer or reader can make, as the panel makes it.
+#[derive(Clone, Debug)]
+enum Step {
+    Look(View, Mode, u16),
+    Switch(bool),
+    Sync(bool, View),
+}
+
+fn step() -> impl Strategy<Value = Step> {
+    let view = prop::sample::select(vec![View::Writing, View::Reading]);
+    let mode = prop::sample::select([Mode::ALL.to_vec(), Mode::TONES.to_vec()].concat());
+    prop_oneof![
+        4 => (view.clone(), mode, 15u16..=32).prop_map(|(v, m, size)| Step::Look(v, m, size)),
+        1 => any::<bool>().prop_map(Step::Switch),
+        2 => (any::<bool>(), view).prop_map(|(on, v)| Step::Sync(on, v)),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(300))]
+
+    #[test]
+    fn reading_and_writing_share_a_look_only_while_synced(steps in prop::collection::vec(step(), 1..24), case in any::<u64>()) {
+        let mut s = Settings::default();
+        for step in steps {
+            let before = s.clone();
+            match step {
+                Step::Look(view, mode, size) => {
+                    s.change_look(view, |a| {
+                        a.mode = mode;
+                        a.text_size = super::TextSize::new(size.into());
+                    });
+                    let other = if view == View::Writing { View::Reading } else { View::Writing };
+                    prop_assert_eq!(s.look(view).mode, mode);
+                    if !s.reading.synced {
+                        prop_assert_eq!(s.look(other), before.look(other), "with sync off a change stays in its own view");
+                    }
+                }
+                Step::Switch(on) => s.change_look(View::Writing, |a| a.markdown = on),
+                Step::Sync(on, from) => {
+                    s.set_synced(on, from);
+                    if on {
+                        prop_assert!(s.look(from).same_look(before.look(from)), "turning sync on keeps the look on screen");
+                    }
+                }
+            }
+            if s.reading.synced {
+                prop_assert!(s.appearance.same_look(&s.reading.look), "while synced the two looks are one");
+            }
+            let markdown_step = matches!(step, Step::Switch(_));
+            if !markdown_step {
+                prop_assert_eq!(s.appearance.markdown, before.appearance.markdown, "reading never changes writing's switches");
+            }
+            prop_assert_eq!(s.reading.pages, before.reading.pages, "page mode is reading's alone");
+        }
+        let paths = temp(case ^ 0x5eed);
+        s.save(&paths).unwrap();
+        prop_assert_eq!(&Settings::load(&paths), &s, "both looks and the sync survive save and load");
+        let _ = std::fs::remove_dir_all(&paths.dir);
+    }
+
+    #[test]
+    fn a_reading_look_on_disk_loads_valid_and_an_old_file_reads_with_the_writing_look(
+        shape in prop::sample::select(vec!["object", "absent", "junk"]),
+        mode in field(prop::sample::select(Mode::TONES.map(|m| json!(m.label().to_lowercase())).to_vec())),
+        size in field(number()),
+        synced in field(any::<bool>().prop_map(|b| json!(b))),
+        pages in field(prop::sample::select(vec![json!("scroll"), json!("paged")])),
+        case in any::<u64>(),
+    ) {
+        let writing = json!({"mode": "dark", "text_size": 24, "markdown": false});
+        let mut file = json!({"provider": "Claude", "appearance": writing});
+        let mut look = serde_json::Map::new();
+        for (key, value) in [("mode", &mode), ("text_size", &size)] {
+            if let Some(value) = value {
+                look.insert(key.into(), value.clone());
+            }
+        }
+        let mut reading = serde_json::Map::new();
+        reading.insert("look".into(), Value::Object(look.clone()));
+        for (key, value) in [("synced", &synced), ("pages", &pages)] {
+            if let Some(value) = value {
+                reading.insert(key.into(), value.clone());
+            }
+        }
+        match shape {
+            "object" => file["reading"] = Value::Object(reading),
+            "junk" => file["reading"] = json!(["sepia"]),
+            _ => {}
+        }
+        let paths = temp(case ^ 0xbeef);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+        std::fs::write(paths.settings(), serde_json::to_vec(&file).unwrap()).unwrap();
+        let s = Settings::load(&paths);
+        prop_assert_eq!(s.appearance.mode, Mode::Dark, "the reading look never costs the writing one");
+        prop_assert!(!s.appearance.markdown);
+        let present = shape == "object";
+        let synced = !present || synced.as_ref().and_then(Value::as_bool).unwrap_or(true);
+        prop_assert_eq!(s.reading.synced, synced, "an old file, or junk for reading, is synced");
+        prop_assert_eq!(s.reading.pages, if present { expect::<PageMode>(&pages) } else { PageMode::Scroll });
+        if synced {
+            prop_assert!(s.reading.look.same_look(&s.appearance), "a synced reading look is the writing look");
+        } else {
+            let stored: Appearance = serde_json::from_value(Value::Object(look)).unwrap_or_default();
+            prop_assert_eq!(&s.reading.look, &stored, "an unsynced reading look loads as stored, field by field");
+        }
+        let _ = std::fs::remove_dir_all(&paths.dir);
+    }
+}
+
 #[test]
-fn text_and_labels_meet_4_5_to_1_in_light_and_dark() {
-    for (name, t) in [("Light", LIGHT), ("Dark", DARK)] {
+fn a_settings_file_with_a_reading_look_round_trips() {
+    let mut s = Settings::default();
+    s.set_synced(false, View::Writing);
+    s.change_look(View::Reading, |a| a.mode = Mode::Sepia);
+    s.reading.pages = PageMode::Paged;
+    let back: Settings = serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
+    assert_eq!(back, s);
+    assert_eq!(back.reading, ReadingLook { look: Appearance { mode: Mode::Sepia, ..Appearance::default() }, synced: false, pages: PageMode::Paged });
+}
+
+#[test]
+fn text_and_labels_meet_4_5_to_1_in_every_mode() {
+    let tones = Mode::TONES.map(|m| (m.label(), Appearance { mode: m, ..Appearance::default() }.tokens()));
+    for (name, t) in [("Light", LIGHT), ("Dark", DARK)].into_iter().chain(tones) {
         let pairs = [
             ("ink on ground", t.ink, t.ground),
             ("ink on surface", t.ink, t.surface),

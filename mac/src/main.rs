@@ -45,6 +45,19 @@ pub fn open(
         FormFactor::Mac => size(px(1280.), px(800.)),
         FormFactor::Phone => size(px(390.), px(844.)),
     };
+    open_sized(cx, form, window_size, focus, show, keys, build)
+}
+
+/// `open` at a size of the caller's choosing, for the snap's smaller window.
+pub fn open_sized(
+    cx: &mut App,
+    form: FormFactor,
+    window_size: Size<Pixels>,
+    focus: bool,
+    show: bool,
+    keys: Box<dyn KeyStore>,
+    build: Build,
+) -> Result<(AnyWindowHandle, Entity<Inkling>)> {
     gpui_kit::open_window(window_options(window_size, focus, show), cx, |window, cx| {
         cx.new(|cx| Inkling::new(form, inkling_core::Paths::mac(), keys, build, window, cx))
     })

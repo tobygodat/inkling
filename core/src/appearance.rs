@@ -17,17 +17,43 @@ pub enum Mode {
     Light,
     Dark,
     Custom,
+    /// The paper tones, from the reader that became Inkling's reading screen (ADR 0004).
+    Paper,
+    Sepia,
+    Sage,
+    Dusk,
+    Night,
 }
 
 impl Mode {
     pub const ALL: [Mode; 3] = [Mode::Light, Mode::Dark, Mode::Custom];
+    pub const TONES: [Mode; 5] = [Mode::Paper, Mode::Sepia, Mode::Sage, Mode::Dusk, Mode::Night];
 
     pub fn label(self) -> &'static str {
         match self {
             Mode::Light => "Light",
             Mode::Dark => "Dark",
             Mode::Custom => "Custom",
+            Mode::Paper => "Paper",
+            Mode::Sepia => "Sepia",
+            Mode::Sage => "Sage",
+            Mode::Dusk => "Dusk",
+            Mode::Night => "Night",
         }
+    }
+
+    /// A paper tone's four colours: the reader's page and ink, a surface a step off the page, and
+    /// an accent that reads on both.
+    fn tone(self) -> Option<Palette> {
+        let p = |background, foreground, text, accent| Palette { background: Rgb::new(background), foreground: Rgb::new(foreground), text: Rgb::new(text), accent: Rgb::new(accent) };
+        Some(match self {
+            Mode::Paper => p(0xFBFAF7, 0xFFFFFF, 0x1F1D1A, 0x0969DA),
+            Mode::Sepia => p(0xF4ECD8, 0xFAF5E8, 0x4A3F2E, 0x7A4A12),
+            Mode::Sage => p(0xE8EDE4, 0xF3F6F0, 0x2D3A2E, 0x2F5D3A),
+            Mode::Dusk => p(0x2B2D33, 0x222429, 0xD9D6CF, 0x8CB8FF),
+            Mode::Night => p(0x000000, 0x141414, 0xB8B4AC, 0x79A6F2),
+            Mode::Light | Mode::Dark | Mode::Custom => return None,
+        })
     }
 }
 
@@ -361,7 +387,22 @@ impl Appearance {
             Mode::Light => LIGHT.palette(),
             Mode::Dark => DARK.palette(),
             Mode::Custom => self.custom,
+            tone => tone.tone().unwrap_or_default(),
         }
+    }
+
+    /// Takes `other`'s look (colours, face, sizes, page width) and keeps its own page switches,
+    /// which belong to writing.
+    pub fn take_look(&mut self, other: &Appearance) {
+        let (markdown, maths) = (self.markdown, self.maths);
+        *self = Appearance { markdown, maths, ..other.clone() };
+    }
+
+    /// Whether the two draw the same look, whatever their page switches.
+    pub fn same_look(&self, other: &Appearance) -> bool {
+        let mut a = self.clone();
+        a.take_look(other);
+        &a == self
     }
 
     /// Sets one colour and turns Custom on. Leaving Light or Dark starts from that mode's
@@ -381,8 +422,43 @@ impl Appearance {
         match self.mode {
             Mode::Light => LIGHT,
             Mode::Dark => DARK,
-            Mode::Custom => Tokens::custom(self.custom),
+            Mode::Custom | Mode::Paper | Mode::Sepia | Mode::Sage | Mode::Dusk | Mode::Night => Tokens::custom(self.palette()),
         }
+    }
+}
+
+/// How a book is laid out on the Reading screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PageMode {
+    #[default]
+    Scroll,
+    Paged,
+}
+
+/// The two places the Appearance panel opens beside, each with its own look.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum View {
+    Writing,
+    Reading,
+}
+
+/// Reading's own look and layout. Kept in `settings.json` beside the writing appearance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReadingLook {
+    #[serde(deserialize_with = "lenient")]
+    pub look: Appearance,
+    /// Reading and writing share one look while this is on.
+    #[serde(deserialize_with = "switch")]
+    pub synced: bool,
+    #[serde(deserialize_with = "lenient")]
+    pub pages: PageMode,
+}
+
+impl Default for ReadingLook {
+    fn default() -> Self {
+        ReadingLook { look: Appearance::default(), synced: true, pages: PageMode::default() }
     }
 }
 
@@ -449,12 +525,13 @@ impl Tokens {
 
     /// The writer's four colours, with the rest made from them. Changes take Light's or Dark's
     /// greens and reds, whichever suits the background, and muted text is pulled toward the text
-    /// colour until it reads.
+    /// colour until it reads on the background, the surfaces and the segment fill.
     fn custom(p: Palette) -> Tokens {
         let changes = if p.background.is_dark() { DARK } else { LIGHT };
+        let segment = p.text.mix(p.background, 0.94);
         let mut muted = p.text.mix(p.background, 0.28);
         let mut toward = 0.;
-        while toward < 1. && (muted.contrast(p.background) < 4.5 || muted.contrast(p.foreground) < 4.5) {
+        while toward < 1. && [p.background, p.foreground, segment].iter().any(|&on| muted.contrast(on) < 4.5) {
             toward += 0.1;
             muted = p.text.mix(p.background, 0.28 * (1. - toward));
         }
@@ -466,7 +543,7 @@ impl Tokens {
             hairline: p.text.mix(p.background, 0.87),
             link: p.accent,
             selection: p.accent.mix(p.background, 0.7),
-            segment: p.text.mix(p.background, 0.94),
+            segment,
             ..changes
         }
     }
