@@ -110,6 +110,8 @@ impl Secret {
         }
     }
 
+    /// How the Keychain's errors name it. Only the Keychain, and so only Apple builds, use it.
+    #[cfg(target_vendor = "apple")]
     fn label(self) -> String {
         match self {
             Secret::ApiKey(p) => format!("{} key", p.label()),

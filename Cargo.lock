@@ -3793,6 +3793,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkling-mcp"
+version = "0.1.0"
+dependencies = [
+ "inkling-books",
+ "inkling-core",
+ "proptest",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "inkling-ui"
 version = "0.1.0"
 dependencies = [

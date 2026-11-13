@@ -1,7 +1,7 @@
 # Architecture
 
 ## Crates
-One Cargo workspace at the root holds four crates. `ios/` is a separate workspace for the iPhone
+One Cargo workspace at the root holds five crates. `ios/` is a separate workspace for the iPhone
 app.
 
 - `core/` is `inkling-core`. It has no UI dependency. It holds the requests (`Ask`, `Request`), the
@@ -15,6 +15,12 @@ app.
   `books/<sha-256>.json` and covers in `covers/`, writing each file atomically, with each book's
   reading position. `scan` finds books in folders that the library doesn't have yet. The Library
   and Reading screens in `ui/` use it.
+- `mcp/` is `inkling-mcp`, the MCP server of ADR 0004. It has no UI dependency. `Server` answers
+  one JSON-RPC message at a time, whatever carries it. Its four tools (`list_books`, `read_book`,
+  `search_library`, `read_draft`) only read, through a `Store`, and are defined once in
+  `mcp/tools.json`, which the planned Worker serves too. `Folder` is the store over the data
+  folder, read afresh on every call so a book the app just added shows at once. The binary,
+  `inkling-mcp --stdio`, is what Claude Desktop and Claude Code start on the Mac.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
   `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and eight
@@ -158,4 +164,6 @@ Use the sheet moves to the next pending change.
 ## External services
 Anthropic, OpenAI and Google's generative language API, each called directly with the user's key.
 Feedback goes to the T3 webhook in the writer's feedback link, and only the feedback text and
-where it was sent from.
+where it was sent from. An agent the writer connects through `inkling-mcp` reads the library and
+the draft, and the agent's own app decides where that goes. Readwise and Inkling's own server, a
+Cloudflare Worker, are planned in ADR 0004 and not built yet.

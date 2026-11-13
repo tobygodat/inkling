@@ -10,8 +10,10 @@ page, with the place in each book kept.
 
 ## Positioning
 Not a chat window beside a document and not a subscription. The AI is bring-your-own-key: Claude,
-Gemini or ChatGPT. There is no account and no server. Keys live in the Keychain and writing goes only
-to the provider the writer picked. Books stay on the device: Find books only looks through folders
+Gemini or ChatGPT. No account is needed. Keys live in the Keychain and writing goes only to the
+provider the writer picked. Signing in to Inkling's own server will be optional (ADR 0004): it turns
+on sync, Readwise and agents away from the Mac, and signed out nothing goes to it. An agent the
+writer connects on the Mac reads the library and the draft but never changes them. Books stay on the device: Find books only looks through folders
 on it, and nothing about a book is sent anywhere.
 
 ## Principles
