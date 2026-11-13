@@ -3586,6 +3586,7 @@ dependencies = [
 name = "inkling-ios"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "gpui-kit",
  "gpui-pre-mobile",
  "inkling-core",

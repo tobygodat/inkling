@@ -15,13 +15,21 @@ use std::path::PathBuf;
 /// Shows the host's open panel and resolves to the files chosen, or none when the writer cancels.
 pub type PickBooks = Box<dyn Fn(&mut App) -> Task<Vec<PathBuf>>>;
 
+/// Gives the folders Find books searches, at the moment it searches.
+pub type BookFolders = Box<dyn Fn(&mut App) -> Vec<PathBuf>>;
+
 /// What the host lends the library, the way it lends `Paths` and the key store. The views never
 /// read the platform.
 pub struct BookHost {
-    /// The folders Find books looks through. On the Mac: Desktop, Documents and Downloads.
-    pub folders: Vec<PathBuf>,
-    /// Asks the writer for book files: Add.
+    /// The folders Find books looks through. On the Mac: Desktop, Documents and Downloads. On
+    /// iPhone: the app's Documents and the folders the reader allowed, which the host opens (and
+    /// keeps open while their books are read) each time it is asked.
+    pub folders: BookFolders,
+    /// Asks the reader for book files: Add.
     pub pick: PickBooks,
+    /// Asks for one more folder to search and remembers it, on hosts that can only search what the
+    /// reader allows (iPhone). Resolves to the folder, or none when the reader cancels.
+    pub add_folder: Option<PickBooks>,
 }
 
 pub(crate) struct Books {
@@ -180,7 +188,7 @@ impl Inkling {
     /// library doesn't have yet.
     pub fn find_books(&mut self, cx: &mut Context<Self>) {
         let Some(host) = &self.books.host else { return };
-        let folders = host.folders.clone();
+        let folders = (host.folders)(cx);
         let known: HashSet<BookId> = self.books.entries().iter().map(|e| e.id.clone()).collect();
         self.books.errors.clear();
         self.screen = Screen::Library(Some(Finding::Searching));
@@ -218,6 +226,22 @@ impl Inkling {
         }
         self.screen = Screen::Library(None);
         self.import(paths, cx);
+    }
+
+    /// "Search another folder" on Find books: the host asks for a folder and remembers it, then
+    /// Find books searches again with it.
+    pub fn add_book_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(add) = self.books.host.as_ref().and_then(|h| h.add_folder.as_ref()) else { return };
+        let chosen = add(cx);
+        cx.spawn(async move |this, cx| {
+            let folder = chosen.await;
+            let _ = this.update(cx, |this, cx| {
+                if !folder.is_empty() && matches!(this.screen, Screen::Library(Some(_))) {
+                    this.find_books(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn close_finding(&mut self, cx: &mut Context<Self>) {
@@ -262,7 +286,8 @@ impl Inkling {
 
     pub(crate) fn render_library(&self, finding: Option<&Finding>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let m = self.metrics();
-        let content = div().w_full().max_w(px(1000.)).px(m.gutter.max(px(56.))).pt(px(56.)).pb_8().flex().flex_col().gap_6();
+        let side = if self.form == crate::FormFactor::Phone { m.gutter } else { m.gutter.max(px(56.)) };
+        let content = div().w_full().max_w(px(1000.)).px(side).pt(px(56.)).pb_8().flex().flex_col().gap_6();
         let content = match finding {
             Some(finding) => content.child(self.render_finding(finding, cx)),
             None => content.child(self.render_shelf_header(cx)).children(self.render_library_status()).child(self.render_shelf(cx)),
@@ -290,7 +315,7 @@ impl Inkling {
             .items_center()
             .gap_2()
             .child(self.render_title("Library"))
-            .when(host.is_some_and(|h| !h.folders.is_empty()), |row| {
+            .when(host.is_some(), |row| {
                 row.child(
                     outlined_button(&c, "find-books", "Find books")
                         .h(m.control.max(px(32.)))
@@ -339,7 +364,7 @@ impl Inkling {
                 .items_center()
                 .gap_3()
                 .child(div().font_family(t.body.face).text_size(px(22.)).text_color(c.muted).child("Nothing to read yet."))
-                .child(div().text_size(px(14.)).text_color(c.muted).child(hint))
+                .child(div().text_size(px(14.)).text_color(c.muted).text_center().child(hint))
                 .test_support()
                 .into_any_element();
         }
@@ -420,9 +445,18 @@ impl Inkling {
         );
         let note = |words: String| div().id("find-note").text_size(px(14.)).text_color(c.muted).child(words).test_support();
         let column = div().w_full().max_w(px(640.)).flex().flex_col().gap_4().child(header);
+        // Where the host can search only folders the reader allows (iPhone), a way to allow one more.
+        let another = (self.books.host.as_ref().is_some_and(|h| h.add_folder.is_some()) && matches!(finding, Finding::Found(_))).then(|| {
+            div().flex().child(
+                outlined_button(&c, "add-folder", "Search another folder")
+                    .h(m.control.max(px(32.)))
+                    .on_click(cx.listener(|this, _, _, cx| this.add_book_folder(cx)))
+                    .test_support(),
+            )
+        });
         let found = match finding {
             Finding::Searching => return column.child(note("Looking through your folders. Nothing leaves this device.".into())),
-            Finding::Found(found) if found.is_empty() => return column.child(note("No new books in your folders.".into())),
+            Finding::Found(found) if found.is_empty() => return column.child(note("No new books in your folders.".into())).children(another),
             Finding::Found(found) => found,
         };
         let chosen = found.iter().filter(|c| c.chosen).count();
@@ -452,11 +486,13 @@ impl Inkling {
             .child(note(format!("{count} Choose the ones to add. PDFs start unticked, since many aren't books.")))
             .child(div().flex().flex_col().children(found.iter().enumerate().map(|(at, candidate)| {
                 found_row(candidate, &c, self.theme().body.face)
+                    .min_h(m.control)
                     .id(("found", at))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_found(at, cx)))
                     .test_support()
             })))
             .child(add)
+            .children(another)
     }
 }
 

@@ -32,7 +32,8 @@ app.
 - `ios/` is `inkling-ios`, a static library the Swift host in `ios/app/` links. It runs on
   `gpui-pre` through a patched `gpui-mobile`, passes the sandbox's Application Support folder as
   `Paths`, and uses the Keychain through `default_keys()`. The host keeps the view between the top
-  safe area and the keyboard.
+  safe area and the keyboard. It lends the library a `BookHost` over the C ABI: the Swift host
+  (`ios/app/Inkling/Books.swift`) shows the document pickers and keeps the folder bookmarks.
 
 ## Data flow
 A quick action or the ask field builds a `Request` from the page, picks a `Backend` with
@@ -74,7 +75,7 @@ settings. `Appearance::tokens` derives every colour the views draw; Light is exa
 `DESIGN.md`.
 
 `Settings` holds two: `appearance` for writing and `reading.look` for the library and books, with
-`reading.synced` and `reading.pages` (Scroll or Paged) beside it (ADR 0004). `Settings::change_look`
+`reading.synced` and `reading.pages` (Scroll or Paged) beside it (ADR 0005). `Settings::change_look`
 is the one way to change a look: while synced it gives the other view the same colours, face, sizes
 and width, and never touches writing's Markdown and maths switches. A file without `reading`, or
 with junk for it, loads with reading as a copy of writing, synced.
@@ -124,9 +125,20 @@ opens.
 
 ## Books
 The library is `<data>/library/`, an `inkling_books::Library` that `Inkling` opens at launch. The
-host lends it a `BookHost`: the folders Find books searches and a `pick` callback that shows its
-open panel and resolves to the files chosen. `ui/` never reads the platform, so without a host the
-library has no Add and no Find books. The iPhone host doesn't pass one yet.
+host lends it a `BookHost`: `folders`, called at each search, for the folders Find books searches;
+`pick`, which shows its picker and resolves to the files chosen; and `add_folder`, on a host that
+can only search folders the reader allowed. `ui/` never reads the platform, so without a host the
+library has no Add and no Find books.
+
+- **The Mac** searches Desktop, Documents and Downloads and picks with the open panel.
+- **The iPhone** searches the app's own Documents (shown in the Files app as "Inkling") and every
+  folder the reader allowed through Search another folder. The Swift host keeps those as
+  security-scoped bookmarks in `book-folders.plist` and opens them at each search, holding their
+  access until the next one, because chosen books are read from them in place. Add uses the system
+  document picker, which copies the files in. Rust asks through `inkling_host_pick_books`,
+  `inkling_host_pick_folder` and `inkling_host_book_folders`; Swift answers a picker through
+  `inkling_ios_picked` with the token Rust gave it. iCloud files not downloaded yet are hidden
+  placeholders, which the search passes over like any hidden file.
 
 - **Library** (`ui/src/library.rs`). The books newest first, each with its cover or its title on a
   plain tile, and a progress line once started. Add calls `pick`; Find books runs `scan` over the

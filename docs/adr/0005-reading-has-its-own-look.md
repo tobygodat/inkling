@@ -1,4 +1,4 @@
-# 0004. Reading has its own look, with a sync switch
+# 0005. Reading has its own look, with a sync switch
 
 Status: Accepted, 2026-11-13
 

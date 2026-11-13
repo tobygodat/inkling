@@ -102,8 +102,10 @@ fn main() {
 /// The Mac's side of the library: the open panel for Add, and the folders Find books searches.
 fn book_host() -> BookHost {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let folders = ["Desktop", "Documents", "Downloads"].map(|f| home.join(f)).to_vec();
     BookHost {
-        folders: ["Desktop", "Documents", "Downloads"].map(|f| home.join(f)).to_vec(),
+        folders: Box::new(move |_| folders.clone()),
+        add_folder: None,
         pick: Box::new(|cx: &mut App| {
             let chosen = cx.prompt_for_paths(PathPromptOptions {
                 files: true,

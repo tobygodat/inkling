@@ -106,6 +106,7 @@ final class InklingController: UIViewController {
         gpui.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(gpui)
         gpui.attach(to: self)
+        Books.shared.presenter = self
         NSLayoutConstraint.activate([
             gpui.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             gpui.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),

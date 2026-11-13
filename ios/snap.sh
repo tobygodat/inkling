@@ -45,6 +45,18 @@ point() {
     word-paragraph) echo "140 190" ;; # "paragraph", second block
     line-two-end) echo "380 190" ;;   # after "here", second block
     start-handle) echo "97 170" ;;    # the knob over the start of "paragraph", once selected
+    # The library and reading. The Write and Read toggle sits at the top left.
+    show-writing) echo "30 84" ;;
+    show-reading) echo "74 84" ;;
+    find-books) echo "276 140" ;;
+    found-pdf) echo "150 341" ;;      # the second row Find books lists, the PDF
+    add-found) echo "201 414" ;;
+    book-pdf) echo "90 296" ;;        # first tile, the newest: the PDF
+    book-epub) echo "274 296" ;;      # second tile
+    page-forward) echo "370 450" ;;   # the page's right third
+    contents) echo "343 90" ;;
+    chapter-one) echo "120 189" ;;    # Contents' second row
+    back-to-library) echo "148 90" ;;
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -373,6 +385,88 @@ begin a11y-target
 height="$(cut -f3 <<<"$node")"
 python3 -c "import sys; sys.exit(0 if float('$height') >= 44 else 1)" || fail "the page's target is $height pt tall"
 echo "ok   a11y-09 the page's target is $height pt tall"
+shot
+
+# The library and reading (TOB-460). Find books always searches the app's Documents, where the
+# fixture books are copied with simctl. The system pickers, for Add and for Search another folder,
+# are driven by hand: see README.md.
+library_json() {
+  echo "$(data_dir)/library/library.json"
+}
+
+# Prints `<chapter> <fraction> <opened>` of the book whose title starts with `$1`.
+book_state() {
+  python3 - "$(library_json)" "$1" <<'PY'
+import json, sys
+books = json.load(open(sys.argv[1]))["books"] if __import__("os").path.exists(sys.argv[1]) else []
+book = next((b for b in books if b["title"].startswith(sys.argv[2])), None)
+print(*(book["position"]["chapter"], book["position"]["fraction"], book["opened"]) if book else ("none",))
+PY
+}
+
+book_count() {
+  python3 -c 'import json, os, sys; p = sys.argv[1]; print(len(json.load(open(p))["books"]) if os.path.exists(p) else 0)' "$(library_json)"
+}
+
+begin books-find
+../books/fetch-fixtures.sh >/dev/null
+docs="$(xcrun simctl get_app_container "$udid" "$app" data)/Documents"
+mkdir -p "$docs"
+cp ../target/fixtures/pride-and-prejudice.epub ../target/fixtures/rfc2616.pdf "$docs/"
+reading_draft="The draft from before the books."
+printf '%s' "$reading_draft" >"$(data_dir)/draft.md"
+# The iPhone has no Appearance panel, so paged mode is set in settings.json.
+printf '{"provider":"Claude","reading":{"pages":"paged"}}' >"$(data_dir)/settings.json"
+"$ad" open "$app" --relaunch --launch-args --fake-ai >/dev/null
+sleep 2.5
+tap show-reading 1.5
+[ "$(book_count)" = 0 ] || fail "the library is not empty"
+tap find-books 4
+tap found-pdf
+shot
+
+begin books-library
+tap add-found 3
+for _ in $(seq 25); do [ "$(book_count)" = 2 ] && break; sleep 0.4; done
+[ "$(book_count)" = 2 ] || fail "Find books added $(book_count) books, expected 2"
+shot
+
+begin books-epub
+tap book-epub 3
+[ "$(book_state Pride | cut -d' ' -f3)" != 0 ] || fail "the EPUB was not opened"
+shot
+
+begin books-page-turned
+tap page-forward 1.5
+read -r chapter fraction _ <<<"$(book_state Pride)"
+[ "$chapter" = 0 ] && python3 -c "import sys; sys.exit(0 if float('$fraction') > 0 else 1)" || fail "turning the page left the place at $chapter $fraction"
+shot
+
+begin books-contents
+tap contents
+shot
+
+begin books-chapter
+tap chapter-one 1.5
+[ "$(book_state Pride | cut -d' ' -f1-2)" = "1 0.0" ] || fail "Contents did not open Chapter I: $(book_state Pride)"
+shot
+
+begin books-write
+tap show-writing 1.5
+expect_draft "$reading_draft"
+shot
+
+begin books-read
+tap show-reading 2
+[ "$(book_state Pride | cut -d' ' -f1-2)" = "1 0.0" ] || fail "Read did not go back to Chapter I: $(book_state Pride)"
+shot
+
+begin books-pdf
+tap back-to-library 1.5
+tap book-pdf 3
+pdf_opened="$(book_state Microsoft | cut -d' ' -f3)"
+epub_opened="$(book_state Pride | cut -d' ' -f3)"
+[ "$pdf_opened" -gt "$epub_opened" ] || fail "the PDF was not opened after the EPUB"
 shot
 
 echo "all $step steps passed; screenshots in $shots"

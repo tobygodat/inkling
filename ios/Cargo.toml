@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 gpui-kit = "=0.9.1"
 gpui-mobile = { package = "gpui-pre-mobile", path = "target/gpui-mobile", default-features = false, features = ["video_player", "camera"] }
+futures-channel = "0.3"
 inkling-core = { path = "../core" }
 inkling-ui = { path = "../ui" }
 log = "0.4"

@@ -504,17 +504,18 @@ impl Inkling {
             .child(top)
             .child(body)
             .child(bottom)
-            .when(r.contents, |screen| screen.child(self.render_contents(r, &c, cx)))
+            .when(r.contents, |screen| screen.child(self.render_contents(r, &c, window.viewport_size().width, cx)))
     }
 
     /// The contents list, under the Contents button.
-    fn render_contents(&self, r: &Reading, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_contents(&self, r: &Reading, c: &Colors, window_width: Pixels, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         div()
             .id("contents-list")
             .absolute()
             .top(TOP_BAR)
             .right(self.metrics().gutter)
             .w(px(340.))
+            .max_w(window_width - self.metrics().gutter * 2.)
             .max_h(px(480.))
             .overflow_y_scroll()
             .p(px(4.))
@@ -528,6 +529,8 @@ impl Inkling {
                 let on = at == r.chapter;
                 div()
                     .id(("chapter", at))
+                    .min_h(self.metrics().control.min(px(44.)))
+                    .items_center()
                     .px(px(10.))
                     .py(px(7.))
                     .rounded(px(6.))
@@ -616,8 +619,9 @@ impl Inkling {
             false => div().id("the-end").mt(gap).w_full().flex().justify_center().italic().text_color(c.muted).child("The end").test_support().into_any_element(),
         });
         let layout = r.layout.clone();
+        let view = cx.entity_id();
         div()
-            .on_children_prepainted(move |bounds, window, _| {
+            .on_children_prepainted(move |bounds, window, cx| {
                 let Some(first) = bounds.first().map(|b| b.top()) else { return };
                 let pieces: Vec<Piece> =
                     bounds.iter().zip(&lines).map(|(b, line)| Piece { top: b.top() - first, bottom: b.bottom() - first, line: *line }).collect();
@@ -625,7 +629,10 @@ impl Inkling {
                 let next = Layout { pieces, height };
                 if *layout.borrow() != next {
                     *layout.borrow_mut() = next;
+                    // Draw again with the new layout, once this frame is done: a redraw asked for
+                    // while drawing is dropped on iPhone.
                     window.refresh();
+                    cx.defer(move |cx| cx.notify(view));
                 }
             })
             .id("reading-column")
