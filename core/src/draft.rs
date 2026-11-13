@@ -37,6 +37,7 @@ impl Selection {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Block {
     pub range: Range<usize>,
     /// `None` when the block holds something the map can't follow, so it is drawn as source.
@@ -45,7 +46,7 @@ pub struct Block {
 
 /// How one block's drawn text maps to its source: one leaf per paragraph, heading, table cell or
 /// code block, in the order GPUI Kit renders them.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct SourceMap {
     pub leaves: Vec<Leaf>,
 }
@@ -70,11 +71,23 @@ impl SourceMap {
         }
         out
     }
+
+    /// Moves every source byte by `by`, for a block that an edit before it moved.
+    fn shift(&mut self, by: isize) {
+        let at = |b: &mut usize| *b = b.wrapping_add_signed(by);
+        for leaf in &mut self.leaves {
+            at(&mut leaf.at);
+            for s in &mut leaf.segments {
+                at(&mut s.source.start);
+                at(&mut s.source.end);
+            }
+        }
+    }
 }
 
 /// One drawn run of text and where each piece of it comes from. A segment that isn't `Same`
 /// (an escape, an entity, a line ending, an image) is one caret stop.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Leaf {
     text: String,
     segments: Vec<Segment>,
@@ -450,13 +463,16 @@ pub struct Draft {
     selection: Selection,
     blocks: Vec<Block>,
     definitions: Vec<Range<usize>>,
+    /// Whether any link reference definition or footnote is anywhere in the source, so a
+    /// reference in one block may resolve against another.
+    references: bool,
     history: History,
     claim: Claim,
 }
 
 impl Draft {
     pub fn new(source: impl Into<String>, claim: Claim) -> Self {
-        let mut draft = Draft { source: source.into(), selection: Selection::default(), blocks: vec![], definitions: vec![], history: History::default(), claim };
+        let mut draft = Draft { source: source.into(), selection: Selection::default(), blocks: vec![], definitions: vec![], references: false, history: History::default(), claim };
         draft.reparse();
         draft
     }
@@ -510,7 +526,8 @@ impl Draft {
             before: self.selection,
             after: Selection::caret(range.start + text.len()),
         };
-        self.source.replace_range(range, text);
+        let removed = range.len();
+        self.source.replace_range(range.clone(), text);
         self.selection = edit.after;
         let h = &mut self.history;
         h.undone.clear();
@@ -519,7 +536,7 @@ impl Draft {
             h.done.push(edit);
         }
         h.open = true;
-        self.reparse();
+        self.reparse_edit(range.start, removed, text.len());
     }
 
     /// Ends the current undo step, so the next edit starts a new one.
@@ -531,9 +548,9 @@ impl Draft {
         let Some(edit) = self.history.done.pop() else { return false };
         self.source.replace_range(edit.at..edit.at + edit.inserted.len(), &edit.removed);
         self.selection = edit.before;
-        self.history.undone.push(edit);
         self.history.open = false;
-        self.reparse();
+        self.reparse_edit(edit.at, edit.inserted.len(), edit.removed.len());
+        self.history.undone.push(edit);
         true
     }
 
@@ -541,9 +558,9 @@ impl Draft {
         let Some(edit) = self.history.undone.pop() else { return false };
         self.source.replace_range(edit.at..edit.at + edit.removed.len(), &edit.inserted);
         self.selection = edit.after;
-        self.history.done.push(edit);
         self.history.open = false;
-        self.reparse();
+        self.reparse_edit(edit.at, edit.removed.len(), edit.inserted.len());
+        self.history.done.push(edit);
         true
     }
 
@@ -636,14 +653,86 @@ impl Draft {
         at(range.start)..at(range.end.max(range.start))
     }
 
+    /// Brings the blocks up to date after `removed` bytes at `at` became `inserted` bytes.
+    /// Parsing the whole draft on every keystroke is most of a keystroke's time in a long one,
+    /// so only the blocks around the edit are parsed again, when that is sure to give what a
+    /// whole parse would.
+    fn reparse_edit(&mut self, at: usize, removed: usize, inserted: usize) {
+        if !self.reparse_around(at, removed, inserted) {
+            self.reparse();
+        }
+    }
+
+    /// Parses again the blocks the edit touched, with one untouched block on each side, and
+    /// moves the blocks after them. Declines, leaving the blocks as they were, unless a blank
+    /// line closes the region on each side, the last block in it cannot run on past a blank
+    /// line, and no block can refer to another.
+    fn reparse_around(&mut self, at: usize, removed: usize, inserted: usize) -> bool {
+        let n = self.blocks.len();
+        if n == 0 || self.references || self.source.contains("[^") {
+            return false;
+        }
+        let old_end = at + removed;
+        let delta = inserted as isize - removed as isize;
+        let first = self.blocks.iter().position(|b| b.range.end >= at).unwrap_or(n);
+        let last = self.blocks.iter().rposition(|b| b.range.start <= old_end).unwrap_or(0);
+        let lo = first.min(last).saturating_sub(1);
+        let hi = (first.max(last) + 1).min(n - 1);
+        // From the start of the line, so a block keeps its indentation.
+        let line = |at: usize| self.source[..at].rfind('\n').map_or(0, |i| i + 1);
+        let start = if lo == 0 { 0 } else { line(self.blocks[lo].range.start) };
+        let end = if hi == n - 1 { self.source.len() } else { self.blocks[hi].range.end.wrapping_add_signed(delta) };
+        let blank = |gap: &str| gap.trim().is_empty() && gap.matches('\n').count() >= 2;
+        if lo > 0 && !blank(&self.source[self.blocks[lo - 1].range.end..start]) {
+            return false;
+        }
+        let next = self.blocks.get(hi + 1).map(|b| b.range.start.wrapping_add_signed(delta));
+        if next.is_some_and(|next| !blank(&self.source[end..next])) {
+            return false;
+        }
+        let region = &self.source[start..end];
+        let Ok(Node::Root(root)) = markdown::to_mdast(region, &options(true)) else { return false };
+        let mut defs = HashSet::new();
+        for child in &root.children {
+            definitions(child, &mut defs);
+        }
+        if !defs.is_empty() || region.contains("]:") {
+            return false;
+        }
+        let closed = |n: &Node| matches!(n, Node::Paragraph(_) | Node::Heading(_) | Node::ThematicBreak(_) | Node::Table(_));
+        if next.is_some() && !root.children.last().is_some_and(closed) {
+            return false;
+        }
+        let mapper = Mapper { source: region, claim: &self.claim, definitions: &defs };
+        let mut fresh = vec![];
+        for child in &root.children {
+            let Some(range) = span(child, start) else { continue };
+            let mut map = mapper.block(child);
+            if let Some(map) = map.as_mut() {
+                map.shift(start as isize);
+            }
+            fresh.push(Block { range, map });
+        }
+        for block in &mut self.blocks[hi + 1..] {
+            block.range = block.range.start.wrapping_add_signed(delta)..block.range.end.wrapping_add_signed(delta);
+            if let Some(map) = block.map.as_mut() {
+                map.shift(delta);
+            }
+        }
+        self.blocks.splice(lo..=hi, fresh);
+        true
+    }
+
     fn reparse(&mut self) {
         self.blocks.clear();
         self.definitions.clear();
+        self.references = false;
         let Ok(Node::Root(root)) = markdown::to_mdast(&self.source, &options(true)) else { return };
         let mut defs = HashSet::new();
         for child in &root.children {
             definitions(child, &mut defs);
         }
+        self.references = !defs.is_empty() || root.children.iter().any(|c| matches!(c, Node::FootnoteDefinition(_)));
         let mapper = Mapper { source: &self.source, claim: &self.claim, definitions: &defs };
         for child in &root.children {
             let Some(range) = span(child, 0) else { continue };
@@ -750,7 +839,14 @@ mod tests {
     fn edits() -> impl Strategy<Value = Vec<Op>> {
         let text = prop::collection::vec(prop::sample::select(INLINE), 0..3)
             .prop_map(|parts| parts.iter().map(|(m, _)| *m).collect::<String>());
-        let piece = prop_oneof![text, prop::sample::select(vec!["\n", "\n\n", "# ", "- ", "`", "*", "$", "\\", "&"]).prop_map(String::from)];
+        let piece = prop_oneof![
+            text,
+            prop::sample::select(vec![
+                "\n", "\n\n", "# ", "- ", "`", "*", "$", "\\", "&", "```", "$$\n", "> ", "    ", "1. ", "|---|\n", "\n===", "\n[r]: /x", "[^1]",
+                "<div>\n", "\n\n- b"
+            ])
+            .prop_map(String::from)
+        ];
         let op = prop_oneof![
             (any::<usize>(), 0..12usize, piece).prop_map(|(at, len, text)| Op::Replace(at, len, text)),
             prop::sample::select(vec!["a", "b", " ", "é", "😀"]).prop_map(|t| Op::Type(t.to_string())),
@@ -825,6 +921,13 @@ mod tests {
         }
     }
 
+    /// The blocks an edit leaves are the ones a whole parse of the source gives.
+    fn assert_reparsed(draft: &Draft) {
+        let whole = Draft::new(draft.source(), claim());
+        assert_eq!(draft.blocks(), whole.blocks(), "blocks after an edit of {:?}", draft.source());
+        assert_eq!(draft.definitions().collect::<Vec<_>>(), whole.definitions().collect::<Vec<_>>());
+    }
+
     fn assert_maps(draft: &Draft) {
         for block in draft.blocks() {
             if let Some(map) = &block.map {
@@ -866,15 +969,19 @@ mod tests {
                     Op::Seal => draft.seal(),
                 }
                 versions.push(draft.source().to_string());
+                assert_reparsed(&draft);
                 assert_maps(&draft);
                 assert_utf16(&draft, a, b);
             }
             let last = draft.source().to_string();
             while draft.undo() {
                 prop_assert!(versions.contains(&draft.source().to_string()), "undo passes only through versions that existed");
+                assert_reparsed(&draft);
             }
             prop_assert_eq!(draft.source(), source.as_str());
-            while draft.redo() {}
+            while draft.redo() {
+                assert_reparsed(&draft);
+            }
             prop_assert_eq!(draft.source(), last.as_str());
         }
     }

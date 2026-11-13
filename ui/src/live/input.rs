@@ -9,7 +9,7 @@ gpui_kit::actions!(
         Left, Right, Up, Down, WordLeft, WordRight, LineStart, LineEnd, BlockUp, BlockDown, DocStart, DocEnd,
         SelectLeft, SelectRight, SelectUp, SelectDown, SelectWordLeft, SelectWordRight, SelectLineStart,
         SelectLineEnd, SelectBlockUp, SelectBlockDown, SelectDocStart, SelectDocEnd, SelectAll,
-        Backspace, Delete, DeleteWordLeft, Enter, Copy, Cut, Paste, Undo, Redo
+        Backspace, Delete, DeleteWordLeft, DeleteLineLeft, Enter, Copy, Cut, Paste, Undo, Redo
     ]
 );
 
@@ -48,7 +48,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-a", SelectAll, c),
         KeyBinding::new("backspace", Backspace, c),
         KeyBinding::new("delete", Delete, c),
+        // Shift is often still down from a capital, and Command from Select All.
+        KeyBinding::new("shift-backspace", Backspace, c),
         KeyBinding::new("alt-backspace", DeleteWordLeft, c),
+        KeyBinding::new("cmd-backspace", DeleteLineLeft, c),
         KeyBinding::new("enter", Enter, c),
         KeyBinding::new("cmd-c", Copy, c),
         KeyBinding::new("cmd-x", Cut, c),
@@ -105,13 +108,19 @@ pub(super) fn actions(page: Stateful<Div>, cx: &mut Context<LiveEditor>) -> Stat
         SelectDocStart => Motion::Doc(false), true;
         SelectDocEnd => Motion::Doc(true), true;
     );
+    // Select All leaves the page where it is, as it does on iPhone.
     page.on_action(cx.listener(|e, _: &SelectAll, _, cx| {
         let len = e.draft.source().len();
-        e.set_selection(0..len, cx);
+        e.draft.seal();
+        e.marked = None;
+        e.goal_x = None;
+        e.draft.set_selection(0, len);
+        cx.notify();
     }))
     .on_action(cx.listener(|e, _: &Backspace, _, cx| e.delete(Motion::Char(false), cx)))
     .on_action(cx.listener(|e, _: &Delete, _, cx| e.delete(Motion::Char(true), cx)))
     .on_action(cx.listener(|e, _: &DeleteWordLeft, _, cx| e.delete(Motion::Word(false), cx)))
+    .on_action(cx.listener(|e, _: &DeleteLineLeft, _, cx| e.delete(Motion::Line(false), cx)))
     .on_action(cx.listener(|e, _: &Enter, _, cx| {
         let sel = e.draft.selection().range();
         e.edit(sel, "\n", cx);
