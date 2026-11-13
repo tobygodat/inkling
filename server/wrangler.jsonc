@@ -1,0 +1,22 @@
+{
+  // Inkling's server (ADR 0004): OAuth, the remote MCP endpoint, sync and the Readwise inbox.
+  "name": "inkling-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  // Lets the authorization server fetch a client's metadata document (CIMD) only from public hosts.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  "vars": {
+    // The Worker's own address, the OAuth issuer. Set to the deployed workers.dev URL.
+    "PUBLIC_URL": "https://inkling-server.tobygodat.workers.dev"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "inkling", "migrations_dir": "migrations" }
+  ],
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV" },
+    { "binding": "FILES" }
+  ],
+  // The Readwise backstop poll, and the OAuth store's cleanup.
+  "triggers": { "crons": ["*/30 * * * *"] }
+}

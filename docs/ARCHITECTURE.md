@@ -178,9 +178,31 @@ Use the sheet moves to the next pending change.
 - What this device sent as feedback is `sent-feedback.json` in the data folder. What happened to
   it is compiled into the build.
 
+## Server
+`server/` is a Cloudflare Worker on the free plan (ADR 0004), in TypeScript. No request may spend
+more than 10 ms of CPU, so it never parses a book.
+
+- **Sign-in.** `@cloudflare/workers-oauth-provider` is the OAuth 2.1 server: dynamic client
+  registration, client ID metadata documents, PKCE, refresh tokens, and tokens kept only as hashes
+  in KV. There are two resources: `/mcp` for agents and `/v1` for the devices. A token is bound to
+  one of them. `src/authorize.ts` shows the consent form, with the draft unticked unless the
+  writer ticks it. It then sends the browser to Sign in with Apple, and grants only the Apple ID in
+  `OWNER_APPLE_SUB`.
+- **MCP.** `src/mcp.ts` serves `mcp/tools.json` and answers each tool from D1, with the same text as
+  `inkling-mcp`. Each chapter is stored as the Markdown `read_book` gives, in a trigram FTS5 index,
+  so a search runs inside D1. It finds one hit per chapter, and a query under three characters
+  falls back to `instr`.
+- **Sync.** `src/sync.ts`. A device uploads a book's parsed JSON to KV, then each chapter, then its
+  row, which is refused until the rest is there. A position carries when it changed, and the later
+  wins. A draft save carries when it was saved; the later wins, and 20 versions are kept.
+- **Readwise.** `src/readwise.ts`. The token and webhook secret are kept as AES-GCM ciphertext under
+  `SECRET_KEY`. A webhook, or the poll every 30 minutes, streams each new EPUB or PDF from Reader
+  into KV as an inbox item. A device downloads it, imports it with `inkling_books::prepare`, uploads
+  the book and settles the item. Only documents saved after the link was made come in.
+
 ## External services
 Anthropic, OpenAI and Google's generative language API, each called directly with the user's key.
 Feedback goes to the T3 webhook in the writer's feedback link, and only the feedback text and
 where it was sent from. An agent the writer connects through `inkling-mcp` reads the library and
-the draft, and the agent's own app decides where that goes. Readwise and Inkling's own server, a
-Cloudflare Worker, are planned in ADR 0004 and not built yet.
+the draft, and the agent's own app decides where that goes. Inkling's own server (above) holds the library and the draft for agents away from the Mac and
+for sync. No device syncs to it yet. It calls Readwise with the writer's token and Apple to sign in.
