@@ -25,7 +25,8 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
   `AGENT.md`, the instructions for the thread that handles one.
 - `docs/screenshots/<app>/` holds each app's proof.
 - `reader/` is the EPUB and PDF reader (TOB-402), moved here from `tobygodat/ios-reader` with its
-  history. It is a separate app on Rune in its own Cargo workspace, and shares no crate with Inkling.
+  history. It is being ported into Inkling (TOB-460, `docs/adr/0003-reading-joins-inkling.md`) and
+  is deleted when that is done. Until then it is its own Rune app and Cargo workspace, and
   `reader/AGENTS.md` has its commands, run from `reader/`. CI and the root workspace leave it out.
 
 ## Commands
