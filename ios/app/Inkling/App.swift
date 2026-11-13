@@ -97,11 +97,20 @@ final class GPUIView: UIView {
 final class InklingController: UIViewController {
     private var gpui: GPUIView!
     private var displayLink: CADisplayLink?
+    static weak var shown: InklingController?
+
+    /// The look on screen's background, behind the safe areas, and its status bar.
+    func setGround(_ rgb: UInt32, dark: Bool) {
+        let channel = { (shift: UInt32) in CGFloat((rgb >> shift) & 0xFF) / 255 }
+        view.backgroundColor = UIColor(red: channel(16), green: channel(8), blue: channel(0), alpha: 1)
+        overrideUserInterfaceStyle = dark ? .dark : .light
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         overrideUserInterfaceStyle = .light
         view.backgroundColor = UIColor(red: 0xFB / 255, green: 0xFB / 255, blue: 0xF9 / 255, alpha: 1)
+        Self.shown = self
         gpui = GPUIView(frame: .zero)
         gpui.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(gpui)
@@ -128,4 +137,9 @@ final class InklingController: UIViewController {
     }
 
     @objc private func tick() { gpui.drawFrame() }
+}
+
+@_cdecl("inkling_host_set_ground")
+func inklingHostSetGround(_ rgb: UInt32, _ dark: Bool) {
+    MainActor.assumeIsolated { InklingController.shown?.setGround(rgb, dark: dark) }
 }

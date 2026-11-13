@@ -14,7 +14,7 @@ draft as inline changes, and the writer accepts or rejects each one, or all the 
 The writer picks Light, Dark, Custom or a paper tone (Paper, Sepia, Sage, Dusk, Night) on the
 Appearance panel, once for writing and once for reading, or one look for both while "Same look for
 reading and writing" is on. Every colour a view draws comes
-from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's only look.
+from `inkling_core::Appearance::tokens`. Light is the default.
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
@@ -60,8 +60,12 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
   draft as they make it, and closes the panel with Done.
 - Mac corners: the cog and the Write and Read toggle at the top left, and the round feedback button
   at the bottom right, on every screen. The cog's menu opens below the cog and never reaches the
-  column at 1280 by 800. Bars along the top start after the corner. On iPhone the toggle sits alone
-  at the top left, outside a review.
+  column at 1280 by 800. Bars along the top start after the corner. On iPhone a 44 pt cog and the
+  toggle sit at the top left on the page, the library and a book, outside a review. The cog there
+  opens Appearance directly, as a sheet over the lower 60% of the screen with 44 pt rows, so the
+  page above it shows each change. The iPhone draws the same choices a little smaller (19 pt at
+  1.65 by default, scaled from the Mac's 21 at 1.75) across the full width, so its sheet has no
+  page width.
 
 ## Components
 - **Version bar.** Version name, source, added and removed counts, accepted count, "Back to draft",

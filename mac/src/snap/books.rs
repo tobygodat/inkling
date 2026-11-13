@@ -243,6 +243,17 @@ pub fn run(dir: &Path) {
     s.click("page-back");
     check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(1), "and its left edge turns it back");
     s.shot("books-10-page-turned");
+    s.with(|w, cx| w.scroll("page", ScrollDelta::Pixels(point(px(-120.), px(0.))), cx));
+    s.frame();
+    check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(2), "a swipe to the left turns the page");
+    s.with(|w, cx| w.scroll("page", ScrollDelta::Pixels(point(px(-120.), px(0.))), cx));
+    s.frame();
+    check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(2), "the rest of the same swipe turns no second page");
+    s.advance(400);
+    s.with(|w, cx| w.scroll("page", ScrollDelta::Pixels(point(px(120.), px(0.))), cx));
+    s.frame();
+    check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(1), "and a swipe to the right turns it back");
+    s.advance(400);
     s.press("end");
     check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0 + 1 == p.1) == Some(true), "End goes to the chapter's last page");
     s.press("right");

@@ -7,7 +7,7 @@ extern crate gpui_mobile;
 use futures_channel::oneshot;
 use gpui_kit::*;
 use inkling_core::{Build, Paths};
-use inkling_ui::{BookHost, FormFactor, Inkling};
+use inkling_ui::{BookHost, FormFactor, Ground, Inkling};
 use std::ffi::{CStr, c_char, c_void};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -35,6 +35,10 @@ pub unsafe extern "C" fn inkling_ios_register(data_dir: *const c_char) {
                 inkling.set_book_host(book_host(), cx);
                 inkling
             });
+            // The safe areas and the status bar follow the look on screen.
+            let ground = app.read(cx).ground();
+            unsafe { inkling_host_set_ground(ground.rgb, ground.dark) };
+            cx.subscribe(&app, |_, ground: &Ground, _| unsafe { inkling_host_set_ground(ground.rgb, ground.dark) }).detach();
             let page = app.read(cx).page().focus_handle(cx);
             window.on_focus_in(&page, cx, |_, _| system_selection_ui(true)).detach();
             window.on_focus_out(&page, cx, |_, _, _| system_selection_ui(false)).detach();
@@ -55,6 +59,9 @@ unsafe extern "C" {
     /// the remembered folders, which stay open until the next call.
     fn inkling_host_book_folders() -> *mut c_char;
     fn free(ptr: *mut c_void);
+    /// Colours the controller's view behind the safe areas `0xRRGGBB`, with light status-bar text
+    /// when `dark`.
+    fn inkling_host_set_ground(rgb: u32, dark: bool);
 }
 
 /// Pickers still open, by the token their answer carries.

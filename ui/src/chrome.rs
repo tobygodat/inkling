@@ -262,7 +262,7 @@ impl Inkling {
     pub(crate) fn corner_width(&self) -> Pixels {
         match self.form {
             FormFactor::Mac => px(12. + 32. + 6.) + toggle_segment(self.form) * 2. + px(6.) + px(16.),
-            FormFactor::Phone => px(8.) + toggle_segment(self.form) * 2. + px(12.),
+            FormFactor::Phone => px(4.) + self.metrics().control + px(2.) + toggle_segment(self.form) * 2. + px(12.),
         }
     }
 
@@ -274,7 +274,29 @@ impl Inkling {
             Screen::Library(..) | Screen::Reading(_) => true,
             Screen::Keys(_) | Screen::Feedback(_) => false,
         };
-        shown.then(|| div().absolute().top_0().left(px(8.)).child(self.render_views(cx)))
+        shown.then(|| {
+            let c = self.theme().c;
+            let size = self.metrics().control;
+            let cog = div()
+                .id("cog")
+                .size(size)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.))
+                .when(self.panel.is_some(), |cog| cog.bg(c.segment))
+                .aria_label("Appearance")
+                .child(Icon::Cog.draw(px(20.), c.ink))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.panel.is_some() {
+                        this.close_appearance(cx)
+                    } else {
+                        this.open_appearance(window, cx)
+                    }
+                }))
+                .test_support();
+            div().absolute().top_0().left(px(4.)).flex().items_center().gap(px(2.)).child(cog).child(self.render_views(cx))
+        })
     }
 
     /// Round, outlined in ink, at the bottom right. Hidden until a feedback link is saved.

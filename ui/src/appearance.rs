@@ -4,7 +4,8 @@
 use crate::app::{Inkling, Screen, ghost_button};
 use crate::icons::Icon;
 use crate::picker::Picker;
-use crate::theme::{Colors, Theme};
+use crate::FormFactor;
+use crate::theme::{Colors, Theme, shown_line, shown_size};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::Disableable as _;
@@ -68,10 +69,11 @@ impl Measure {
         }
     }
 
-    fn show(self, a: &Appearance) -> String {
+    /// The value as the panel shows it: what the page draws on this device.
+    fn show(self, a: &Appearance, form: FormFactor) -> String {
         match self {
-            Measure::TextSize => format!("{} pt", a.text_size.get()),
-            Measure::LineSpacing => format!("{:.2}", a.line_height()),
+            Measure::TextSize => format!("{} pt", shown_size(form, a.text_size.get())),
+            Measure::LineSpacing => format!("{:.2}", shown_line(form, a.line_height())),
             Measure::PageWidth => format!("{} pt", a.page_width.get()),
         }
     }
@@ -186,6 +188,7 @@ impl Inkling {
             self.notice = Some(format!("Couldn't save the appearance ({e}).").into());
         }
         self.theme().apply_to_kit(cx);
+        cx.emit(crate::app::Ground::of(&self.theme()));
         if self.settings.appearance != before.appearance {
             let writing = Theme::new(self.form, &self.settings.appearance, &self.faces);
             self.page.set_look(&self.settings.appearance, writing, cx);
@@ -207,6 +210,14 @@ impl Inkling {
             cx,
         );
         self.follow_view(window, cx);
+    }
+
+    /// A row's height: `mac` on the Mac, a full 44 pt target on iPhone.
+    pub(crate) fn row(&self, mac: Pixels) -> Pixels {
+        match self.form {
+            FormFactor::Mac => mac,
+            FormFactor::Phone => mac.max(self.metrics().control),
+        }
     }
 
     /// After the view changes under an open panel, or a reset, its sliders show the look on screen.
@@ -279,7 +290,7 @@ impl Inkling {
                 .child(
                     div()
                         .w_full()
-                        .h(px(34.))
+                        .h(self.row(px(34.)))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -306,7 +317,7 @@ impl Inkling {
             div()
                 .id(("pages", i))
                 .flex_1()
-                .h(px(30.))
+                .h(self.row(px(30.)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -331,7 +342,7 @@ impl Inkling {
         let row = |id: &'static str, label: &'static str, on: bool, enabled: bool, set: fn(&mut Appearance, bool)| {
             let view = view.clone();
             div()
-                .h(px(28.))
+                .h(self.row(px(28.)))
                 .flex()
                 .items_center()
                 .justify_between()
@@ -380,7 +391,7 @@ impl Inkling {
             let on = face == shown;
             div()
                 .id(("face", i))
-                .h(px(34.))
+                .h(self.row(px(34.)))
                 .px(px(10.))
                 .flex()
                 .items_center()
@@ -394,7 +405,9 @@ impl Inkling {
                 .on_click(cx.listener(move |this, _, window, cx| this.set_appearance(|a| a.face = face, window, cx)))
                 .test_support()
         }));
-        let sliders = Measure::ALL.into_iter().zip(&panel.sliders).map(|(measure, state)| {
+        // The iPhone's column is the screen, so it has no page width.
+        let phone = self.form == FormFactor::Phone;
+        let sliders = Measure::ALL.into_iter().zip(&panel.sliders).filter(move |(m, _)| !(phone && *m == Measure::PageWidth)).map(|(measure, state)| {
             div()
                 .flex()
                 .flex_col()
@@ -405,26 +418,23 @@ impl Inkling {
                         .justify_between()
                         .text_size(px(13.))
                         .child(measure.label())
-                        .child(div().id((measure.id(), 1usize)).text_color(c.muted).child(measure.show(a)).test_support()),
+                        .child(div().id((measure.id(), 1usize)).text_color(c.muted).child(measure.show(a, self.form)).test_support()),
                 )
                 .child(div().id(measure.id()).child(Slider::new(state).bg(c.link).text_color(c.surface)).test_support())
         });
-        div()
-            .id("appearance")
-            .w(PANEL_WIDTH)
-            .h_full()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .bg(c.surface)
-            .border_r_1()
-            .border_color(c.hairline)
-            .text_color(c.ink)
+        // Mac: 300 pt beside the view. iPhone: a sheet over the lower part of the screen, so the
+        // page above it shows each change.
+        let shell = div().id("appearance").flex().flex_col().bg(c.surface).border_color(c.hairline).text_color(c.ink);
+        let shell = match self.form {
+            FormFactor::Mac => shell.w(PANEL_WIDTH).h_full().flex_none().border_r_1(),
+            FormFactor::Phone => shell.size_full().border_t_1().rounded_t(px(14.)).shadow_lg(),
+        };
+        shell
             .child(
                 div()
-                    .h(px(56.))
+                    .h(self.row(px(56.)).max(px(56.)))
                     .flex_none()
-                    .pl(self.corner_width())
+                    .pl(if phone { px(20.) } else { self.corner_width() })
                     .pr(px(10.))
                     .flex()
                     .items_center()
@@ -432,6 +442,7 @@ impl Inkling {
                     .child(div().id("appearance-title").flex_1().min_w_0().truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Appearance").test_support())
                     .child(
                         ghost_button(&c, "appearance-done", "Done")
+                            .h(self.row(px(32.)))
                             .text_color(c.ink)
                             .on_click(cx.listener(|this, _, _, cx| this.close_appearance(cx)))
                             .test_support(),
@@ -461,6 +472,7 @@ impl Inkling {
                     .child(
                         div().flex().child(
                             ghost_button(&c, "appearance-reset", "Reset")
+                                .h(self.row(px(32.)))
                                 .border_1()
                                 .border_color(c.hairline)
                                 .text_color(c.ink)

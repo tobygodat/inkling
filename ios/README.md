@@ -328,13 +328,6 @@ from that folder after a relaunch).
 
 ## Gaps
 
-- **No Appearance panel on iPhone.** The phone has no cog, so the reading look, the paper tones
-  and Scroll or Paged can't be changed there. The iPhone draws the default look at its own sizes,
-  as it does for writing, and reads `reading.pages` from `settings.json`.
-- **Turning a page is a tap on the page's thirds.** There is no swipe.
-
-- **The switches have no control on iPhone.** The page draws by `markdown` and `maths` in
-  `settings.json`, but the Appearance panel that changes them is on the Mac only.
 - **The end handle under the edit menu.** UIKit shows the menu just under the selection. A drag
   that starts on the end handle's knob there can stop after a few points: the touch began inside
   the menu's own window, UIKit closes the menu when a drag begins, and iOS then starts the touch

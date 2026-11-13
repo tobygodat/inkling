@@ -65,27 +65,17 @@ pub(crate) struct Body {
 }
 
 impl Theme {
-    /// The Mac draws the writer's appearance, in a face this device has. The iPhone keeps the
-    /// default look at its own sizes.
+    /// The appearance in a face this device has. The iPhone sets the same choices a little smaller
+    /// and tighter, so its default is `DESIGN.md`'s 19 pt at 1.65, and its column is the screen.
     pub fn new(form: FormFactor, appearance: &Appearance, faces: &[Face]) -> Self {
-        match form {
-            FormFactor::Mac => {
-                let face = if faces.contains(&appearance.face) { appearance.face } else { Face::SourceSerif };
-                Theme {
-                    c: appearance.tokens().into(),
-                    body: Body {
-                        face: face.family(),
-                        size: px(appearance.text_size.get().into()),
-                        line: appearance.line_height(),
-                        column: px(appearance.page_width.get().into()),
-                    },
-                }
-            }
-            FormFactor::Phone => Theme {
-                c: Appearance::default().tokens().into(),
-                body: Body { face: Face::SourceSerif.family(), size: px(19.), line: 1.65, column: px(700.) },
-            },
-        }
+        let face = if faces.contains(&appearance.face) { appearance.face } else { Face::SourceSerif };
+        let size = phone_scale(form, f32::from(appearance.text_size.get()), PHONE_SIZE);
+        let line = phone_scale(form, appearance.line_height(), PHONE_LINE);
+        let column = match form {
+            FormFactor::Mac => px(appearance.page_width.get().into()),
+            FormFactor::Phone => px(700.),
+        };
+        Theme { c: appearance.tokens().into(), body: Body { face: face.family(), size: px(size), line, column } }
     }
 
     /// GPUI Kit's components (fields, carets, sliders) in the same colours.
@@ -103,4 +93,26 @@ impl Theme {
         kit.muted_foreground = c.muted.into();
         kit.primary = c.ink.into();
     }
+}
+
+/// The iPhone's text size and line height as fractions of the Mac's, at the defaults.
+const PHONE_SIZE: f32 = 19. / 21.;
+const PHONE_LINE: f32 = 1.65 / 1.75;
+
+/// What a stored size or spacing becomes on `form`.
+pub(crate) fn phone_scale(form: FormFactor, value: f32, phone: f32) -> f32 {
+    match form {
+        FormFactor::Mac => value,
+        FormFactor::Phone => (value * phone * 100.).round() / 100.,
+    }
+}
+
+/// The text size the panel shows on `form`, in whole points.
+pub(crate) fn shown_size(form: FormFactor, stored: u16) -> u16 {
+    phone_scale(form, f32::from(stored), PHONE_SIZE).round() as u16
+}
+
+/// The line height the panel shows on `form`.
+pub(crate) fn shown_line(form: FormFactor, stored: f32) -> f32 {
+    phone_scale(form, stored, PHONE_LINE)
 }

@@ -26,6 +26,10 @@ const BOTTOM_LINE: Pixels = px(40.);
 const MARGIN: Pixels = px(24.);
 /// How far a wheel has to push past the end of a chapter to go on to the next.
 const OVERSCROLL: Pixels = px(240.);
+/// How far a sideways swipe goes before it turns the page, and how long after a turn another
+/// swipe waits, so a fling's tail doesn't turn a second page.
+const SWIPE: Pixels = px(48.);
+const SWIPE_GAP: Duration = Duration::from_millis(350);
 
 /// One laid-out child of the chapter column, relative to the column's top. `line` is its line
 /// height when a page may break between its lines.
@@ -62,6 +66,9 @@ pub(crate) struct Reading {
     pub contents: bool,
     /// How far a wheel has pushed past the end of the chapter, down (+) or up (−).
     overscroll: Pixels,
+    /// Paged: how far a sideways swipe has gone, and when the last one turned a page.
+    swipe: Pixels,
+    swiped: Option<std::time::Instant>,
 }
 
 impl Reading {
@@ -79,6 +86,8 @@ impl Reading {
             page: 0,
             contents: false,
             overscroll: px(0.),
+            swipe: px(0.),
+            swiped: None,
         }
     }
 
@@ -364,6 +373,29 @@ impl Inkling {
         }
     }
 
+    /// Paged: a sideways swipe (a finger on iPhone, two on a trackpad) turns the page, left for
+    /// forward. One swipe turns one page, however far it goes.
+    fn swiped(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let Screen::Reading(r) = &mut self.screen else { return };
+        if matches!(event.touch_phase, TouchPhase::Started | TouchPhase::Ended) {
+            r.swipe = px(0.);
+            return;
+        }
+        let delta = event.delta.pixel_delta(px(20.));
+        if delta.x.abs() <= delta.y.abs() || r.swiped.is_some_and(|at| now.duration_since(at) < SWIPE_GAP) {
+            return;
+        }
+        r.swipe += delta.x;
+        if r.swipe.abs() < SWIPE {
+            return;
+        }
+        let forward = r.swipe < px(0.);
+        r.swipe = px(0.);
+        r.swiped = Some(now);
+        self.turn(forward, window, cx);
+    }
+
     /// Puts the view on the anchor once the chapter is laid out, and again after any new layout.
     pub(crate) fn restore_place(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pages = self.settings.reading.pages;
@@ -473,7 +505,17 @@ impl Inkling {
                 let start = tops[page];
                 let end = tops.get(page + 1).copied().unwrap_or_else(|| r.layout.borrow().height.max(start + page_h));
                 let zone = |id: &'static str| div().id(id).absolute().top_0().bottom_0().w(relative(0.3)).cursor_pointer();
-                div().id("reading-body").flex_1().min_h_0().w_full().flex().justify_center().px(m.gutter).pt(MARGIN).child(
+                div()
+                    .id("reading-body")
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .px(m.gutter)
+                    .pt(MARGIN)
+                    .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| this.swiped(event, window, cx)))
+                    .child(
                     div()
                         .id("page")
                         .relative()
