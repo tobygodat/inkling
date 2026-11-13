@@ -1,0 +1,15 @@
+[package]
+name = "reader-ios"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+# No tests here, so `cargo test` needn't link and launch an empty harness.
+test = false
+doctest = false
+
+[dependencies]
+reader-app.workspace = true
+rune.workspace = true
