@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 gpui-kit.workspace = true
+inkling-books.workspace = true
 inkling-core.workspace = true
 ratex-layout = "=0.1.15"
 ratex-parser = "=0.1.15"

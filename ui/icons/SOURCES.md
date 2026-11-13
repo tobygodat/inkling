@@ -8,6 +8,8 @@ Every icon is drawn in one colour, the theme's ink, so each file is used only as
 | `message-circle.svg` | Lucide 1.43.0, `message-circle` | ISC, `LICENSE-LUCIDE.txt` |
 | `frame.svg` | Lucide 1.43.0, `frame` (the artboard) | ISC, `LICENSE-LUCIDE.txt` |
 | `bot.svg` | Lucide 1.43.0, `bot` (the fallback provider icon) | ISC, `LICENSE-LUCIDE.txt` |
+| `book-open.svg` | Lucide 1.43.0, `book-open` (the library) | ISC, `LICENSE-LUCIDE.txt` |
+| `pen-line.svg` | Lucide 1.43.0, `pen-line` (writing) | ISC, `LICENSE-LUCIDE.txt` |
 | `claude.svg` | Simple Icons 16.37.0, `claude` | CC0 1.0, `LICENSE-SIMPLE-ICONS.md` |
 | `gemini.svg` | Simple Icons 16.37.0, `googlegemini` | CC0 1.0, `LICENSE-SIMPLE-ICONS.md` |
 

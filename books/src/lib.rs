@@ -11,4 +11,4 @@ pub mod scan;
 
 pub use book::{Block, Book, BookId, Chapter, Format, Position};
 pub use import::ImportError;
-pub use library::{Entry, Library, Prepared, prepare};
+pub use library::{Entry, Library, Prepared, load, prepare};

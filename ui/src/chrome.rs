@@ -1,7 +1,7 @@
 //! What sits in the Mac window's corners on every screen: the cog and its menu at the top left,
 //! and the round feedback button at the bottom right.
 
-use crate::app::{Inkling, OpenKeys};
+use crate::app::{Inkling, OpenKeys, Screen};
 use crate::icons::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -67,6 +67,11 @@ impl Inkling {
         self.menu
     }
 
+    /// Whether the books are on screen, so the menu's first row leads back to writing.
+    fn reading_or_library(&self) -> bool {
+        matches!(self.screen, Screen::Library(_) | Screen::Reading(_))
+    }
+
     pub(crate) fn render_cog(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let c = self.theme().c;
         let open = self.menu.is_open();
@@ -113,6 +118,15 @@ impl Inkling {
                 .text_size(px(13.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(c.ink)
+                .child(if self.reading_or_library() {
+                    row("menu-writing", Icon::Pen, "Writing")
+                        .on_click(cx.listener(|this, _, window, cx| this.back_to_writing(window, cx)))
+                        .test_support()
+                } else {
+                    row("menu-library", Icon::Book, "Library")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_library(window, cx)))
+                        .test_support()
+                })
                 .child(
                     row("menu-appearance", Icon::Artboard, "Appearance")
                         .on_click(cx.listener(|this, _, window, cx| this.open_appearance(window, cx)))

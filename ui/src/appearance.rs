@@ -123,7 +123,8 @@ impl Inkling {
         if matches!(self.screen, Screen::Page(Some(_))) {
             return;
         }
-        if self.screen.keys().is_some() || self.screen.feedback().is_some() {
+        if !matches!(self.screen, Screen::Page(None)) {
+            self.save_position();
             self.screen = Screen::Page(None);
             self.focus_page(window, cx);
         }

@@ -68,8 +68,15 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 - **Ask field.** One line, with Send.
 - **Key screen.** Provider choice, masked key field, model field.
 - **Cog.** A 32 pt button with the cog icon. Hover opens its menu and leaving closes it; a click pins
-  it open until a second click, Escape or a choice. Rows: Appearance with the artboard icon, and
-  Provider with the chosen provider's logo, its name unwritten. The menu is as wide as its rows.
+  it open until a second click, Escape or a choice. Rows: Library with the book icon (Writing with
+  the pen while the books are open), Appearance with the artboard icon, and Provider with the chosen
+  provider's logo, its name unwritten. The menu is as wide as its rows.
+- **Library.** The title, Find books and Add at the top, then the books as 150 pt tiles, newest
+  first: the cover or the title in the body face on a Segment tile, a progress line once started,
+  then the title and the author or format and how far through. Find books lists what it found with
+  a tick each and one Add button.
+- **Reading.** "‹ Library" and the book's title at the top, one chapter in the page's column in the
+  body face, size and line spacing, and "Chapter n of m · p%" in muted ink at the bottom.
 - **Feedback button.** 40 pt round, an ink outline and the message icon. Shown once a feedback link
   is saved.
 - **Appearance panel.** Header (artboard, "Appearance", Done), Light / Dark / Custom, Font, Text
@@ -78,7 +85,7 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 - **Colour picker.** Under the colour row it belongs to: ten swatches that suit that colour, then
   Custom, which adds a wheel (angle is hue, distance from the centre is strength), a lightness
   slider and a hex field.
-- **Icons.** One colour, the ink. Lucide for the cog, message, artboard and robot; Simple Icons for
+- **Icons.** One colour, the ink. Lucide for the cog, message, artboard, robot, book and pen; Simple Icons for
   Claude and Gemini. ChatGPT shows the robot. Sources are in `ui/icons/SOURCES.md`.
 
 - Inline buttons are 28 pt on Mac. No control on iPhone is under 44 pt.
