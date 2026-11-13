@@ -41,3 +41,25 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+  server:
+    name: Server types and tests
+    # The Worker in server/ (ADR 0004). Its tests run in workerd with local D1 and KV.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Types
+        run: bun run check
+
+      - name: Tests
+        run: bun run test

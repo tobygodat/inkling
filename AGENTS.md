@@ -21,6 +21,9 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 - `mcp/` is `inkling-mcp`: the MCP server an agent reads the library and the draft through
   (ADR 0004). `inkling-mcp --stdio` serves the Mac's data folder and never writes to it. No UI
   framework may be a dependency of it.
+- `server/` is `inkling-server`, the Cloudflare Worker of ADR 0004: OAuth with Sign in with Apple,
+  the remote MCP endpoint, the devices' sync API and the Readwise inbox. TypeScript on Bun, not in
+  the Cargo workspace. `server/README.md` has its setup.
 - `ui/` is `inkling-ui`: every view, shared by the Mac app and the iPhone host. It takes its form
   factor as a value and never reads the platform.
 - `mac/` is the Mac app, on GPUI Kit's `gpui-fast` feature.
@@ -66,6 +69,9 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo install --path mcp --locked` installs `inkling-mcp` in `~/.cargo/bin`, and
   `claude mcp add inkling -- ~/.cargo/bin/inkling-mcp --stdio` connects Claude Code to it. Claude
   Desktop takes the same command in `claude_desktop_config.json`.
+- `cd server && bun install && bun run check && bun run test` checks the Worker's types and runs its
+  tests in workerd. Any change under `server/` runs them.
+- `cd server && bun run deploy` deploys the Worker and applies its migrations. Only Toby runs it.
 - `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
   `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`
@@ -87,7 +93,8 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 
 ## Review
 
-- CI runs clippy and `cargo test --workspace` on every PR and on `main`. Run both before you push.
+- CI runs clippy and `cargo test --workspace` on every PR and on `main`, and the Worker's types and
+  tests. Run what you changed before you push.
   Nobody runs them again by hand after that.
 - The final check runs once per PR. It waits for CI to be green on the final head, then runs
   `mac/snap.sh` when `core/`, `ui/` or `mac/` changed and `ios/snap.sh` when `ui/` or `ios/` changed.

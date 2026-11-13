@@ -59,9 +59,9 @@ the decision below.
   the proposal is shown as out of date and is not applied.
 - `add_book` (server only): a URL to an EPUB or PDF, put in the inbox like a Readwise upload.
 
-Each tool sits behind a scope (`library:read`, `draft:read`, `draft:propose`, `library:write`), and
-the consent page says which the agent asked for. The draft scopes are off unless the writer turns
-on "Agents can read the draft".
+Each tool sits behind a scope (`library:read`, `draft:read`, and later `draft:propose` and
+`library:write`). The consent page lists them as boxes to tick, and the draft's box starts
+unticked, so an agent reads the draft only when the writer ticks it.
 
 ### Sign-in
 
