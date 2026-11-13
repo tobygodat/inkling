@@ -20,7 +20,12 @@ app.
   `search_library`, `read_draft`) only read, through a `Store`, and are defined once in
   `mcp/tools.json`, which the planned Worker serves too. `Folder` is the store over the data
   folder, read afresh on every call so a book the app just added shows at once. The binary,
-  `inkling-mcp --stdio`, is what Claude Desktop and Claude Code start on the Mac.
+  `inkling-mcp --stdio`, is what Claude Desktop and Claude Code start on the Mac. Until the
+  Integrations screen exists, `inkling-mcp sign-in` and `inkling-mcp sync` put the Mac on the
+  server: `signin` is an OAuth client with a one-time listener on 127.0.0.1, which keeps its refresh
+  token in the Keychain, and `sync` sends up the books, positions and draft the server lacks and
+  saves waiting Readwise files in `~/Downloads/Readwise` for Find books. It writes nothing in the
+  data folder, because the running app owns `library.json`.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
   `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and nine
@@ -193,16 +198,18 @@ more than 10 ms of CPU, so it never parses a book.
   so a search runs inside D1. It finds one hit per chapter, and a query under three characters
   falls back to `instr`.
 - **Sync.** `src/sync.ts`. A device uploads a book's parsed JSON to KV, then each chapter, then its
-  row, which is refused until the rest is there. A position carries when it changed, and the later
-  wins. A draft save carries when it was saved; the later wins, and 20 versions are kept.
+  row, which is refused until the rest is there. A position carries when it changed (an entry's
+  `position_at`), and the later wins. A draft save carries when it was saved; the later wins, and
+  20 versions are kept. Both times are milliseconds since the Unix epoch.
 - **Readwise.** `src/readwise.ts`. The token and webhook secret are kept as AES-GCM ciphertext under
   `SECRET_KEY`. A webhook, or the poll every 30 minutes, streams each new EPUB or PDF from Reader
-  into KV as an inbox item. A device downloads it, imports it with `inkling_books::prepare`, uploads
-  the book and settles the item. Only documents saved after the link was made come in.
+  into KV as an inbox item. A device downloads it and settles the item; for now `inkling-mcp sync`
+  leaves the file for Find books, and the writer adds it. Only documents saved after the link was
+  made come in.
 
 ## External services
 Anthropic, OpenAI and Google's generative language API, each called directly with the user's key.
 Feedback goes to the T3 webhook in the writer's feedback link, and only the feedback text and
 where it was sent from. An agent the writer connects through `inkling-mcp` reads the library and
 the draft, and the agent's own app decides where that goes. Inkling's own server (above) holds the library and the draft for agents away from the Mac and
-for sync. No device syncs to it yet. It calls Readwise with the writer's token and Apple to sign in.
+for sync. The Mac syncs to it with `inkling-mcp sync`. It calls Readwise with the writer's token and Apple to sign in.

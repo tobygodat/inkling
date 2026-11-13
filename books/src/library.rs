@@ -35,6 +35,10 @@ pub struct Entry {
     /// When the book was last opened, in seconds since the Unix epoch, or 0 if never.
     #[serde(default)]
     pub opened: u64,
+    /// When `position` last changed, in milliseconds since the Unix epoch, or 0 if never. Sync
+    /// keeps the later of two devices' positions by this.
+    #[serde(default)]
+    pub position_at: u64,
 }
 
 impl Entry {
@@ -111,6 +115,7 @@ impl Library {
                     chapters: book.chapters,
                     cover: book.cover.clone(),
                     opened: 0,
+                    position_at: 0,
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -148,6 +153,7 @@ impl Library {
             return Ok(());
         }
         entry.position = position;
+        entry.position_at = now_millis().max(entry.position_at + 1);
         self.save()
     }
 
@@ -224,6 +230,10 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+fn now_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
 /// Writes `bytes` to a sibling temporary file and renames it over `path`, so a crash leaves
 /// either the old file or the new one.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -256,6 +266,14 @@ mod tests {
         assert_eq!(again, first);
         lib.add(&again).unwrap();
         assert_eq!(lib.entries().len(), 1);
+
+        let stamped = lib.entries()[0].position_at;
+        assert!(stamped > 0, "a new position is stamped");
+        lib.set_position(&id, Position { chapter: 1, fraction: 0.5 }).unwrap();
+        assert_eq!(lib.entries()[0].position_at, stamped, "the same position again keeps its stamp");
+        lib.set_position(&id, Position { chapter: 1, fraction: 0.6 }).unwrap();
+        assert!(lib.entries()[0].position_at > stamped, "a move in the same millisecond still stamps later");
+        lib.set_position(&id, Position { chapter: 1, fraction: 0.5 }).unwrap();
 
         let reopened = Library::open(dir.path().join("data")).unwrap();
         assert_eq!(reopened.entries()[0].position, Position { chapter: 1, fraction: 0.5 });

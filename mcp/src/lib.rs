@@ -1,9 +1,12 @@
 //! Inkling's MCP server: the tools an agent such as Claude uses to read the writer's library and
 //! draft (ADR 0004). [`Server`] answers one JSON-RPC message at a time and knows nothing about
 //! the transport; `main.rs` serves it over stdio. Every tool only reads, through a [`Store`], so
-//! the same tools can later run on the server over a database.
+//! the same tools can later run on the server over a database. [`signin`] and [`sync`] are
+//! `inkling-mcp sign-in` and `inkling-mcp sync`, which put this Mac's library on the server.
 
+pub mod signin;
 mod store;
+pub mod sync;
 mod tools;
 
 use serde_json::{Value, json};

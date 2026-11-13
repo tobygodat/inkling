@@ -19,8 +19,8 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
   the folder search. No UI framework may be a dependency of it. Its real-file tests read books that
   `books/fetch-fixtures.sh` downloads into `target/fixtures`, so run it once before `cargo test`.
 - `mcp/` is `inkling-mcp`: the MCP server an agent reads the library and the draft through
-  (ADR 0004). `inkling-mcp --stdio` serves the Mac's data folder and never writes to it. No UI
-  framework may be a dependency of it.
+  (ADR 0004). `inkling-mcp --stdio` serves the Mac's data folder and never writes to it, and
+  `inkling-mcp sync` sends that folder up to the server. No UI framework may be a dependency of it.
 - `server/` is `inkling-server`, the Cloudflare Worker of ADR 0004: OAuth with Sign in with Apple,
   the remote MCP endpoint, the devices' sync API and the Readwise inbox. TypeScript on Bun, not in
   the Cargo workspace. `server/README.md` has its setup.
@@ -69,6 +69,10 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo install --path mcp --locked` installs `inkling-mcp` in `~/.cargo/bin`, and
   `claude mcp add inkling -- ~/.cargo/bin/inkling-mcp --stdio` connects Claude Code to it. Claude
   Desktop takes the same command in `claude_desktop_config.json`.
+- `inkling-mcp sign-in` signs the Mac in to the server in the browser and keeps the sign-in in the
+  Keychain; `inkling-mcp sync` sends the library and draft up and fetches Readwise uploads, and
+  `inkling-mcp readwise` connects Readwise. They use Toby's Apple ID and Keychain, so only Toby
+  runs them.
 - `cd server && bun install && bun run check && bun run test` checks the Worker's types and runs its
   tests in workerd. Any change under `server/` runs them.
 - `cd server && bun run deploy` deploys the Worker and applies its migrations. Only Toby runs it.
