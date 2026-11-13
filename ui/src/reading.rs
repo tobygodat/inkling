@@ -422,7 +422,7 @@ impl Inkling {
             .flex()
             .items_center()
             .gap_3()
-            .pl(px(56.))
+            .pl(self.corner_width())
             .pr(m.gutter)
             .text_size(m.ui)
             .child(ghost_button(&c, "back-to-library", "‹ Library").on_click(cx.listener(|this, _, _, cx| this.close_book(cx))).test_support())

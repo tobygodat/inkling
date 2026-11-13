@@ -1,9 +1,12 @@
 //! What sits in the Mac window's corners on every screen: the cog and its menu at the top left,
 //! and the round feedback button at the bottom right.
 
-use crate::app::{Inkling, OpenKeys, Screen};
+use crate::app::{Inkling, OpenKeys, Screen, ShowReading, ShowWriting};
+use crate::FormFactor;
 use crate::icons::Icon;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
+use inkling_core::View;
 use gpui_kit::*;
 use std::time::Duration;
 
@@ -86,6 +89,11 @@ impl Inkling {
             .hover(|cog| cog.bg(c.segment))
             .cursor_pointer()
             .child(Icon::Cog.draw(px(18.), c.ink))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if *hovered {
+                    this.hover_cog(true, cx)
+                }
+            }))
             .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(cx)))
             .test_support();
         let row = |id: &'static str, icon: Icon, label: &'static str| {
@@ -162,11 +170,110 @@ impl Inkling {
             .flex_col()
             .items_start()
             .gap(px(6.))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.hover_cog(*hovered, cx)))
+            // Only the cog opens the menu; leaving the corner closes it.
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.hover_cog(false, cx)
+                }
+            }))
             // The page keeps the caret while the writer opens the menu.
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .child(cog)
+            .child(div().flex().items_center().gap(px(6.)).child(cog).child(self.render_views(cx)))
             .children(menu)
+    }
+
+    /// The toggle beside the cog: Write and Read, the view on screen on a filled square.
+    pub(crate) fn render_views(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
+        let segment = toggle_segment(self.form);
+        let current = self.view();
+        // The chosen half sits on a square lighter than the pill: the surface on a light ground,
+        // the hairline tone on a dark one, where the surface is darker than the pill.
+        let dark = c.ground.r + c.ground.g + c.ground.b < 1.5;
+        let raised = if dark { c.hairline } else { c.surface };
+        let half = |id: &'static str, view: View, icon: Icon, label: &'static str, keys: &'static str| {
+            let on = current == view;
+            div()
+                .id(id)
+                .size(segment)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .when(on, |half| half.bg(raised).border_1().border_color(c.hairline))
+                .when(!on, |half| half.hover(|half| half.bg(c.hairline)))
+                .cursor_pointer()
+                .aria_label(label)
+                .aria_selected(on)
+                .aria_keyshortcuts(keys)
+                .child(icon.draw(px(16.), if on { c.ink } else { c.muted }))
+                .on_click(cx.listener(move |this, _, window, cx| this.show_view(view, window, cx)))
+                .when(self.form == FormFactor::Mac, |half| {
+                    half.tooltip(move |window, cx| match view {
+                        View::Writing => Tooltip::new(label).action(&ShowWriting, None).build(window, cx),
+                        View::Reading => Tooltip::new(label).action(&ShowReading, None).build(window, cx),
+                    })
+                })
+                .test_support()
+        };
+        // On iPhone the halves are full 44 pt targets and the pill is exactly as tall as the status row.
+        let inset = if self.form == FormFactor::Phone { px(0.) } else { px(2.) };
+        div()
+            .id("views")
+            .flex()
+            .gap(inset)
+            .p(inset)
+            .rounded(px(8.))
+            .bg(c.segment)
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .child(half("show-writing", View::Writing, Icon::Pen, "Writing", "Command+1"))
+            .child(half("show-reading", View::Reading, Icon::Book, "Reading", "Command+2"))
+            .test_support()
+    }
+
+    /// Write or Read in the toggle, or Cmd-1 and Cmd-2. Read opens the book read last where it was
+    /// left, or the library when there is none. The view already on screen stays as it is.
+    pub fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
+        if self.view() == view {
+            return;
+        }
+        if self.screen.keys().is_some() {
+            self.close_keys(window, cx);
+        } else if self.screen.feedback().is_some() {
+            self.close_feedback(window, cx);
+        }
+        match view {
+            View::Writing => self.back_to_writing(window, cx),
+            View::Reading if self.last_book().is_some() => self.keep_reading(window, cx),
+            View::Reading => self.open_library(window, cx),
+        }
+    }
+
+    pub(crate) fn on_show_writing(&mut self, _: &ShowWriting, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_view(View::Writing, window, cx);
+    }
+
+    pub(crate) fn on_show_reading(&mut self, _: &ShowReading, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_view(View::Reading, window, cx);
+    }
+
+    /// How far in from the left the window's top corner reaches, so bars along the top start after it.
+    pub(crate) fn corner_width(&self) -> Pixels {
+        match self.form {
+            FormFactor::Mac => px(12. + 32. + 6.) + toggle_segment(self.form) * 2. + px(6.) + px(16.),
+            FormFactor::Phone => px(8.) + toggle_segment(self.form) * 2. + px(12.),
+        }
+    }
+
+    /// iPhone: the toggle alone at the top left, as the phone has no cog. The key and feedback
+    /// screens have their own way back, and a review its own bar, so it stays off those.
+    pub(crate) fn render_phone_corner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let shown = match self.screen {
+            Screen::Page => self.revision.review().is_none(),
+            Screen::Library(..) | Screen::Reading(_) => true,
+            Screen::Keys(_) | Screen::Feedback(_) => false,
+        };
+        shown.then(|| div().absolute().top_0().left(px(8.)).child(self.render_views(cx)))
     }
 
     /// Round, outlined in ink, at the bottom right. Hidden until a feedback link is saved.
@@ -194,5 +301,13 @@ impl Inkling {
                     .test_support(),
             ),
         )
+    }
+}
+
+/// One half of the Write and Read toggle: 28 pt on the Mac, a full touch target on iPhone.
+fn toggle_segment(form: FormFactor) -> Pixels {
+    match form {
+        FormFactor::Mac => px(28.),
+        FormFactor::Phone => form.metrics().control,
     }
 }

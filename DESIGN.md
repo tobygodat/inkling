@@ -58,8 +58,10 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
 - Nothing sits beside the text column (or a book's), except the Appearance panel. It is 300 pt wide on the left
   while it is open, because a look is judged on the page: the writer sees each change on the real
   draft as they make it, and closes the panel with Done.
-- Mac corners: the cog at the top left and the round feedback button at the bottom right, on every
-  screen. The cog's menu opens below the cog and never reaches the column at 1280 by 800.
+- Mac corners: the cog and the Write and Read toggle at the top left, and the round feedback button
+  at the bottom right, on every screen. The cog's menu opens below the cog and never reaches the
+  column at 1280 by 800. Bars along the top start after the corner. On iPhone the toggle sits alone
+  at the top left, outside a review.
 
 ## Components
 - **Version bar.** Version name, source, added and removed counts, accepted count, "Back to draft",
@@ -85,10 +87,15 @@ from `inkling_core::Appearance::tokens`. Light is the default and the iPhone's o
   Shift-Space, Page Up and the left third turn back, Home and End go to the chapter's ends. Past
   either end of a chapter is the next or the one before. Contents lists the chapters under its
   button, the current one on Segment.
+- **Write and Read toggle.** One pill on Segment holding two square halves, pen then book, 28 pt on
+  the Mac and 44 pt on iPhone. The view on screen sits on a lighter square (the surface on a light
+  ground, the hairline tone on a dark one) with its icon in ink; the other is muted. Write goes to the
+  draft; Read reopens the last book where it was left, or the library when no book has been read.
+  Cmd-1 and Cmd-2 do the same; each half has a tooltip and a label, "Writing" and "Reading".
 - **Feedback button.** 40 pt round, an ink outline and the message icon. Shown once a feedback link
   is saved.
 - **Appearance panel.** Beside the page, the library or a book, editing that view's look. Header
-  (artboard, "Appearance", the view's name, Done), "Same look for reading and writing" with the link
+  ("Appearance" and Done, after the corner, whose toggle names the view), "Same look for reading and writing" with the link
   icon and a switch, Light / Dark / Custom, the paper tones as "Aa" swatches in their own colours,
   Font, Text size, Line spacing, Page width, then Drawing (a Markdown switch and a Maths switch) for
   writing or Pages (Scroll / Paged) for reading, Colours, Reset. Every change shows at once and is

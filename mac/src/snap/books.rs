@@ -8,6 +8,7 @@ use inkling_core::{Face, Mode, PageMode, View};
 use inkling_ui::BookHost;
 use std::cell::RefCell;
 
+const DRAFT: &str = "A draft about the ferry, left open while reading.";
 const NOT_A_BOOK: &str = "“notes.txt” isn’t an EPUB or a PDF.";
 
 /// What the stand-in open panel answers with next.
@@ -67,6 +68,22 @@ pub fn run(dir: &Path) {
     let picked: Picked = Rc::default();
 
     let mut s = open(dir, &folder, &picked);
+    s.input(DRAFT);
+    let (cog, toggle) = (s.bounds("cog"), s.bounds("views"));
+    check(
+        cog.zip(toggle).is_some_and(|(c, t)| t.left() > c.right() && t.right() < px(140.) && (t.center().y - c.center().y).abs() < px(1.)),
+        "the Write and Read toggle sits beside the cog",
+    );
+    check(s.bounds("show-writing").zip(s.bounds("show-reading")).is_some_and(|(w, r)| w.right() <= r.left()), "Write, then Read");
+    s.shot("books-00-toggle-writing");
+    s.click("show-reading");
+    check(s.read(|v, _| v.library_open()), "Read with no book read yet opens the library");
+    s.click("show-writing");
+    check(!s.read(|v, _| v.library_open()) && s.page_focused() && s.text() == DRAFT, "Write goes back to the draft");
+    s.press("cmd-2");
+    check(s.read(|v, _| v.library_open()), "Cmd-2 is Read");
+    s.press("cmd-1");
+    check(!s.read(|v, _| v.library_open()) && s.text() == DRAFT, "and Cmd-1 is Write");
     s.click("cog");
     check(s.bounds("menu-library").is_some(), "the cog's menu offers the Library");
     s.click("menu-library");
@@ -284,6 +301,14 @@ pub fn run(dir: &Path) {
     s.hover("reading-column");
     s.advance(200);
     s.shot("books-14-kept-reading");
+    check(s.read(|v, _| v.view()) == View::Reading, "the toggle shows Read while a book is open");
+    s.shot("books-16-toggle-reading");
+    s.click("show-writing");
+    check(s.read(|v, _| v.reading().is_none() && v.view() == View::Writing) && s.text() == DRAFT, "Write from a book goes back to the draft, unchanged");
+    s.click("show-reading");
+    settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
+    s.frame();
+    check(position(&mut s) == Some(kept), "Read from the page reopens the last book where it was left");
     drop(s);
 
     let mut s = Snap::open_sized(dir, size(px(1000.), px(640.)));

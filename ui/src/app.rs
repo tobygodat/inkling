@@ -16,7 +16,7 @@ use inkling_core::{
 use std::sync::mpsc;
 use std::time::Duration;
 
-gpui_kit::actions!(inkling, [OpenKeys]);
+gpui_kit::actions!(inkling, [OpenKeys, ShowWriting, ShowReading]);
 
 const AUTOSAVE: Duration = Duration::from_millis(500);
 
@@ -795,7 +795,9 @@ impl Render for Inkling {
             .bg(t.c.ground)
             .text_color(t.c.ink)
             .font_family(SANS)
-            .on_action(cx.listener(Self::on_open_keys));
+            .on_action(cx.listener(Self::on_open_keys))
+            .on_action(cx.listener(Self::on_show_writing))
+            .on_action(cx.listener(Self::on_show_reading));
         if self.kit_view != self.view() {
             self.kit_view = self.view();
             t.apply_to_kit(cx);
@@ -821,7 +823,7 @@ impl Render for Inkling {
         };
         let root = root.child(screen);
         if self.form == FormFactor::Phone {
-            return root;
+            return root.children(self.render_phone_corner(cx));
         }
         root.children(self.render_feedback_button(cx)).child(self.render_cog(cx))
     }
@@ -918,7 +920,7 @@ impl Inkling {
         div()
             .w_full()
             .h(m.control)
-            .pl(px(24.))
+            .pl(self.corner_width())
             .pr(px(8.))
             .flex()
             .items_center()

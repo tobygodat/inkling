@@ -586,12 +586,19 @@ fn appearance(dir: &Path) {
 fn phone(dir: &Path, draft: &str) {
     let mut s = Snap::open_as(dir, FormFactor::Phone);
     check(s.text() == draft, "the iPhone layout opens the same draft");
+    let halves = s.bounds("show-writing").zip(s.bounds("show-reading"));
+    check(
+        halves.is_some_and(|(w, r)| w.size.height >= px(44.) && w.size.width >= px(44.) && r.size.width >= px(44.) && w.top() == px(0.)),
+        "on iPhone the Write and Read toggle has 44 pt halves in the status row",
+    );
+    s.shot("13a-iphone-toggle");
     let still = draft.find("still").expect("the word");
     s.select(still..still + 5);
     s.click("find-word");
     s.wait(5000, reviewing);
     check(s.bounds("open-feedback").is_none(), "with no feedback link the iPhone offers no feedback");
     check(s.bounds(("accept", 0usize)).is_none(), "iPhone draws no inline controls");
+    check(s.bounds("views").is_none(), "and the toggle steps aside for the version bar");
     check(s.bounds("keep").is_some() && s.bounds("use").is_some(), "the sheet offers Keep and Use for the change");
     s.shot("13-iphone-review");
     s.click("use");

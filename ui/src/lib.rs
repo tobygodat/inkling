@@ -16,7 +16,7 @@ mod reading;
 mod review;
 mod theme;
 
-pub use app::{Inkling, OpenKeys, Saved};
+pub use app::{Inkling, OpenKeys, Saved, ShowReading, ShowWriting};
 pub use chrome::Menu;
 pub use feedback::Restart;
 pub use icons::Assets;
@@ -93,6 +93,10 @@ pub fn init(cx: &mut App) {
     theme.font_family = SANS.into();
     theme.font_size = px(14.);
     theme.shadow = false;
-    cx.bind_keys([KeyBinding::new("cmd-,", OpenKeys, None)]);
+    cx.bind_keys([
+        KeyBinding::new("cmd-,", OpenKeys, None),
+        KeyBinding::new("cmd-1", ShowWriting, None),
+        KeyBinding::new("cmd-2", ShowReading, None),
+    ]);
     live::bind_keys(cx);
 }

@@ -142,7 +142,8 @@ library has no Add and no Find books. The iPhone host doesn't pass one yet.
   is, as a fraction of its height. Scrolling and page turns move it; a new layout (a mode switch, a
   resize, a new text size, the panel opening) puts the view back on it. It is saved with
   `Library::set_position` 500 ms after the last move, on a chapter turn and on leaving the book.
-  `Library::opened` records the last book opened, which the cog's Keep reading opens again.
+  `Library::opened` records the last book opened, which the cog's Keep reading and the Read half of
+  the Write and Read toggle (`Inkling::show_view`, Cmd-1 and Cmd-2) open again.
 
 ## What is open
 `Inkling::screen` is one `Screen`: the page, the key screen, the feedback screen, the library or a

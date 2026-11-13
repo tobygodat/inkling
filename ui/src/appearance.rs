@@ -424,24 +424,12 @@ impl Inkling {
                 div()
                     .h(px(56.))
                     .flex_none()
-                    .pl(px(56.))
+                    .pl(self.corner_width())
                     .pr(px(10.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(Icon::Artboard.draw(px(16.), c.ink))
-                    .child(div().flex_1().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Appearance"))
-                    .child(
-                        div()
-                            .id("appearance-view")
-                            .text_size(px(12.))
-                            .text_color(c.muted)
-                            .child(match view {
-                                View::Writing => "Writing",
-                                View::Reading => "Reading",
-                            })
-                            .test_support(),
-                    )
+                    .child(div().id("appearance-title").flex_1().min_w_0().truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Appearance").test_support())
                     .child(
                         ghost_button(&c, "appearance-done", "Done")
                             .text_color(c.ink)
