@@ -104,6 +104,7 @@ impl Inkling {
                 .child(icon.draw(px(16.), c.ink))
                 .child(label)
         };
+        let keep_reading = !matches!(self.screen, Screen::Reading(_)) && self.last_book().is_some();
         let menu = (self.menu != Menu::Closed).then(|| {
             let menu = div()
                 .id("menu")
@@ -126,6 +127,13 @@ impl Inkling {
                     row("menu-library", Icon::Book, "Library")
                         .on_click(cx.listener(|this, _, window, cx| this.open_library(window, cx)))
                         .test_support()
+                })
+                .when(keep_reading, |menu| {
+                    menu.child(
+                        row("menu-keep-reading", Icon::Book, "Keep reading")
+                            .on_click(cx.listener(|this, _, window, cx| this.keep_reading(window, cx)))
+                            .test_support(),
+                    )
                 })
                 .child(
                     row("menu-appearance", Icon::Artboard, "Appearance")

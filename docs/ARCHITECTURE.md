@@ -17,7 +17,7 @@ app.
   and Reading screens in `ui/` use it.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
-  `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and eight
+  `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and nine
   one-colour icons (`ui/icons/`, sources and terms
   in `SOURCES.md`), which it serves with GPUI Kit's own through `inkling_ui::Assets`. Both hosts
   register that asset source.
@@ -60,18 +60,25 @@ shows what happened. `core::feedback::Desk` owns all of it, the way `Revision` o
   host to relaunch the bundle once this process has quit.
 
 ## Appearance
-`core::appearance::Appearance` is what the writer chose: Light, Dark or Custom, the four custom
-colours, the body face, text size, line spacing, page width, and the Markdown and maths switches. It lives in `settings.json` and is
+`core::appearance::Appearance` is one look: Light, Dark, Custom or one of the paper tones (Paper,
+Sepia, Sage, Dusk, Night), the four custom colours, the body face, text size, line spacing, page width, and the Markdown and maths switches. It lives in `settings.json` and is
 read leniently: a missing field or one that can't be read takes its default, and every number is
 clamped, so neither an old file nor a hand edit can load an invalid look or cost the other
 settings. `Appearance::tokens` derives every colour the views draw; Light is exactly the table in
 `DESIGN.md`.
 
+`Settings` holds two: `appearance` for writing and `reading.look` for the library and books, with
+`reading.synced` and `reading.pages` (Scroll or Paged) beside it (ADR 0004). `Settings::change_look`
+is the one way to change a look: while synced it gives the other view the same colours, face, sizes
+and width, and never touches writing's Markdown and maths switches. A file without `reading`, or
+with junk for it, loads with reading as a copy of writing, synced.
+
 `ui::theme::Theme::new` turns the appearance into GPUI colours and the body's face and sizes, and
-is the one place views read them. The Mac uses the writer's appearance in a face its text system
-has (asked once at launch); the iPhone always gets the default look at its own sizes.
-`Inkling::set_appearance` is the one way to change it: it saves the file, recolours GPUI Kit's
-theme and redraws the window.
+is the one place views read them. `Inkling::theme` is the look of the view on screen
+(`Inkling::view`: reading while the library or a book is open). The Mac uses it in a face its text
+system has (asked once at launch); the iPhone always gets the default look at its own sizes.
+`Inkling::set_appearance` changes the view on screen's look through `change_look`: it saves the
+file, recolours GPUI Kit's theme and redraws the window.
 
 ## The page
 `ui::page::Page` is the writing page: the live editor in `ui/src/live/`, on the Mac and on
@@ -121,20 +128,29 @@ library has no Add and no Find books. The iPhone host doesn't pass one yet.
   and stored by `inkling_books::prepare` on the background executor, then recorded with
   `Library::add` on the UI thread. A file that can't be added shows `ImportError`'s words.
 - **Reading** (`ui/src/reading.rs`). The book is loaded on the background executor, then one
-  chapter at a time is set in the page's column from `Theme`: the body face, size, line spacing,
-  page width and colours. It draws the chapter title, headings, quotes and scene breaks, a link
-  back a chapter and Next at the end. It scrolls; paged mode isn't built yet.
-- **The place.** A `Position` is the chapter and how far its column has scrolled. It is saved with
-  `Library::set_position` 500 ms after the last scroll, on a chapter turn and on leaving the book.
-  The timer holds the scroll handle, so it still saves after the writer has moved on. Opening the
-  book scrolls back to it once the chapter is laid out.
+  chapter at a time is set in reading's look: the body face, size, line spacing, page width and
+  colours. It draws the chapter title, headings, quotes and scene breaks, a link back a chapter and
+  Next at the end, a Contents list and a progress line (the chapter and how far through the book).
+- **Scroll and Paged.** The chapter column reports each child's bounds after layout
+  (`on_children_prepainted`), with the line height of the blocks a page may break inside. In
+  Scroll the column scrolls. In Paged, `paginate` cuts the chapter into pages the height of the
+  reading area, each ending at the last whole line or block, and a page is a clipped window onto the
+  same column. Keys and clicks on the page's edges turn pages; past either end of a chapter (the last
+  page, or pushing the wheel on past the bottom) goes into the next chapter or the end of the one
+  before.
+- **The place.** A `Position` is the chapter and an anchor: how far down the chapter the view's top
+  is, as a fraction of its height. Scrolling and page turns move it; a new layout (a mode switch, a
+  resize, a new text size, the panel opening) puts the view back on it. It is saved with
+  `Library::set_position` 500 ms after the last move, on a chapter turn and on leaving the book.
+  `Library::opened` records the last book opened, which the cog's Keep reading opens again.
 
 ## What is open
 `Inkling::screen` is one `Screen`: the page, the key screen, the feedback screen, the library or a
-book being read. The library carries `Option<Finding>` while Find books is open over it. The page
-carries `Option<AppearancePanel>`, and the panel carries `Option<Picker>`, whose `Option<Custom>`
-holds the wheel. So the panel exists only beside the page, a picker only inside the panel, and
-opening a screen drops whatever the one before held. The cog's `Menu` (`Closed`, `Open { pinned }`,
+book being read. The library carries `Option<Finding>` while Find books is open over it.
+`Inkling::panel` is `Option<AppearancePanel>`, drawn beside the page, the library or a book; the key
+and feedback screens close it. The panel carries `Option<Picker>`, whose `Option<Custom>` holds the
+wheel, so a picker exists only inside the panel. Opening a screen drops whatever the one before
+held. The cog's `Menu` (`Closed`, `Open { pinned }`,
 `Closing` while it fades) is a separate field, because it sits over every screen.
 
 ## The review page

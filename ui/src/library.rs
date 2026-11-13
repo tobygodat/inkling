@@ -31,12 +31,14 @@ pub(crate) struct Books {
     pub adding: usize,
     /// Why the last files couldn't be added or opened, in `ImportError`'s words.
     pub errors: Vec<String>,
+    /// The book being loaded to open, until it opens or the reader goes elsewhere.
+    pub opening: Option<BookId>,
 }
 
 impl Books {
     pub fn open(dir: PathBuf) -> Self {
         let library = Library::open(dir).map_err(|e| format!("The library couldn't be opened ({e})."));
-        Books { library, host: None, adding: 0, errors: vec![] }
+        Books { library, host: None, adding: 0, errors: vec![], opening: None }
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -75,11 +77,27 @@ impl Inkling {
         cx.notify();
     }
 
+    /// The book opened last, for the cog's Keep reading.
+    pub fn last_book(&self) -> Option<&Entry> {
+        self.books.library.as_ref().ok()?.last_opened()
+    }
+
+    /// Keep reading in the cog's menu: back into the book opened last, where it was left.
+    pub fn keep_reading(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(cx);
+        let Some(id) = self.last_book().map(|e| e.id.clone()) else { return };
+        self.save_position();
+        self.open_book(id, cx);
+        self.focus.focus(window, cx);
+        window.dismiss_virtual_keyboard();
+    }
+
     /// The Writing row of the cog's menu, and Escape on the library.
     pub fn back_to_writing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu(cx);
         self.save_position();
-        self.screen = Screen::Page(None);
+        self.books.opening = None;
+        self.screen = Screen::Page;
         self.focus_page(window, cx);
         cx.notify();
     }
@@ -210,6 +228,7 @@ impl Inkling {
         let Ok(library) = &self.books.library else { return };
         let Some(entry) = library.entry(&id) else { return };
         let (dir, position) = (library.dir().to_path_buf(), entry.position);
+        self.books.opening = Some(id.clone());
         let load = cx.background_spawn({
             let id = id.clone();
             async move { inkling_books::load(&dir, &id) }
@@ -217,11 +236,17 @@ impl Inkling {
         cx.spawn(async move |this, cx| {
             let book = load.await;
             let _ = this.update(cx, |this, cx| {
-                if !matches!(this.screen, Screen::Library(None)) {
+                if this.books.opening.as_ref() != Some(&id) || this.screen.keys().is_some() || this.screen.feedback().is_some() {
                     return;
                 }
+                this.books.opening = None;
                 match book {
-                    Ok(book) => this.screen = Screen::Reading(Reading::new(book, position)),
+                    Ok(book) => {
+                        if let Ok(library) = &mut this.books.library {
+                            let _ = library.opened(&book.id);
+                        }
+                        this.screen = Screen::Reading(Reading::new(book, position));
+                    }
                     Err(e) => this.books.errors = vec![format!("The book couldn't be opened ({e}).")],
                 }
                 cx.notify();

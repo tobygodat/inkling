@@ -2,7 +2,7 @@
 //! opens. The picker shows ten swatches first; Custom adds a colour wheel (angle is hue, distance
 //! from the centre is strength), a lightness slider and a hex field.
 
-use crate::app::{Inkling, Screen};
+use crate::app::Inkling;
 use crate::theme::Colors;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
@@ -95,22 +95,16 @@ impl Custom {
 
 impl Inkling {
     fn picker_mut(&mut self) -> Option<&mut Picker> {
-        match &mut self.screen {
-            Screen::Page(Some(panel)) => panel.picker.as_mut(),
-            _ => None,
-        }
+        self.panel.as_mut()?.picker.as_mut()
     }
 
     fn picker(&self) -> Option<&Picker> {
-        match &self.screen {
-            Screen::Page(Some(panel)) => panel.picker.as_ref(),
-            _ => None,
-        }
+        self.panel.as_ref()?.picker.as_ref()
     }
 
     /// Opens the picker under `part`'s row, or closes it when it is already open there.
     pub fn toggle_picker(&mut self, part: Part, cx: &mut Context<Self>) {
-        let Screen::Page(Some(panel)) = &mut self.screen else { return };
+        let Some(panel) = &mut self.panel else { return };
         panel.picker = match &panel.picker {
             Some(open) if open.part == part => None,
             _ => Some(Picker { part, custom: None }),
@@ -119,7 +113,7 @@ impl Inkling {
     }
 
     pub(crate) fn close_picker(&mut self, cx: &mut Context<Self>) {
-        if let Screen::Page(Some(panel)) = &mut self.screen {
+        if let Some(panel) = &mut self.panel {
             panel.picker = None;
             cx.notify();
         }
@@ -137,7 +131,7 @@ impl Inkling {
     /// Custom, under the swatches: shows the wheel, the lightness slider and the hex field.
     pub fn open_custom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(part) = self.picker_part() else { return };
-        let color = self.settings.appearance.palette().get(part);
+        let color = self.appearance().palette().get(part);
         let custom = Custom::new(color, window, cx);
         if let Some(picker) = self.picker_mut() {
             picker.custom = Some(custom);
@@ -185,7 +179,7 @@ impl Inkling {
     }
 
     pub(crate) fn render_modes(&self, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let mode = self.settings.appearance.mode;
+        let mode = self.appearance().mode;
         div().id("mode").flex().gap_1().p_1().bg(c.segment).rounded(px(10.)).children(Mode::ALL.map(|m| {
             let on = m == mode;
             div()
@@ -208,7 +202,7 @@ impl Inkling {
     }
 
     pub(crate) fn render_colors(&self, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let palette = self.settings.appearance.palette();
+        let palette = self.appearance().palette();
         let open = self.picker();
         div().flex().flex_col().gap_1().children(Part::ALL.into_iter().enumerate().map(|(i, part)| {
             let color = palette.get(part);

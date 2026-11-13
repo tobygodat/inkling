@@ -40,6 +40,23 @@ impl Snap {
         Self::open_with(dir, form, Arc::default(), Build::with_records(None, []))
     }
 
+    /// A Mac window of `window_size` instead of 1280 by 800.
+    fn open_sized(dir: &Path, window_size: Size<Pixels>) -> Self {
+        let mut cx = HeadlessAppContext::with_platform(
+            gpui_kit::platform::current_platform(true).text_system(),
+            Arc::new(inkling_ui::Assets),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        cx.update(init);
+        let keys: Box<dyn inkling_core::KeyStore> = Box::new(Arc::new(MemoryKeys::default()));
+        let (window, view) = cx
+            .update(|cx| open_sized(cx, FormFactor::Mac, window_size, false, false, keys, Build::with_records(None, [])))
+            .expect("open a headless window");
+        let mut snap = Snap { cx, window, view, dir: dir.to_path_buf(), frames: None };
+        snap.frame();
+        snap
+    }
+
     /// `keys` outlives the view, so a relaunch finds what was saved, as it would in the Keychain.
     fn open_with(dir: &Path, form: FormFactor, keys: Arc<MemoryKeys>, build: Build) -> Self {
         let mut cx = HeadlessAppContext::with_platform(

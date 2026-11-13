@@ -28,6 +28,7 @@ impl Inkling {
         }
         let from = if self.revision.review().is_some() { "review" } else { "page" };
         self.screen = Screen::Feedback(FeedbackScreen { from });
+        self.panel = None;
         self.menu = Menu::Closed;
         if self.form == FormFactor::Mac {
             self.feedback_field.read(cx).focus_handle(cx).focus(window, cx);
@@ -40,7 +41,7 @@ impl Inkling {
     /// The field keeps its text, so text typed and not sent, or sent and failed, is there when
     /// the screen opens again.
     pub fn close_feedback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.screen = Screen::Page(None);
+        self.screen = Screen::Page;
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         if self.revision.review().is_none() {

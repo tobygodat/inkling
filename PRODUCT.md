@@ -5,8 +5,8 @@ One writer, first Toby, who drafts on a Mac and an iPhone and already pays for a
 
 ## Purpose
 A place to write that stays out of the way, with an AI editor that proposes changes the writer accepts
-or rejects one at a time. It also reads: EPUBs and PDFs with text, reflowed in the same look as the
-page, with the place in each book kept.
+or rejects one at a time. It also reads: EPUBs and PDFs with text, reflowed in a look of the reader's
+own or the same one as the page, scrolled or in pages, with the place in each book kept.
 
 ## Positioning
 Not a chat window beside a document and not a subscription. The AI is bring-your-own-key: Claude,

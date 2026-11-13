@@ -11,7 +11,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::{
-    AiEvent, Ask, Build, BuildNumber, Cancel, ChangeId, Desk, Face, KeyStore, Paths, Provider, Request, Revision, Secret, Settings,
+    AiEvent, Ask, Build, BuildNumber, Cancel, ChangeId, Desk, Face, KeyStore, Paths, Provider, Request, Revision, Secret, Settings, View,
 };
 use std::sync::mpsc;
 use std::time::Duration;
@@ -50,8 +50,8 @@ pub(crate) struct Version {
 
 /// What fills the window. One value, so no two screens are ever open at once.
 pub(crate) enum Screen {
-    /// The page, with the Appearance panel beside it while that is open.
-    Page(Option<AppearancePanel>),
+    /// The page.
+    Page,
     Keys(KeyScreen),
     Feedback(FeedbackScreen),
     /// The books, with Find books over them while that is open.
@@ -94,6 +94,11 @@ pub struct Inkling {
     pub(crate) screen: Screen,
     /// The cog's menu, over whichever screen is open.
     pub(crate) menu: Menu,
+    /// The Appearance panel, beside the page, the library or a book. It edits the look of the
+    /// view it is beside, and the key and feedback screens close it.
+    pub(crate) panel: Option<AppearancePanel>,
+    /// The view whose colours GPUI Kit's components were last given.
+    kit_view: View,
     /// The change whose other wordings are open.
     pub(crate) wordings_open: Option<ChangeId>,
     /// The change tapped on iPhone, which the sheet acts on.
@@ -184,8 +189,10 @@ impl Inkling {
             revision: Revision::Idle,
             running: None,
             notice: None,
-            screen: Screen::Page(None),
+            screen: Screen::Page,
             menu: Menu::Closed,
+            panel: None,
+            kit_view: View::Writing,
             wordings_open: None,
             selected: None,
             feedback,
@@ -294,6 +301,9 @@ impl Inkling {
     /// Keys the review, a running request, the key screen or a message own. Runs before any
     /// binding, so the editor never sees them while they mean something here.
     fn key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if key.key != "escape" && self.reading_key(key, window, cx) {
+            return true;
+        }
         if self.screen.feedback().is_some() && key.key == "enter" && key.modifiers.platform {
             self.send_feedback(window, cx);
             return true;
@@ -303,7 +313,7 @@ impl Inkling {
         }
         match key.key.as_str() {
             "escape" => self.escape(window, cx),
-            "tab" | "enter" if self.revision.review().is_some() && matches!(self.screen, Screen::Page(_)) => {
+            "tab" | "enter" if self.revision.review().is_some() && matches!(self.screen, Screen::Page) => {
                 let typing = self.typing_hex(window, cx)
                     || key.key == "enter"
                         && self.ask_field.read(cx).focus_handle(cx).is_focused(window)
@@ -329,6 +339,8 @@ impl Inkling {
             self.close_feedback(window, cx);
         } else if self.screen.keys().is_some() {
             self.close_keys(window, cx);
+        } else if matches!(&self.screen, Screen::Reading(r) if r.contents) {
+            self.toggle_contents(cx);
         } else if matches!(self.screen, Screen::Library(Some(_))) {
             self.close_finding(cx);
         } else if matches!(self.screen, Screen::Reading(_)) {
@@ -531,12 +543,13 @@ impl Inkling {
         let screen = KeyScreen::new(provider, self, window, cx);
         screen.key.read(cx).focus_handle(cx).focus(window, cx);
         self.screen = Screen::Keys(screen);
+        self.panel = None;
         self.menu = Menu::Closed;
         cx.notify();
     }
 
     pub fn close_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.screen = Screen::Page(None);
+        self.screen = Screen::Page;
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         self.key_saved = self.keys.has(Secret::ApiKey(self.settings.provider));
@@ -555,8 +568,21 @@ impl Inkling {
         self.form.metrics()
     }
 
+    /// The look of the view on screen.
     pub(crate) fn theme(&self) -> Theme {
-        Theme::new(self.form, &self.settings.appearance, &self.faces)
+        Theme::new(self.form, self.settings.look(self.view()), &self.faces)
+    }
+
+    /// Reading while the library or a book is open, writing everywhere else.
+    pub fn view(&self) -> View {
+        match self.screen {
+            Screen::Library(..) | Screen::Reading(_) => View::Reading,
+            Screen::Page | Screen::Keys(_) | Screen::Feedback(_) => View::Writing,
+        }
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
     }
 
     /// The version bar's slot. It keeps its height when empty, so the page doesn't move when a
@@ -770,20 +796,28 @@ impl Render for Inkling {
             .text_color(t.c.ink)
             .font_family(SANS)
             .on_action(cx.listener(Self::on_open_keys));
-        self.restore_place(cx);
+        if self.kit_view != self.view() {
+            self.kit_view = self.view();
+            t.apply_to_kit(cx);
+        }
+        self.panel_follows_view(window, cx);
+        self.restore_place(window, cx);
         let screen = match &self.screen {
             Screen::Keys(keys) => self.render_keys(keys, cx).into_any_element(),
             Screen::Library(finding) => self.render_library(finding.as_ref(), cx).into_any_element(),
-            Screen::Reading(reading) => self.render_reading(reading, cx).into_any_element(),
+            Screen::Reading(reading) => self.render_reading(reading, window, cx).into_any_element(),
             Screen::Feedback(_) => self.render_feedback(window, cx).into_any_element(),
-            Screen::Page(_) if self.form == FormFactor::Phone => self.render_phone(window, cx),
-            Screen::Page(None) => self.render_mac_page(window, cx),
-            Screen::Page(Some(panel)) => div()
+            Screen::Page if self.form == FormFactor::Phone => self.render_phone(window, cx),
+            Screen::Page => self.render_mac_page(window, cx),
+        };
+        let screen = match &self.panel {
+            Some(panel) if self.form == FormFactor::Mac => div()
                 .size_full()
                 .flex()
                 .child(self.render_appearance(panel, cx))
-                .child(div().flex_1().min_w_0().h_full().child(self.render_mac_page(window, cx)))
+                .child(div().flex_1().min_w_0().h_full().child(screen))
                 .into_any_element(),
+            _ => screen,
         };
         let root = root.child(screen);
         if self.form == FormFactor::Phone {
