@@ -25,9 +25,13 @@ The tests sign in the way a real client does. Only Apple's token endpoint and Re
 Run these on the Mac, where `wrangler` is signed in to Cloudflare. Deploying changes what agents
 and devices reach, so only Toby runs it.
 
-1. `bunx wrangler deploy` creates the D1 database and the two KV namespaces and writes their ids
-   into `wrangler.jsonc`. Commit those ids. The Worker is then at
-   `https://inkling-server.tobygodat.workers.dev`, which is `PUBLIC_URL`.
+Steps 1, 2 and the `SECRET_KEY` in step 4 were done on 2026-11-13, and the database and namespace
+ids are in `wrangler.jsonc`.
+
+1. `bunx wrangler deploy` creates the D1 database and the two KV namespaces. The Worker is then at
+   `https://inkling-server.tobygodat.workers.dev`, which is `PUBLIC_URL`. A first deploy can fail
+   with "This Worker does not exist on your account [10007]" just after creating it; run it again.
+   Put the ids it prints into `wrangler.jsonc`.
 2. `bunx wrangler d1 migrations apply inkling --remote` creates the tables.
 3. Set up Sign in with Apple at developer.apple.com, team Q6NAWA42Y2:
    - Under Identifiers, add a Services ID (for example `com.tobygodat.inkling.web`). Turn on Sign
