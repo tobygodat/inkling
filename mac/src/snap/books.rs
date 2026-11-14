@@ -16,7 +16,7 @@ type Picked = Rc<RefCell<Vec<PathBuf>>>;
 
 fn host(folders: Vec<PathBuf>, picked: &Picked) -> BookHost {
     let picked = picked.clone();
-    BookHost { folders, pick: Box::new(move |_| Task::ready(picked.borrow().clone())) }
+    BookHost { folders: Box::new(move |_| folders.clone()), pick: Box::new(move |_| Task::ready(picked.borrow().clone())), add_folder: None }
 }
 
 fn open(dir: &Path, folder: &Path, picked: &Picked) -> Snap {

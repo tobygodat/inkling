@@ -60,6 +60,18 @@ replaced 13.6 ms. Both are Debug builds on the Simulator, so they are a floor fo
 - Source Serif 4 and Inter come from `inkling-ui`. GPUI Kit's icons come from `gpui-kit-assets`,
   registered with `gpui_mobile::ios::ffi::set_asset_source` (patch 0003).
 - A `CADisplayLink` drives frames.
+- The library's host (`app/Inkling/Books.swift`, TOB-460). Find books searches the app's
+  Documents, which the Files app shows as "Inkling" (`UIFileSharingEnabled`), and every folder the
+  reader allowed with Search another folder. Those are kept as security-scoped bookmarks in
+  `book-folders.plist` beside the data folder and opened at each search, which holds their access
+  until the next one, so chosen books are read in place. Add shows the system document picker for
+  EPUBs and PDFs and copies them in. iCloud files not downloaded yet are hidden placeholders and are
+  skipped. Rust asks through `inkling_host_pick_books`, `inkling_host_pick_folder` and
+  `inkling_host_book_folders`, and Swift answers a picker through `inkling_ios_picked`.
+- `app/Inkling/PrivacyInfo.xcprivacy` declares the required-reason APIs the binary imports
+  (`nm -u`): the `stat` family (C617.1 for the app's own files, 3B52.1 for books in folders the
+  reader picked), `mach_absolute_time` (35F9.1) and `fstatfs`/`fstatvfs` (E174.1). Check it again
+  with `nm -u` after adding a dependency.
 
 ## Patches to gpui-mobile
 
@@ -286,7 +298,40 @@ iPhone build carries their records.
 `cargo-ios.sh` sets `INKLING_BUILD` to the commit count, so the feedback body names the build.
 
 
+## Reading on iPhone
+
+The library, reading, paged mode, Contents and the Write and Read toggle are the shared views. On
+2026-11-13 they were proved on a dedicated iPhone 18 Pro Simulator (iOS 27.2), booted with
+`simctl` and driven with Claude Code's own Simulator tool, because that session had no T3 device
+tools. The shots are in `docs/screenshots/ios/books/`.
+
+| Behaviour | Checked | Shot |
+| --- | --- | --- |
+| Read with nothing read since launch opens the library; Find books lists both fixture books from Documents, the EPUB ticked and the PDF not | | `01-find-books` |
+| Add 2 books | `library.json` holds both | `02-library` |
+| Open the EPUB in paged mode (`settings.json`) | the progress line counts 42 pages | `03-epub-paged` |
+| A tap on the page's right third turns it | the saved place moves to 0.0199 of the chapter | `04-page-turned` |
+| Contents, 44 pt rows | | `05-contents` |
+| Chapter I from Contents | the saved place is chapter 1 at its start | `06-chapter-one` |
+| Write | the draft is unchanged | `07-write` |
+| Read goes back to the book | Chapter I, page 1 of 8 | `08-read-again` |
+| The PDF from the library | it is the book opened last | `09-pdf` |
+| Add shows the system document picker; Cancel returns to the library | | `10-add-picker` |
+
+The same steps are the `books-*` steps at the end of `snap.sh`, written in `agent-device` commands
+with the same points. That lane has not run end to end yet: it needs an `agent-device` from the
+T3 device tools.
+
+Driven by hand: picking files in the system picker after Add, and Search another folder (the folder
+picker, the bookmark, a search that finds books there without asking again, and reading a book
+from that folder after a relaunch).
+
 ## Gaps
+
+- **No Appearance panel on iPhone.** The phone has no cog, so the reading look, the paper tones
+  and Scroll or Paged can't be changed there. The iPhone draws the default look at its own sizes,
+  as it does for writing, and reads `reading.pages` from `settings.json`.
+- **Turning a page is a tap on the page's thirds.** There is no swipe.
 
 - **The switches have no control on iPhone.** The page draws by `markdown` and `maths` in
   `settings.json`, but the Appearance panel that changes them is on the Mac only.

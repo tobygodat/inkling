@@ -17,7 +17,7 @@ pub enum Mode {
     Light,
     Dark,
     Custom,
-    /// The paper tones, from the reader that became Inkling's reading screen (ADR 0004).
+    /// The paper tones, from the reader that became Inkling's reading screen (ADR 0005).
     Paper,
     Sepia,
     Sage,
