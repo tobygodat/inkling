@@ -1,6 +1,7 @@
 # 0004. Integrations: an MCP server, Readwise, and a server of Inkling's own
 
-Status: Accepted, 2026-11-13. Revised the same day for Cloudflare in place of Railway.
+Status: Accepted, 2026-11-13. Revised the same day for Cloudflare in place of Railway, and on
+2026-11-14 for Sign in with Google in place of Apple.
 
 ## Context
 
@@ -71,11 +72,14 @@ unticked, so an agent reads the draft only when the writer ticks it.
 - **Four kinds of client.** Claude and ChatGPT register themselves. The Mac and iPhone apps are
   public clients that sign in through the system browser sheet (`ASWebAuthenticationSession`) with
   PKCE.
-- **Sign in with Apple is the identity.** The sign-in page uses it on the web, and it is native on
-  both devices. A third-party login alone (GitHub, Google) would also need Apple's under App Store
-  guideline 4.8. There is one account: the Worker accepts only the Apple subject in its
-  `OWNER_APPLE_SUB` variable, so nobody else can sign up. The reader's email-and-password accounts
-  are not reused.
+- **Sign in with Google is the identity.** It was Sign in with Apple until 2026-11-14, when Toby
+  chose Google instead: it needs only a Google OAuth client rather than an Apple Services ID and
+  key. There is one account: the Worker accepts only the Google account whose verified email is
+  `OWNER_EMAIL`, so nobody else can sign up. Email-and-password accounts were turned down because
+  hashing a password strongly costs more than the free plan's 10 ms of CPU, and a passkey account
+  was offered and not taken. Signing in on the iPhone through Google alone may need Sign in with
+  Apple beside it before App Review passes the app (guideline 4.8); that is decided when the iPhone
+  app signs in.
 
 ### Storage on Cloudflare
 
@@ -123,7 +127,8 @@ unticked, so an agent reads the draft only when the writer ticks it.
 - `wrangler deploy` from `server/`, to `inkling-server` on Toby's `workers.dev` subdomain until
   there is a custom domain. CI deploys it on each push to `main` that changes `server/`, with a
   Cloudflare API token in the repository's secrets.
-- Secrets are Worker secrets: the token encryption key, the Apple sign-in key, `OWNER_APPLE_SUB`.
+- Secrets are Worker secrets: the token encryption key, the Google client's id and secret, and
+  `OWNER_EMAIL`.
 - It runs on the free plan. Nothing in it needs the paid plan's longer CPU time.
 - The Worker's tests run with Bun against `wrangler dev`, as `reader/server`'s do, in a CI job of
   their own on Linux.

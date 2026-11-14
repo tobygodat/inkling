@@ -32,7 +32,7 @@ describe("signing in", () => {
   });
 
   it("sends anyone else back to the client refused", async () => {
-    const signed = await signIn({ scope: "library:read", tick: ["library:read"], sub: "000999.stranger" });
+    const signed = await signIn({ scope: "library:read", tick: ["library:read"], email: "stranger@example.com" });
     expect(signed.token).toBeUndefined();
     expect(signed.landed.searchParams.get("error")).toBe("access_denied");
   });

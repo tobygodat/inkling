@@ -1,5 +1,5 @@
 //! Signing this Mac in to Inkling's server, the way any OAuth client of it does (ADR 0004): it
-//! registers itself, the writer allows it on the consent page and signs in with Apple in the
+//! registers itself, the writer allows it on the consent page and signs in with Google in the
 //! browser, and the browser comes back to a one-time listener on 127.0.0.1 with a code. The
 //! refresh token it gets is kept in the Keychain, never in a file.
 

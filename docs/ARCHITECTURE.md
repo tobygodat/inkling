@@ -191,8 +191,8 @@ more than 10 ms of CPU, so it never parses a book.
   registration, client ID metadata documents, PKCE, refresh tokens, and tokens kept only as hashes
   in KV. There are two resources: `/mcp` for agents and `/v1` for the devices. A token is bound to
   one of them. `src/authorize.ts` shows the consent form, with the draft unticked unless the
-  writer ticks it. It then sends the browser to Sign in with Apple, and grants only the Apple ID in
-  `OWNER_APPLE_SUB`.
+  writer ticks it. It then sends the browser to Sign in with Google (`src/google.ts`, with PKCE
+  and a nonce), and grants only the Google account whose verified email is `OWNER_EMAIL`.
 - **MCP.** `src/mcp.ts` serves `mcp/tools.json` and answers each tool from D1, with the same text as
   `inkling-mcp`. Each chapter is stored as the Markdown `read_book` gives, in a trigram FTS5 index,
   so a search runs inside D1. It finds one hit per chapter, and a query under three characters
@@ -212,4 +212,4 @@ Anthropic, OpenAI and Google's generative language API, each called directly wit
 Feedback goes to the T3 webhook in the writer's feedback link, and only the feedback text and
 where it was sent from. An agent the writer connects through `inkling-mcp` reads the library and
 the draft, and the agent's own app decides where that goes. Inkling's own server (above) holds the library and the draft for agents away from the Mac and
-for sync. The Mac syncs to it with `inkling-mcp sync`. It calls Readwise with the writer's token and Apple to sign in.
+for sync. The Mac syncs to it with `inkling-mcp sync`. It calls Readwise with the writer's token and Google to sign in.

@@ -1,5 +1,5 @@
-// The sign-in page every client goes through: the consent form, then Sign in with Apple, then back
-// to the client with a code. Only the Apple ID in OWNER_APPLE_SUB gets that far.
+// The sign-in page every client goes through: the consent form, then Sign in with Google, then back
+// to the client with a code. Only the Google account whose email is OWNER_EMAIL gets that far.
 
 import {
   AuthorizationError,
@@ -8,7 +8,7 @@ import {
   type ConsentDescription,
   type OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
-import { authorizeUrl, subjectFor } from "./apple";
+import { authorizeUrl, emailFor, random } from "./google";
 import type { Env, Owner } from "./env";
 import { escapeHtml, page } from "./http";
 
@@ -21,7 +21,7 @@ const SCOPES: Record<string, { label: string; ticked: boolean }> = {
 /** Scopes every MCP client is offered, whatever it asked for. */
 const OFFERED_TO_AGENTS = ["library:read", "draft:read"];
 
-export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/apple/callback`;
+export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/google/callback`;
 
 export async function authorize(request: Request, env: Env, oauth: OAuthHelpers): Promise<Response> {
   try {
@@ -61,7 +61,7 @@ ${local}
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">
   ${boxes}
   <p class="note">It can only read. Nothing it does changes your books or your draft.</p>
-  <p><button name="decision" value="allow">Sign in with Apple and allow</button><button name="decision" value="deny">Don’t allow</button></p>
+  <p><button name="decision" value="allow">Sign in with Google and allow</button><button name="decision" value="deny">Don’t allow</button></p>
 </form>`;
 }
 
@@ -72,25 +72,32 @@ async function decide(request: Request, env: Env, oauth: OAuthHelpers): Promise<
     const denied = await oauth.denyConsent(request, handle);
     return new Response(null, { status: 302, headers: denied.headers });
   }
-  if (!env.APPLE_PRIVATE_KEY) {
-    return page("Sign-in isn’t set up yet", "<p>The server has no Sign in with Apple key. Add it, then try again.</p>", 503);
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return page("Sign-in isn’t set up yet", "<p>The server has no Google client. Add it, then try again.</p>", 503);
   }
   const ticked = form.getAll("scope").map(String).filter((s) => s in SCOPES);
   const approved = await oauth.approveConsent(request, handle, { scope: ticked });
   // Staying signed in is the client's to ask for, not a box on the form.
   const scope = approved.request.scope;
+  const google: GoogleTransaction = { verifier: random(), nonce: random() };
   const upstream = await oauth.beginUpstream(
     { ...approved.request, scope: [...new Set([...ticked, ...scope.filter((s) => s === "offline_access")])] },
-    { headers: approved.headers },
+    { headers: approved.headers, data: google },
   );
-  upstream.headers.set("location", authorizeUrl(env, callbackUrl(env), upstream.state));
+  upstream.headers.set("location", await authorizeUrl(env, callbackUrl(env), upstream.state, google.verifier, google.nonce));
   return new Response(null, { status: 302, headers: upstream.headers });
 }
 
-/** GET /apple/callback: Apple sends the browser back here with a code, or an error. */
-export async function appleCallback(request: Request, env: Env, oauth: OAuthHelpers): Promise<Response> {
+/** What the Google redirect needs back at the callback. Kept server-side, never sent to Google. */
+interface GoogleTransaction {
+  verifier: string;
+  nonce: string;
+}
+
+/** GET /google/callback: Google sends the browser back here with a code, or an error. */
+export async function googleCallback(request: Request, env: Env, oauth: OAuthHelpers): Promise<Response> {
   try {
-    const resumed = await oauth.finishUpstream(request);
+    const resumed = await oauth.finishUpstream<GoogleTransaction>(request);
     const params = new URL(request.url).searchParams;
     const code = params.get("code");
     const refuse = () => {
@@ -99,19 +106,19 @@ export async function appleCallback(request: Request, env: Env, oauth: OAuthHelp
     };
     if (params.get("error") || !code) return refuse();
 
-    const sub = await subjectFor(env, code, callbackUrl(env));
-    if (!env.OWNER_APPLE_SUB) {
+    const email = await emailFor(env, code, callbackUrl(env), resumed.data.verifier, resumed.data.nonce);
+    if (!env.OWNER_EMAIL) {
       return page(
         "One more step",
-        `<p>Signing in works. To make this Apple ID the only one that can sign in, set the Worker secret
-<code>OWNER_APPLE_SUB</code> to:</p><p><code>${escapeHtml(sub)}</code></p><p>Then sign in again.</p>`,
+        `<p>Signing in works. To make this Google account the only one that can sign in, set the Worker
+secret <code>OWNER_EMAIL</code> to:</p><p><code>${escapeHtml(email)}</code></p><p>Then sign in again.</p>`,
         403,
         resumed.headers,
       );
     }
-    if (sub !== env.OWNER_APPLE_SUB) return refuse();
+    if (email !== env.OWNER_EMAIL.trim().toLowerCase()) return refuse();
 
-    const props: Owner = { sub };
+    const props: Owner = { sub: email };
     const { redirectTo } = await oauth.completeAuthorization({
       request: resumed.request,
       userId: "owner",

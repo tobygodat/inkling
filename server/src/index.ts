@@ -3,7 +3,7 @@
 // request stays well inside 10 ms of CPU: no book is parsed here.
 
 import { OAuthAuthorizationServer, OAuthResourceServer } from "@cloudflare/workers-oauth-provider";
-import { appleCallback, authorize } from "./authorize";
+import { authorize, googleCallback } from "./authorize";
 import type { Env, Owner } from "./env";
 import { Refused, json } from "./http";
 import { serveMcp } from "./mcp";
@@ -84,7 +84,7 @@ export default {
         return await s.sync.fetch(request, env, ctx);
       }
       if (pathname === "/authorize") return await authorize(request, env, s.auth.getOAuthApi(env));
-      if (pathname === "/apple/callback") return await appleCallback(request, env, s.auth.getOAuthApi(env));
+      if (pathname === "/google/callback") return await googleCallback(request, env, s.auth.getOAuthApi(env));
       if (pathname === "/readwise/webhook" && request.method === "POST") return await webhook(request, env, ctx);
       if (pathname === "/") return new Response("Inkling's server. Connect to it from the app or an agent at /mcp.\n");
       return await s.auth.fetch(request, env, ctx);
