@@ -6,16 +6,24 @@
   // Lets the authorization server fetch a client's metadata document (CIMD) only from public hosts.
   "compatibility_flags": ["global_fetch_strictly_public"],
   "observability": { "enabled": true },
+  // Served only at its workers.dev address, which is the OAuth issuer; no per-version preview URLs.
+  "workers_dev": true,
+  "preview_urls": false,
   "vars": {
     // The Worker's own address, the OAuth issuer. Set to the deployed workers.dev URL.
     "PUBLIC_URL": "https://inkling-server.tobygodat.workers.dev"
   },
   "d1_databases": [
-    { "binding": "DB", "database_name": "inkling", "migrations_dir": "migrations" }
+    {
+      "binding": "DB",
+      "database_name": "inkling",
+      "database_id": "7914161e-cb34-446a-8819-4033851a77b5",
+      "migrations_dir": "migrations"
+    }
   ],
   "kv_namespaces": [
-    { "binding": "OAUTH_KV" },
-    { "binding": "FILES" }
+    { "binding": "OAUTH_KV", "id": "d4006d99485f48c3a66f0ac3f6996fa8" },
+    { "binding": "FILES", "id": "c46f70b6d4ff4039ad168af527dd361a" }
   ],
   // The Readwise backstop poll, and the OAuth store's cleanup.
   "triggers": { "crons": ["*/30 * * * *"] }

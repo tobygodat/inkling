@@ -1,6 +1,6 @@
-import type { AppleConfig } from "./apple";
+import type { GoogleConfig } from "./google";
 
-export interface Env extends AppleConfig {
+export interface Env extends GoogleConfig {
   DB: D1Database;
   /** The OAuth provider's own records. */
   OAUTH_KV: KVNamespace;
@@ -10,11 +10,12 @@ export interface Env extends AppleConfig {
   PUBLIC_URL: string;
   /** 32 random bytes in base64: the key for the Readwise token and webhook secret. */
   SECRET_KEY: string;
-  /** The one Apple ID that may sign in. Unset, sign-in only shows the Apple ID's subject. */
-  OWNER_APPLE_SUB?: string;
+  /** The one Google account that may sign in, by its email. Unset, sign-in only shows the email. */
+  OWNER_EMAIL?: string;
 }
 
 /** What every grant carries. There is one writer, so this is the same for every token. */
 export interface Owner {
+  /** The owner's email, as Google verified it. */
   sub: string;
 }

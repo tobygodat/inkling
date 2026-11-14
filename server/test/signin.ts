@@ -1,5 +1,5 @@
-// Signs in the way an MCP client or the app does: register, consent, Sign in with Apple, then a
-// code for a token. Apple's token endpoint is faked; everything else is the real Worker.
+// Signs in the way an MCP client or the app does: register, consent, Sign in with Google, then a
+// code for a token. Google's token endpoint is faked; everything else is the real Worker.
 
 import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
@@ -19,15 +19,33 @@ const cookies = (response: Response) =>
     .map((c) => c.split(";")[0])
     .join("; ");
 
-/** An ID token as Apple's token endpoint would send it. Its signature isn't checked. */
-export function fakeApple(sub: string) {
-  const claims = { iss: "https://appleid.apple.com", aud: "com.tobygodat.inkling.web", exp: Math.floor(Date.now() / 1000) + 600, sub };
+export const GOOGLE_CLIENT = "test-client.apps.googleusercontent.com";
+
+/**
+ * Google's token endpoint: it hands out an ID token for `email` only for the PKCE verifier that
+ * matches the challenge the browser was sent with, as Google does. The signature isn't checked.
+ */
+export function fakeGoogle(email: string, sent: URL) {
+  const claims = {
+    iss: "https://accounts.google.com",
+    aud: GOOGLE_CLIENT,
+    exp: Math.floor(Date.now() / 1000) + 600,
+    sub: "1234567890",
+    email,
+    email_verified: true,
+    nonce: sent.searchParams.get("nonce"),
+  };
   const idToken = `e30.${base64url(new TextEncoder().encode(JSON.stringify(claims)))}.sig`;
   const real = globalThis.fetch;
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
-    if (url === "https://appleid.apple.com/auth/token") return Response.json({ id_token: idToken });
-    return real(input, init);
+    if (url !== "https://oauth2.googleapis.com/token") return real(input, init);
+    const form = new URLSearchParams(String(init?.body));
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(form.get("code_verifier") ?? "")));
+    if (base64url(digest) !== sent.searchParams.get("code_challenge") || form.get("client_secret") !== "test-secret") {
+      return Response.json({ error: "invalid_grant" }, { status: 400 });
+    }
+    return Response.json({ id_token: idToken });
   });
 }
 
@@ -38,7 +56,7 @@ export interface Signed {
   scope?: string;
 }
 
-export async function signIn(options: { scope: string; tick: string[]; resource?: string; sub?: string }): Promise<Signed> {
+export async function signIn(options: { scope: string; tick: string[]; resource?: string; email?: string }): Promise<Signed> {
   const registered = await call("/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -64,17 +82,17 @@ export async function signIn(options: { scope: string; tick: string[]; resource?
 
   const form = new URLSearchParams({ handle, decision: "allow" });
   for (const scope of options.tick) form.append("scope", scope);
-  const toApple = await call("/authorize", {
+  const toGoogle = await call("/authorize", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", cookie: cookies(consent) },
     body: form,
   });
-  const apple = new URL(toApple.headers.get("location")!);
-  if (apple.origin !== "https://appleid.apple.com") throw new Error(`expected Apple, went to ${apple}`);
+  const google = new URL(toGoogle.headers.get("location")!);
+  if (google.origin !== "https://accounts.google.com") throw new Error(`expected Google, went to ${google}`);
 
-  const spy = fakeApple(options.sub ?? "000123.owner");
-  const back = await call(`/apple/callback?code=apple-code&state=${encodeURIComponent(apple.searchParams.get("state")!)}`, {
-    headers: { cookie: cookies(toApple) },
+  const spy = fakeGoogle(options.email ?? "owner@example.com", google);
+  const back = await call(`/google/callback?code=google-code&state=${encodeURIComponent(google.searchParams.get("state")!)}`, {
+    headers: { cookie: cookies(toGoogle) },
   });
   spy.mockRestore();
   const landed = new URL(back.headers.get("location") ?? "about:blank");
