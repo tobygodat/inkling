@@ -1,5 +1,5 @@
 // What the Mac and iPhone apps call with a token for the `/v1` resource and the `sync` scope.
-// Books follow the reader's model (reader/crates/reader-core/src/sync.rs): a book's id is the hash
+// Books follow the reader's model (tobygodat/ios-reader, crates/reader-core/src/sync.rs): a book's id is the hash
 // of its file and books are only added; a position carries when it changed, and the later wins.
 // Positions' `at` and drafts' `saved_at` are milliseconds since the Unix epoch.
 

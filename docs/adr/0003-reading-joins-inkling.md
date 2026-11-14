@@ -1,6 +1,6 @@
 # 0003. Reading joins Inkling
 
-Status: Accepted, 2026-11-13
+Status: Accepted, 2026-11-13. Done 2026-11-14: Inkling reads on both devices and `reader/` is deleted.
 
 ## Context
 
