@@ -592,6 +592,25 @@ fn phone(dir: &Path, draft: &str) {
         "on iPhone the Write and Read toggle has 44 pt halves in the status row",
     );
     s.shot("13a-iphone-toggle");
+    let cog = s.bounds("cog").zip(s.bounds("views"));
+    check(cog.is_some_and(|(c, v)| c.size.height >= px(44.) && c.right() <= v.left()), "on iPhone a 44 pt cog sits before the toggle");
+    s.click("cog");
+    let window = s.with(|w, _| w.viewport_size());
+    let sheet = s.bounds("appearance").unwrap_or_else(|| fail("the cog opens Appearance on iPhone"));
+    check(
+        sheet.bottom() == window.height && sheet.size.width == window.width && sheet.top() > window.height * 0.3,
+        "as a sheet over the lower part of the screen, with the page above it",
+    );
+    let rows = [("mode", 0usize), ("mode", inkling_core::Mode::Sepia as usize), ("face", 0usize), ("pages", 0usize)];
+    let short = rows.iter().filter_map(|&id| s.bounds(id).map(|b| (id, b.size.height))).filter(|(_, h)| *h < px(44.)).collect::<Vec<_>>();
+    check(s.bounds("text-size").is_some() && s.bounds("page-width").is_none(), "with text size and no page width, since the column is the screen");
+    check(short.is_empty() && s.bounds(("mode", 0usize)).is_some(), &format!("its rows are 44 pt targets {short:?}"));
+    s.click(("mode", inkling_core::Mode::Sepia as usize));
+    check(s.read(|v, _| v.appearance().mode) == inkling_core::Mode::Sepia, "a tone on the phone's sheet changes the look");
+    s.shot("13b-iphone-appearance");
+    s.click(("mode", 0usize));
+    s.click("appearance-done");
+    check(!s.read(|v, _| v.appearance_open()), "Done closes the sheet");
     let still = draft.find("still").expect("the word");
     s.select(still..still + 5);
     s.click("find-word");

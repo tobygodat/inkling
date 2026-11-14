@@ -185,7 +185,7 @@ impl Inkling {
             div()
                 .id(("mode", m as usize))
                 .flex_1()
-                .h(px(30.))
+                .h(self.row(px(30.)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -208,7 +208,7 @@ impl Inkling {
             let color = palette.get(part);
             let row = div()
                 .id(("color", i))
-                .h(px(36.))
+                .h(self.row(px(36.)))
                 .px(px(10.))
                 .flex()
                 .items_center()
@@ -228,6 +228,8 @@ impl Inkling {
     }
 
     fn render_picker(&self, picker: &Picker, current: Rgb, c: &Colors, cx: &mut Context<Self>) -> AnyElement {
+        // With its ring, a swatch is 36 pt on the Mac and a 44 pt target on iPhone.
+        let dot = self.row(px(36.)) - px(8.);
         let swatches = div().flex().flex_wrap().gap(px(10.)).children(swatches(picker.part).into_iter().enumerate().map(|(i, hex)| {
             let color = Rgb::new(hex);
             div()
@@ -237,14 +239,14 @@ impl Inkling {
                 .border_2()
                 .border_color(if color == current { c.ink } else { transparent_black().into() })
                 .cursor_pointer()
-                .child(swatch(color, px(28.), c))
+                .child(swatch(color, dot, c))
                 .on_click(cx.listener(move |this, _, window, cx| this.pick(color, window, cx)))
                 .test_support()
         }));
         let custom = match &picker.custom {
             None => div()
                 .id("custom")
-                .h(px(30.))
+                .h(self.row(px(30.)))
                 .px_3()
                 .flex()
                 .items_center()
@@ -278,7 +280,7 @@ impl Inkling {
                     div()
                         .id("hex")
                         .w_full()
-                        .h(px(34.))
+                        .h(self.row(px(34.)))
                         .px(px(10.))
                         .flex()
                         .items_center()

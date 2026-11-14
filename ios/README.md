@@ -289,7 +289,7 @@ steps open their drafts by writing `draft.md` and relaunching, because the keybo
 
 Still driven by hand on the live page: a long press and its loupe, a drag on the end handle, Cut,
 Select All, a tap inside the selection (it brings the menu back), scrolling with a selection, and
-the two switches (set in `settings.json`, since the iPhone has no Appearance panel).
+the two switches (now in the Appearance sheet's Drawing section).
 
 Done and declined feedback and Restart are proved by `mac/snap.sh`, which also renders the
 phone layout of the list (`19-iphone-feedback`). The iPhone lists its items as waiting until a new
@@ -307,7 +307,8 @@ tools. The shots are in `docs/screenshots/ios/books/`.
 
 | Behaviour | Checked | Shot |
 | --- | --- | --- |
-| Read with nothing read since launch opens the library; Find books lists both fixture books from Documents, the EPUB ticked and the PDF not | | `01-find-books` |
+| Read with nothing read since launch opens the library; Find books lists both fixture books from Documents, the EPUB ticked and the PDF not | | `00-found` |
+| Tick the PDF | | `01-find-books` |
 | Add 2 books | `library.json` holds both | `02-library` |
 | Open the EPUB in paged mode (`settings.json`) | the progress line counts 42 pages | `03-epub-paged` |
 | A tap on the page's right third turns it | the saved place moves to 0.0199 of the chapter | `04-page-turned` |
@@ -326,15 +327,31 @@ Driven by hand: picking files in the system picker after Add, and Search another
 picker, the bookmark, a search that finds books there without asking again, and reading a book
 from that folder after a relaunch).
 
+## Appearance on iPhone
+
+A 44 pt cog before the Write and Read toggle opens Appearance for the view on screen, as a sheet
+over the lower 60% of the screen. Proved on 2026-11-14 on a dedicated iPhone 18 Pro Simulator
+(iOS 27.2), driven with taps; the shots are in `docs/screenshots/ios/appearance/`.
+
+| Behaviour | Checked | Shot |
+| --- | --- | --- |
+| A Night look and Georgia from `settings.json`: the page, the status bar and the safe areas follow it | | `01-night-from-settings` |
+| The cog opens the sheet over the page, with the page above it | | `02-sheet-on-page` |
+| The same over a book | | `03-sheet-in-book` |
+| Sync off, then Sepia | `settings.json`: reading Sepia, writing still Light | `04-sepia-sync-off` |
+| Sync on | writing becomes Sepia too | `05-sync-on` |
+| One quick swipe in pages | it turns one page (8 to 9) | `06-paged-swiped` |
+| Paged, Scroll, Paged | the same lines at the top each time, back on page 9 of 42 | `07-paged-before`, `08-scroll-holds`, `09-paged-again` |
+
+Those runs found three bugs, fixed here. A fling turned three pages for one swipe. A tap on an
+empty part of the sheet reached the page under it. And a book shown only in pages lost its place
+on switching to Scroll; `mac/snap.sh` now checks that case.
+
+The `appearance-*` steps at the end of `snap.sh` drive the same flow in `agent-device` commands.
+Like the books lane, they have not run end to end yet.
+
 ## Gaps
 
-- **No Appearance panel on iPhone.** The phone has no cog, so the reading look, the paper tones
-  and Scroll or Paged can't be changed there. The iPhone draws the default look at its own sizes,
-  as it does for writing, and reads `reading.pages` from `settings.json`.
-- **Turning a page is a tap on the page's thirds.** There is no swipe.
-
-- **The switches have no control on iPhone.** The page draws by `markdown` and `maths` in
-  `settings.json`, but the Appearance panel that changes them is on the Mac only.
 - **The end handle under the edit menu.** UIKit shows the menu just under the selection. A drag
   that starts on the end handle's knob there can stop after a few points: the touch began inside
   the menu's own window, UIKit closes the menu when a drag begins, and iOS then starts the touch

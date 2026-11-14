@@ -16,7 +16,7 @@ mod reading;
 mod review;
 mod theme;
 
-pub use app::{Inkling, OpenKeys, Saved, ShowReading, ShowWriting};
+pub use app::{Ground, Inkling, OpenKeys, Saved, ShowReading, ShowWriting};
 pub use chrome::Menu;
 pub use feedback::Restart;
 pub use icons::Assets;

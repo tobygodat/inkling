@@ -41,6 +41,33 @@ impl Drop for Running {
     }
 }
 
+/// The colour behind the view on screen, for a host that draws around it (the iPhone's safe areas
+/// and status bar). Emitted when it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ground {
+    /// `0xRRGGBB`.
+    pub rgb: u32,
+    /// Whether text on it is light, so the status bar should be too.
+    pub dark: bool,
+}
+
+impl Ground {
+    pub(crate) fn of(t: &Theme) -> Self {
+        let g = t.c.ground;
+        let byte = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
+        Ground { rgb: byte(g.r) << 16 | byte(g.g) << 8 | byte(g.b), dark: g.r + g.g + g.b < 1.5 }
+    }
+}
+
+impl EventEmitter<Ground> for Inkling {}
+
+impl Inkling {
+    /// The colour behind the view on screen now.
+    pub fn ground(&self) -> Ground {
+        Ground::of(&self.theme())
+    }
+}
+
 /// What the version bar names: the version's number and who wrote it.
 #[derive(Clone, Copy)]
 pub(crate) struct Version {
@@ -801,6 +828,7 @@ impl Render for Inkling {
         if self.kit_view != self.view() {
             self.kit_view = self.view();
             t.apply_to_kit(cx);
+            cx.emit(Ground::of(&t));
         }
         self.panel_follows_view(window, cx);
         self.restore_place(window, cx);
@@ -823,7 +851,9 @@ impl Render for Inkling {
         };
         let root = root.child(screen);
         if self.form == FormFactor::Phone {
-            return root.children(self.render_phone_corner(cx));
+            // The Appearance sheet sits over the lower part of the screen, under the corner.
+            let sheet = self.panel.as_ref().map(|panel| div().absolute().left_0().right_0().bottom_0().h(relative(0.6)).child(self.render_appearance(panel, cx)));
+            return root.children(sheet).children(self.render_phone_corner(cx));
         }
         root.children(self.render_feedback_button(cx)).child(self.render_cog(cx))
     }

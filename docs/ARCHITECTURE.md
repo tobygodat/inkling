@@ -88,7 +88,10 @@ with junk for it, loads with reading as a copy of writing, synced.
 `ui::theme::Theme::new` turns the appearance into GPUI colours and the body's face and sizes, and
 is the one place views read them. `Inkling::theme` is the look of the view on screen
 (`Inkling::view`: reading while the library or a book is open). The Mac uses it in a face its text
-system has (asked once at launch); the iPhone always gets the default look at its own sizes.
+system has (asked once at launch). The iPhone draws the same look at its own sizes: text and line
+height scaled by 19/21 and 1.65/1.75, so the default stays `DESIGN.md`'s, and the screen's width
+for the column. `Inkling` emits a `Ground` (the background colour and whether it is dark) when the
+look on screen changes, and the iPhone host colours its safe areas and status bar with it.
 `Inkling::set_appearance` changes the view on screen's look through `change_look`: it saves the
 file, recolours GPUI Kit's theme and redraws the window.
 

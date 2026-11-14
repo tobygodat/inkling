@@ -243,6 +243,17 @@ pub fn run(dir: &Path) {
     s.click("page-back");
     check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(1), "and its left edge turns it back");
     s.shot("books-10-page-turned");
+    s.with(|w, cx| w.scroll("page", ScrollDelta::Pixels(point(px(-120.), px(0.))), cx));
+    s.frame();
+    check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(2), "a swipe to the left turns the page");
+    s.with(|w, cx| w.scroll("page", ScrollDelta::Pixels(point(px(-120.), px(0.))), cx));
+    s.frame();
+    check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(2), "the rest of the same swipe turns no second page");
+    s.advance(400);
+    s.with(|w, cx| w.scroll("page", ScrollDelta::Pixels(point(px(120.), px(0.))), cx));
+    s.frame();
+    check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0) == Some(1), "and a swipe to the right turns it back");
+    s.advance(400);
     s.press("end");
     check(s.update(|v, w, _| v.reading_page(w)).map(|p| p.0 + 1 == p.1) == Some(true), "End goes to the chapter's last page");
     s.press("right");
@@ -343,4 +354,15 @@ pub fn run(dir: &Path) {
     s.hover("reading-column");
     s.advance(200);
     s.shot("books-15-smaller-window");
+    // This window has only ever shown the book in pages, so its scrolled view has never been laid
+    // out: switching to Scroll must still land on the place.
+    let paged = position(&mut s).unwrap_or_default();
+    s.click("cog");
+    s.click("menu-appearance");
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
+    s.click(("pages", 0usize));
+    s.frame();
+    check(position(&mut s) == Some(paged) && paged.fraction > 0.1, &format!("a book first shown in pages switches to Scroll at the same place ({:.3})", paged.fraction));
+    check(s.bounds("chapter-title").is_some_and(|t| t.bottom() < px(56.)), "scrolled down to it");
 }
