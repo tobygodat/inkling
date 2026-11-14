@@ -33,10 +33,9 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 - `feedback/` holds one record per feedback sent from inside the app, `ship.sh`, which ships one, and
   `AGENT.md`, the instructions for the thread that handles one.
 - `docs/screenshots/<app>/` holds each app's proof.
-- `reader/` is the EPUB and PDF reader (TOB-402), moved here from `tobygodat/ios-reader` with its
-  history. It is being ported into Inkling (TOB-460, `docs/adr/0003-reading-joins-inkling.md`) and
-  is deleted when that is done. Until then it is its own Rune app and Cargo workspace, and
-  `reader/AGENTS.md` has its commands, run from `reader/`. CI and the root workspace leave it out.
+- The old Rune reader (TOB-402) was ported into `books/` and `ui/` (TOB-460, ADR 0003) and its
+  `reader/` folder deleted. Its commits are still in this repo's history, and `tobygodat/ios-reader`
+  keeps the original, including the `reader-sync` Worker's source.
 
 ## Commands
 
