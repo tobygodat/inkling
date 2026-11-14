@@ -354,4 +354,15 @@ pub fn run(dir: &Path) {
     s.hover("reading-column");
     s.advance(200);
     s.shot("books-15-smaller-window");
+    // This window has only ever shown the book in pages, so its scrolled view has never been laid
+    // out: switching to Scroll must still land on the place.
+    let paged = position(&mut s).unwrap_or_default();
+    s.click("cog");
+    s.click("menu-appearance");
+    s.with(|w, cx| w.scroll("appearance-body", ScrollDelta::Pixels(point(px(0.), px(-1000.))), cx));
+    s.frame();
+    s.click(("pages", 0usize));
+    s.frame();
+    check(position(&mut s) == Some(paged) && paged.fraction > 0.1, &format!("a book first shown in pages switches to Scroll at the same place ({:.3})", paged.fraction));
+    check(s.bounds("chapter-title").is_some_and(|t| t.bottom() < px(56.)), "scrolled down to it");
 }

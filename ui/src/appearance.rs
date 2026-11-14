@@ -427,7 +427,8 @@ impl Inkling {
         let shell = div().id("appearance").flex().flex_col().bg(c.surface).border_color(c.hairline).text_color(c.ink);
         let shell = match self.form {
             FormFactor::Mac => shell.w(PANEL_WIDTH).h_full().flex_none().border_r_1(),
-            FormFactor::Phone => shell.size_full().border_t_1().rounded_t(px(14.)).shadow_lg(),
+            // It covers the page, so a touch on it never reaches the page underneath.
+            FormFactor::Phone => shell.size_full().border_t_1().rounded_t(px(14.)).shadow_lg().occlude(),
         };
         shell
             .child(

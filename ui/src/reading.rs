@@ -26,10 +26,10 @@ const BOTTOM_LINE: Pixels = px(40.);
 const MARGIN: Pixels = px(24.);
 /// How far a wheel has to push past the end of a chapter to go on to the next.
 const OVERSCROLL: Pixels = px(240.);
-/// How far a sideways swipe goes before it turns the page, and how long after a turn another
-/// swipe waits, so a fling's tail doesn't turn a second page.
+/// How far a sideways swipe goes before it turns the page, and how long its scroll events must
+/// pause before another swipe can turn one, so a fling's tail doesn't turn a second page.
 const SWIPE: Pixels = px(48.);
-const SWIPE_GAP: Duration = Duration::from_millis(350);
+const SWIPE_PAUSE: Duration = Duration::from_millis(120);
 
 /// One laid-out child of the chapter column, relative to the column's top. `line` is its line
 /// height when a page may break between its lines.
@@ -66,9 +66,11 @@ pub(crate) struct Reading {
     pub contents: bool,
     /// How far a wheel has pushed past the end of the chapter, down (+) or up (−).
     overscroll: Pixels,
-    /// Paged: how far a sideways swipe has gone, and when the last one turned a page.
+    /// Paged: how far a sideways swipe has gone, when the last scroll event came, and whether this
+    /// stream of events has already turned its page.
     swipe: Pixels,
-    swiped: Option<std::time::Instant>,
+    last_scroll: Option<std::time::Instant>,
+    turned: bool,
 }
 
 impl Reading {
@@ -87,7 +89,8 @@ impl Reading {
             contents: false,
             overscroll: px(0.),
             swipe: px(0.),
-            swiped: None,
+            last_scroll: None,
+            turned: false,
         }
     }
 
@@ -374,16 +377,23 @@ impl Inkling {
     }
 
     /// Paged: a sideways swipe (a finger on iPhone, two on a trackpad) turns the page, left for
-    /// forward. One swipe turns one page, however far it goes.
+    /// forward. One swipe turns one page, however far it goes: after a turn, the rest of that stream
+    /// of scroll events, the fling after the finger lifts included, is passed over until it pauses
+    /// for `SWIPE_PAUSE` or a new touch starts.
     fn swiped(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         let Screen::Reading(r) = &mut self.screen else { return };
-        if matches!(event.touch_phase, TouchPhase::Started | TouchPhase::Ended) {
+        let paused = r.last_scroll.is_none_or(|at| now.duration_since(at) >= SWIPE_PAUSE);
+        r.last_scroll = Some(now);
+        if paused || event.touch_phase == TouchPhase::Started {
+            (r.turned, r.swipe) = (false, px(0.));
+        }
+        if matches!(event.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled) {
             r.swipe = px(0.);
             return;
         }
         let delta = event.delta.pixel_delta(px(20.));
-        if delta.x.abs() <= delta.y.abs() || r.swiped.is_some_and(|at| now.duration_since(at) < SWIPE_GAP) {
+        if r.turned || delta.x.abs() <= delta.y.abs() {
             return;
         }
         r.swipe += delta.x;
@@ -391,8 +401,7 @@ impl Inkling {
             return;
         }
         let forward = r.swipe < px(0.);
-        r.swipe = px(0.);
-        r.swiped = Some(now);
+        (r.swipe, r.turned) = (px(0.), true);
         self.turn(forward, window, cx);
     }
 
@@ -423,7 +432,13 @@ impl Inkling {
                 r.pending = false;
             }
             PageMode::Scroll => {
-                let max = r.scroll.max_offset().y;
+                // The scrolled column has to be laid out before it can be scrolled: straight after
+                // a switch from pages it has no size yet, and scrolling it then would lose the place.
+                let (view, max) = (r.scroll.bounds().size.height, r.scroll.max_offset().y);
+                if view <= px(0.) || (max <= px(0.) && layout.height > view) {
+                    cx.on_next_frame(window, |_, _, cx| cx.notify());
+                    return;
+                }
                 r.scroll.set_offset(point(px(0.), -target.min(max)));
                 r.pending = false;
             }
@@ -566,6 +581,7 @@ impl Inkling {
             .border_color(c.hairline)
             .rounded(px(10.))
             .shadow_md()
+            .occlude()
             .text_size(px(13.))
             .children((0..r.book.chapters.len()).map(|at| {
                 let on = at == r.chapter;

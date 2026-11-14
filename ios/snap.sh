@@ -45,9 +45,10 @@ point() {
     word-paragraph) echo "140 190" ;; # "paragraph", second block
     line-two-end) echo "380 190" ;;   # after "here", second block
     start-handle) echo "97 170" ;;    # the knob over the start of "paragraph", once selected
-    # The library and reading. The Write and Read toggle sits at the top left.
-    show-writing) echo "30 84" ;;
-    show-reading) echo "74 84" ;;
+    # The library and reading. The cog and the Write and Read toggle sit at the top left.
+    cog) echo "26 84" ;;
+    show-writing) echo "72 84" ;;
+    show-reading) echo "116 84" ;;
     find-books) echo "276 140" ;;
     found-pdf) echo "150 341" ;;      # the second row Find books lists, the PDF
     add-found) echo "201 414" ;;
@@ -57,6 +58,12 @@ point() {
     contents) echo "343 90" ;;
     chapter-one) echo "120 189" ;;    # Contents' second row
     back-to-library) echo "148 90" ;;
+    # The Appearance sheet, from its top; Pages after the sheet is panned up 320 pt.
+    sheet-done) echo "363 402" ;;
+    sync) echo "353 458" ;;
+    tone-sepia) echo "127 582" ;;
+    pages-scroll) echo "110 782" ;;
+    pages-paged) echo "290 782" ;;
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -415,15 +422,16 @@ mkdir -p "$docs"
 cp ../target/fixtures/pride-and-prejudice.epub ../target/fixtures/rfc2616.pdf "$docs/"
 reading_draft="The draft from before the books."
 printf '%s' "$reading_draft" >"$(data_dir)/draft.md"
-# The iPhone has no Appearance panel, so paged mode is set in settings.json.
+# Paged mode from settings.json, so the lane starts in pages; the Appearance steps below switch it.
 printf '{"provider":"Claude","reading":{"pages":"paged"}}' >"$(data_dir)/settings.json"
 "$ad" open "$app" --relaunch --launch-args --fake-ai >/dev/null
 sleep 2.5
 tap show-reading 1.5
 [ "$(book_count)" = 0 ] || fail "the library is not empty"
 tap find-books 4
-tap found-pdf
 shot
+# The PDF starts unticked (the shot above, and mac/snap.sh asserts it); tick it.
+tap found-pdf
 
 begin books-library
 tap add-found 3
@@ -467,6 +475,49 @@ tap book-pdf 3
 pdf_opened="$(book_state Microsoft | cut -d' ' -f3)"
 epub_opened="$(book_state Pride | cut -d' ' -f3)"
 [ "$pdf_opened" -gt "$epub_opened" ] || fail "the PDF was not opened after the EPUB"
+shot
+
+# Appearance on iPhone: the sheet beside the page and a book, a reading-only tone with sync off,
+# sync carrying it across, and the place through Paged, Scroll and Paged.
+setting() {
+  python3 -c 'import json, sys; s = json.load(open(sys.argv[1])); print(eval(sys.argv[2], {}, {"s": s}))' "$(data_dir)/settings.json" "$1"
+}
+
+begin appearance-page
+tap show-writing 1.5
+tap cog 1.5
+shot
+tap sheet-done
+
+begin appearance-book
+tap show-reading 2
+tap cog 1.5
+shot
+
+begin appearance-tone
+tap sync
+tap tone-sepia 1.5
+[ "$(setting "s['reading']['look']['mode'], s['reading']['synced'], s['appearance'].get('mode', 'light')")" = "('sepia', False, 'light')" ] || fail "with sync off Sepia changed $(setting 's')"
+shot
+
+begin appearance-sync
+tap sync 1.5
+[ "$(setting "s['appearance']['mode']")" = sepia ] || fail "turning sync on did not carry Sepia to writing"
+shot
+
+begin appearance-pages
+tap sheet-done
+tap page-forward 1.5
+held="$(book_state Microsoft | cut -d' ' -f1-2)"
+tap cog 1.5
+"$ad" gesture pan 330 760 0 -320 1200 >/dev/null
+sleep 1
+tap pages-scroll 1.5
+[ "$(setting "s['reading']['pages']")" = scroll ] || fail "Scroll did not switch the book to scrolling"
+tap pages-paged 1.5
+tap sheet-done
+tap back-to-library 1.5
+[ "$(book_state Microsoft | cut -d' ' -f1-2)" = "$held" ] || fail "the place moved from $held to $(book_state Microsoft) through Scroll and back"
 shot
 
 echo "all $step steps passed; screenshots in $shots"
