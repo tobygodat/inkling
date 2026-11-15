@@ -101,12 +101,10 @@ impl Inkling {
     /// Saves the draft now, since the autosave may be pending, then asks the host to restart. If
     /// the save fails, the footer says so and nothing restarts.
     pub fn restart(&mut self, cx: &mut Context<Self>) {
-        match self.paths.save_draft(&self.text(cx)) {
-            Ok(()) => cx.emit(Restart),
-            Err(e) => {
-                self.saved = crate::Saved::Failed(e.to_string());
-                cx.notify();
-            }
+        self.save_now(cx);
+        match self.saved {
+            crate::Saved::Failed(_) => cx.notify(),
+            _ => cx.emit(Restart),
         }
     }
 

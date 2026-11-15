@@ -13,8 +13,8 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH && cargo run --release -p inkling
 ```
 
 Press Cmd-Comma, pick Claude, Gemini or ChatGPT, paste your API key and Save. The key goes to the
-Keychain (service `com.tobygodat.inkling`), never to a file. The draft lives in
-`~/Library/Application Support/Inkling/draft.md`.
+Keychain (service `com.tobygodat.inkling`), never to a file. Each document is a Markdown file in
+`~/Library/Application Support/Inkling/documents/`.
 
 - Write in the page. It saves itself half a second after you stop.
 - Fix grammar, Find a word (select a word first), Next line, or type an ask and press Send.

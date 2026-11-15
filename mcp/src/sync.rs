@@ -354,6 +354,34 @@ mod tests {
     }
 
     #[test]
+    fn opening_an_older_document_sends_it_as_the_draft() {
+        let data = tempfile::tempdir().unwrap();
+        let paths = inkling_core::store::Paths { dir: data.path().to_path_buf() };
+        let documents = inkling_core::Documents::new(&paths);
+        documents.write("older", "Older piece.").unwrap();
+        documents.write("newer", "Newer piece.").unwrap();
+        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3_600);
+        fs::File::options().write(true).open(documents.path("older")).unwrap().set_modified(day_ago).unwrap();
+        fs::File::options().write(true).open(documents.path("newer")).unwrap().set_modified(hour_ago).unwrap();
+        let newer_at = hour_ago.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let mut settings = inkling_core::Settings::default();
+        settings.document = Some("older".into());
+        settings.save(&paths).unwrap();
+        let fake = Fake {
+            library: json!({ "books": [], "draft": null, "inbox": [] }),
+            draft: json!({ "version": 1, "text": "Newer piece.", "saved_at": newer_at }),
+            files: vec![],
+            calls: RefCell::new(Vec::new()),
+        };
+        let report = sync(&Folder::new(data.path()), &fake, data.path()).unwrap();
+        assert!(report.draft);
+        let sent = fake.calls.borrow();
+        let put = sent.iter().find(|(m, p, _)| *m == Method::Put && p == "/v1/draft").unwrap();
+        assert_eq!(put.2["text"], json!("Older piece."));
+    }
+
+    #[test]
     fn a_file_name_keeps_the_title_readable() {
         assert_eq!(file_name("Saved: A Paper/Draft"), "Saved A Paper Draft");
         assert_eq!(file_name("../../etc"), "etc");

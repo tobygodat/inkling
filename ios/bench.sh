@@ -12,6 +12,8 @@ udid="$("$ad" appstate --json | sed -n 's/.*"device_udid": "\(.*\)".*/\1/p')"
 [ -n "$udid" ] || { echo "no Simulator udid from agent-device" >&2; exit 1; }
 data="$(xcrun simctl get_app_container "$udid" "$app" data)/Library/Application Support/Inkling"
 mkdir -p "$data"
+# The app moves draft.md into documents/ at launch.
+rm -rf "$data/documents"
 awk 'BEGIN {
   for (p = 0; p < 100; p++) {
     for (w = 0; w < 50; w++) printf "%s ", (w % 9 == 4 ? "**river**" : "light")
@@ -28,7 +30,7 @@ typed="the light held over the river and the light held  "
 sleep 1
 log="$("$ad" logs path 2>/dev/null | grep -o '/.*app\.log')"
 "$ad" logs stop >/dev/null 2>&1
-grep -qi "light held over the river and" "$data/draft.md" || { echo "the typed text is not in the draft" >&2; exit 1; }
+grep -qi "light held over the river and" "$data/documents/draft.md" || { echo "the typed text is not in the draft" >&2; exit 1; }
 grep -o 'typed to painted [0-9]* us' "$log" | awk '{ print $4 }' | sort -n | awk -v typed="${#typed}" '
   { t[NR] = $1 }
   END {

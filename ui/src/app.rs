@@ -1,5 +1,6 @@
 pub(crate) use crate::chrome::Menu;
 use crate::appearance::AppearancePanel;
+use crate::documents::{DocList, Docs};
 use crate::feedback::FeedbackScreen;
 use crate::keys::KeyScreen;
 use crate::library::{Books, Finding};
@@ -84,6 +85,8 @@ pub(crate) enum Screen {
     /// The books, with Find books over them while that is open.
     Library(Option<Finding>),
     Reading(Reading),
+    /// The writer's documents.
+    Documents(DocList),
 }
 
 impl Screen {
@@ -109,7 +112,11 @@ pub struct Inkling {
     pub(crate) keys: Box<dyn KeyStore>,
     /// Asked of the key store when the provider or its key changes, never on a frame.
     pub(crate) key_saved: bool,
+    /// The open document's page.
     pub(crate) page: Page,
+    pub(crate) page_edited: Subscription,
+    /// The documents, and the pages of those opened since launch.
+    pub(crate) docs: Docs,
     pub(crate) ask_field: Entity<InputState>,
     /// All AI state. The views render it and keep no copy.
     pub(crate) revision: Revision,
@@ -143,7 +150,7 @@ pub struct Inkling {
     /// The build on disk, as the Mac host last reported it.
     pub(crate) installed: Option<BuildNumber>,
     pub(crate) saved: Saved,
-    save: Task<()>,
+    pub(crate) save: Task<()>,
     /// The body faces this device has, asked of the text system once at launch.
     pub(crate) faces: Vec<Face>,
     /// The library on disk and what the host lends it.
@@ -168,9 +175,10 @@ impl Inkling {
         let installed = cx.text_system().all_font_names();
         let faces: Vec<Face> = Face::ALL.into_iter().filter(|f| installed.iter().any(|n| n == f.family())).collect();
         let theme = Theme::new(form, &settings.appearance, &faces);
-        let page = Page::new(form, paths.load_draft(), &settings.appearance, theme, paths.dir.clone(), window, cx);
+        let (docs, migrated) = Docs::open(&paths, settings.document.as_deref());
+        let page = Page::new(form, docs.text(&docs.open), &settings.appearance, theme, docs.store.dir().to_path_buf(), window, cx);
         let ask_field = cx.new(|cx| InputState::new(window, cx).placeholder("Ask for fixes, words or a nudge"));
-        let edited = page.on_edit(window, cx, Self::edited);
+        let page_edited = page.on_edit(window, cx, Self::edited);
         let sent = cx.subscribe_in(&ask_field, window, |this, _, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 this.send(window, cx);
@@ -212,10 +220,12 @@ impl Inkling {
             keys,
             key_saved,
             page,
+            page_edited,
+            docs,
             ask_field,
             revision: Revision::Idle,
             running: None,
-            notice: None,
+            notice: migrated.err().map(Into::into),
             screen: Screen::Page,
             menu: Menu::Closed,
             panel: None,
@@ -233,7 +243,7 @@ impl Inkling {
             faces,
             books,
             saves: 0,
-            _subs: vec![edited, sent, intercept, feedback_edited],
+            _subs: vec![sent, intercept, feedback_edited],
         };
         inkling.theme().apply_to_kit(cx);
         inkling
@@ -303,7 +313,7 @@ impl Inkling {
         cx.notify();
     }
 
-    fn edited(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn edited(&mut self, cx: &mut Context<Self>) {
         if self.revision.is_busy() {
             self.cancel(cx);
         }
@@ -315,7 +325,7 @@ impl Inkling {
         self.save = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(AUTOSAVE).await;
             let _ = this.update(cx, |this, cx| {
-                this.saved = match this.paths.save_draft(&this.text(cx)) {
+                this.saved = match this.docs.store.write(&this.docs.open, &this.text(cx)) {
                     Ok(()) => Saved::Saved,
                     Err(e) => Saved::Failed(e.to_string()),
                 };
@@ -333,6 +343,9 @@ impl Inkling {
         }
         if self.screen.feedback().is_some() && key.key == "enter" && key.modifiers.platform {
             self.send_feedback(window, cx);
+            return true;
+        }
+        if self.documents_key(key, window, cx) {
             return true;
         }
         if key.modifiers.modified() {
@@ -372,7 +385,7 @@ impl Inkling {
             self.close_finding(cx);
         } else if matches!(self.screen, Screen::Reading(_)) {
             self.close_book(cx);
-        } else if matches!(self.screen, Screen::Library(None)) {
+        } else if matches!(self.screen, Screen::Library(None) | Screen::Documents(_)) {
             self.back_to_writing(window, cx);
         } else if self.wordings_open.is_some() {
             self.wordings_open = None;
@@ -393,6 +406,19 @@ impl Inkling {
     fn cancel(&mut self, cx: &mut Context<Self>) {
         self.running = None;
         self.revision.dismiss();
+        cx.notify();
+    }
+
+    /// Before the page changes document: a request still running stops, and only a finished
+    /// review stays with the document.
+    pub(crate) fn stop_asking(&mut self, cx: &mut Context<Self>) {
+        self.running = None;
+        if self.revision.review().is_none() {
+            self.revision.dismiss();
+        }
+        self.wordings_open = None;
+        self.selected = None;
+        self.notice = None;
         cx.notify();
     }
 
@@ -604,7 +630,7 @@ impl Inkling {
     pub fn view(&self) -> View {
         match self.screen {
             Screen::Library(..) | Screen::Reading(_) => View::Reading,
-            Screen::Page | Screen::Keys(_) | Screen::Feedback(_) => View::Writing,
+            Screen::Page | Screen::Keys(_) | Screen::Feedback(_) | Screen::Documents(_) => View::Writing,
         }
     }
 
@@ -824,7 +850,8 @@ impl Render for Inkling {
             .font_family(SANS)
             .on_action(cx.listener(Self::on_open_keys))
             .on_action(cx.listener(Self::on_show_writing))
-            .on_action(cx.listener(Self::on_show_reading));
+            .on_action(cx.listener(Self::on_show_reading))
+            .on_action(cx.listener(Self::on_new_document));
         if self.kit_view != self.view() {
             self.kit_view = self.view();
             t.apply_to_kit(cx);
@@ -837,6 +864,7 @@ impl Render for Inkling {
             Screen::Library(finding) => self.render_library(finding.as_ref(), cx).into_any_element(),
             Screen::Reading(reading) => self.render_reading(reading, window, cx).into_any_element(),
             Screen::Feedback(_) => self.render_feedback(window, cx).into_any_element(),
+            Screen::Documents(list) => self.render_documents(list, cx).into_any_element(),
             Screen::Page if self.form == FormFactor::Phone => self.render_phone(window, cx),
             Screen::Page => self.render_mac_page(window, cx),
         };
@@ -867,6 +895,7 @@ impl Inkling {
         let page = self.render_page(window, cx);
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .child(self.render_bar(cx))
@@ -895,6 +924,7 @@ impl Inkling {
                 ),
             )
             .child(self.render_footer(cx))
+            .child(div().absolute().top(px(12.)).left(self.corner_width()).child(self.render_documents_link(cx)))
             .into_any_element()
     }
 }
@@ -947,6 +977,7 @@ impl Inkling {
         };
         let provider = self.settings.provider.label();
         let key = if self.key_saved { provider.to_string() } else { format!("{provider} · add a key") };
+        let typing = self.typing(window, cx);
         div()
             .w_full()
             .h(m.control)
@@ -957,6 +988,8 @@ impl Inkling {
             .gap_1()
             .text_size(px(14.))
             .text_color(c.muted)
+            // While the keyboard is up, Done takes the room "‹ Documents" needs.
+            .when(!typing, |row| row.child(self.render_documents_link(cx)))
             .child(div().flex_1().min_w_0().truncate().child(saved))
             .when(self.feedback_on, |row| {
                 row.child(
@@ -977,7 +1010,7 @@ impl Inkling {
                     }))
                     .test_support(),
             )
-            .when(self.typing(window, cx), |row| {
+            .when(typing, |row| {
                 row.child(
                     ghost_button(&c, "done", "Done")
                         .h(m.control)

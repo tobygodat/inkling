@@ -284,7 +284,8 @@ clipboard is set with `agent-device clipboard write`, which iOS treats as anothe
 GPUI draws everything inside one view, so the accessibility tree has no handles for the page,
 the chips or the review; those taps are coordinates, all in `point()` at the top of the script.
 The Paste control, UIKit's edit menu and the suggestion bar are pressed by their labels. The live
-steps open their drafts by writing `draft.md` and relaunching, because the keyboard has no `$` or
+steps open their drafts by writing `draft.md`, which the app moves into `documents/`, and
+relaunching, because the keyboard has no `$` or
 `*` within `keys.sh`'s reach.
 
 Still driven by hand on the live page: a long press and its loupe, a drag on the end handle, Cut,

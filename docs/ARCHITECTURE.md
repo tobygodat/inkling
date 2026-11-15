@@ -16,14 +16,16 @@ app.
   reading position. `scan` finds books in folders that the library doesn't have yet. The Library
   and Reading screens in `ui/` use it.
 - `mcp/` is `inkling-mcp`, the MCP server of ADR 0004. It has no UI dependency. `Server` answers
-  one JSON-RPC message at a time, whatever carries it. Its four tools (`list_books`, `read_book`,
-  `search_library`, `read_draft`) only read, through a `Store`, and are defined once in
-  `mcp/tools.json`, which the planned Worker serves too. `Folder` is the store over the data
+  one JSON-RPC message at a time, whatever carries it. Its six tools (`list_books`, `read_book`,
+  `search_library`, `read_draft`, `list_documents`, `read_document`) only read, through a `Store`,
+  and are defined once in `mcp/tools.json`, which the Worker serves too, all but the documents'
+  two until it syncs documents. `read_draft` is the document open last. `Folder` is the store over the data
   folder, read afresh on every call so a book the app just added shows at once. The binary,
   `inkling-mcp --stdio`, is what Claude Desktop and Claude Code start on the Mac. Until the
   Integrations screen exists, `inkling-mcp sign-in` and `inkling-mcp sync` put the Mac on the
   server: `signin` is an OAuth client with a one-time listener on 127.0.0.1, which keeps its refresh
-  token in the Keychain, and `sync` sends up the books, positions and draft the server lacks and
+  token in the Keychain, and `sync` sends up the books, positions and the document open last, as the
+  draft, when the server lacks them, and
   saves waiting Readwise files in `~/Downloads/Readwise` for Find books. It writes nothing in the
   data folder, because the running app owns `library.json`.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
@@ -171,9 +173,26 @@ library has no Add and no Find books.
   `Library::opened` records the last book opened, which the cog's Keep reading and the Read half of
   the Write and Read toggle (`Inkling::show_view`, Cmd-1 and Cmd-2) open again.
 
+## Documents
+`core::Documents` is the folder `documents/` in the data folder: one Markdown file per document,
+and the folder is the list, with no index. A file's stem is the document's id, the time it was made
+in milliseconds, and never changes; `documents::title` reads the title from the first line with
+text, so retitling never moves a file. `list` is newest first by the file's modified time.
+`settings.json`'s `document` is the id open last; `Documents::last_open` falls back to the newest.
+At launch `Documents::migrate` moves the old `draft.md` in as `documents/draft.md` with its date,
+or under a new id when a different `draft` is already there. A second run changes nothing.
+
+`Inkling::page` is the open document's page and `revision` its AI state. `ui::documents::Docs` keeps
+every other document opened since launch as a `Parked` page, revision and version number, so each
+keeps its undo history and its review. Switching saves the page now, stops a request still running,
+parks the page leaving (or removes its file if it is empty) and swaps the next one in. A new page
+has no file until it has text. Asking reads only `Inkling::page`, so it sends only the open
+document. The list (`Screen::Documents`) holds the document removed last until the next action;
+Cmd-Z or Undo writes it back with its old modified time and gives back its parked page.
+
 ## What is open
-`Inkling::screen` is one `Screen`: the page, the key screen, the feedback screen, the library or a
-book being read. The library carries `Option<Finding>` while Find books is open over it.
+`Inkling::screen` is one `Screen`: the page, the key screen, the feedback screen, the library, a
+book being read or the documents. The library carries `Option<Finding>` while Find books is open over it.
 `Inkling::panel` is `Option<AppearancePanel>`, drawn beside the page, the library or a book; the key
 and feedback screens close it. The panel carries `Option<Picker>`, whose `Option<Custom>` holds the
 wheel, so a picker exists only inside the panel. Opening a screen drops whatever the one before
@@ -190,8 +209,9 @@ there are no inline controls: a tap is hit-tested against the change ranges, bec
 Use the sheet moves to the next pending change.
 
 ## State
-- The draft and settings are files under the app's data folder (`Paths`). The page autosaves 500 ms
-  after the last edit. Settings hold the provider, the models and the appearance.
+- The documents and settings are files under the app's data folder (`Paths`). The page autosaves
+  500 ms after the last edit into its document's file. Settings hold the provider, the models, the
+  appearance and the document open last.
 - API keys and the feedback link are in the Apple Keychain (`KeychainKeys`, keyed by `Secret`),
   never in a file. The key screen shows "Saved" from `KeyStore::has`, which never reads them.
 - The books are under `library/` in the data folder: `library.json`, each parsed book and the covers.

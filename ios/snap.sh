@@ -64,6 +64,12 @@ point() {
     tone-sepia) echo "127 582" ;;
     pages-scroll) echo "110 782" ;;
     pages-paged) echo "290 782" ;;
+    # The documents: "‹ Documents" after the corner, then the list's New and rows, newest first.
+    open-documents) echo "200 84" ;;
+    new-document) echo "366 84" ;;
+    row-one) echo "200 136" ;;
+    row-two) echo "200 182" ;;
+    undo-remove) echo "201 810" ;;
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -126,8 +132,28 @@ data_dir() {
   echo "$(xcrun simctl get_app_container "$udid" "$app" data)/Library/Application Support/Inkling"
 }
 
+# The document open last: settings.json's `document` while its file is there, else the newest.
+open_document() {
+  local docs id
+  docs="$(data_dir)/documents"
+  id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("document") or "")' "$(data_dir)/settings.json" 2>/dev/null || true)"
+  if [ -n "$id" ] && [ -f "$docs/$id.md" ]; then echo "$docs/$id.md"; else ls -t "$docs"/*.md 2>/dev/null | head -1; fi
+}
+
 draft() {
-  cat "$(data_dir)/draft.md" 2>/dev/null || true
+  local file
+  file="$(open_document)"
+  [ -n "$file" ] && cat "$file" 2>/dev/null || true
+}
+
+document_count() {
+  ls "$(data_dir)/documents"/*.md 2>/dev/null | wc -l | tr -d ' '
+}
+
+# Starts the next launch on one document holding `$1`: the old draft.md, which the app moves in.
+seed_draft() {
+  rm -rf "$(data_dir)/documents"
+  printf '%s' "$1" >"$(data_dir)/draft.md"
 }
 
 # Waits up to 5 s for the saved draft to equal `$1`.
@@ -154,7 +180,7 @@ expect_draft_letters() {
 
 # Relaunches on a draft of `$1`, with the page unfocused and the keyboard down.
 open_draft() {
-  printf '%s' "$1" >"$(data_dir)/draft.md"
+  seed_draft "$1"
   "$ad" open "$app" --relaunch --launch-args --fake-ai >/dev/null
   sleep 2.5
 }
@@ -394,6 +420,44 @@ python3 -c "import sys; sys.exit(0 if float('$height') >= 44 else 1)" || fail "t
 echo "ok   a11y-09 the page's target is $height pt tall"
 shot
 
+# Documents (TOB-484): draft.md moved in, New, switching, a swipe to delete and Undo.
+begin docs-list
+ferry="# The ferry
+
+It leaves at seven."
+open_draft "$ferry"
+[ ! -f "$(data_dir)/draft.md" ] && [ "$(draft)" = "$ferry" ] || fail "draft.md was not moved into documents/"
+tap open-documents 1.5
+shot
+
+begin docs-new
+tap new-document 1.5
+"$ad" is visible 'role="button" label="Paste"' >/dev/null || fail "New did not put the caret on the page"
+./keys.sh "$ad" "the second piece"
+expect_draft "The second piece"
+[ "$(document_count)" = 2 ] || fail "there are $(document_count) documents, expected 2"
+shot
+
+begin docs-switch
+tap header-done
+tap open-documents 1.5
+tap row-two 1.5
+expect_draft "$ferry"
+shot
+
+begin docs-delete
+tap open-documents 1.5
+"$ad" gesture pan 300 136 -220 0 400 >/dev/null
+sleep 1.5
+[ "$(document_count)" = 1 ] || fail "a swipe left $(document_count) documents, expected 1"
+shot
+
+begin docs-undo
+tap undo-remove 1.5
+[ "$(document_count)" = 2 ] || fail "Undo left $(document_count) documents, expected 2"
+grep -rqx "The second piece" "$(data_dir)/documents" || fail "Undo did not bring the second piece back whole"
+shot
+
 # The library and reading (TOB-460). Find books always searches the app's Documents, where the
 # fixture books are copied with simctl. The system pickers, for Add and for Search another folder,
 # are driven by hand: see README.md.
@@ -421,7 +485,7 @@ docs="$(xcrun simctl get_app_container "$udid" "$app" data)/Documents"
 mkdir -p "$docs"
 cp ../target/fixtures/pride-and-prejudice.epub ../target/fixtures/rfc2616.pdf "$docs/"
 reading_draft="The draft from before the books."
-printf '%s' "$reading_draft" >"$(data_dir)/draft.md"
+seed_draft "$reading_draft"
 # Paged mode from settings.json, so the lane starts in pages; the Appearance steps below switch it.
 printf '{"provider":"Claude","reading":{"pages":"paged"}}' >"$(data_dir)/settings.json"
 "$ad" open "$app" --relaunch --launch-args --fake-ai >/dev/null

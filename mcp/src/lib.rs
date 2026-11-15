@@ -161,7 +161,7 @@ mod tests {
         let listed = server.handle(&json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" })).unwrap();
         let names: Vec<&str> =
             listed["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_books", "read_book", "search_library", "read_draft"]);
+        assert_eq!(names, ["list_books", "read_book", "search_library", "read_draft", "list_documents", "read_document"]);
         let missing = server.handle(&json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": { "name": "delete_everything" } })).unwrap();
         assert_eq!(missing["error"]["code"], INVALID_PARAMS);
@@ -195,6 +195,27 @@ mod tests {
         assert_eq!(hits.as_array().unwrap().len(), 1);
         assert_eq!(hits[0]["chapter"], 1);
 
+        // Before the app has moved draft.md into documents/, the draft is draft.md.
+        assert_eq!(text(&call(&server, "read_draft", json!({}))), "# A draft\n\nIt begins.");
+    }
+
+    #[test]
+    fn the_documents_are_listed_and_read_and_the_draft_is_the_one_open_last() {
+        let (dir, server) = library();
+        let paths = inkling_core::Paths { dir: dir.path().to_path_buf() };
+        let documents = inkling_core::Documents::new(&paths);
+        documents.migrate(&paths).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        documents.restore("2", "# Second\n\nNewer.", later).unwrap();
+        let listed: Value = serde_json::from_str(text(&call(&server, "list_documents", json!({})))).unwrap();
+        let titles: Vec<&str> = listed.as_array().unwrap().iter().map(|d| d["title"].as_str().unwrap()).collect();
+        assert_eq!(titles, ["Second", "A draft"]);
+        assert_eq!(text(&call(&server, "read_document", json!({ "document_id": "draft" }))), "# A draft\n\nIt begins.");
+        assert_eq!(call(&server, "read_document", json!({ "document_id": "../settings" }))["isError"], true);
+        assert_eq!(text(&call(&server, "read_draft", json!({}))), "# Second\n\nNewer.");
+        let mut settings = inkling_core::Settings::load(&paths);
+        settings.document = Some("draft".into());
+        settings.save(&paths).unwrap();
         assert_eq!(text(&call(&server, "read_draft", json!({}))), "# A draft\n\nIt begins.");
     }
 }

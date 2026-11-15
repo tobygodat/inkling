@@ -3,7 +3,7 @@
 // pushed to the client, so there is no event stream to open.
 
 import { insufficientScope, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
-import tools from "../../mcp/tools.json";
+import allTools from "../../mcp/tools.json";
 import type { Env, Owner } from "./env";
 import { json } from "./http";
 
@@ -13,6 +13,10 @@ export const VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 const INSTRUCTIONS =
   "Inkling is the writer's app for writing and reading. These tools read their library of books " +
   "(EPUBs and PDFs) and their draft. They never change anything. Chapters and positions count from 0.";
+
+/** The tools this server answers. The documents' tools come with documents' sync. */
+const SERVED = ["list_books", "read_book", "search_library", "read_draft"];
+const tools = allTools.filter((t) => SERVED.includes(t.name));
 
 const DEFAULT_HITS = 20;
 const MAX_HITS = 100;

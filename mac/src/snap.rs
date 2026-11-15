@@ -14,6 +14,7 @@ use std::time::Duration;
 
 pub mod a11y;
 pub mod books;
+pub mod documents;
 
 const PARAGRAPHS: [&str; 4] = [
     "Every weekday the seven-forty ferry leaves without waiting for anyone, and every weekday i am almost not on it.",
@@ -224,6 +225,11 @@ impl Snap {
         self.view.read_with(&self.cx, |v, cx| v.text(cx))
     }
 
+    /// The open document as saved on disk.
+    fn saved(&mut self) -> String {
+        std::fs::read_to_string(self.read(|v, _| v.open_document_path())).unwrap_or_default()
+    }
+
     fn revision(&mut self) -> Revision {
         self.view.read_with(&self.cx, |v, _| v.revision().clone())
     }
@@ -267,6 +273,14 @@ impl Snap {
         self.update(|v, _, cx| v.page().set_selection(range, cx));
         self.frame();
     }
+}
+
+/// Starts the next window on one document holding `text`: the folder of documents is emptied and
+/// `text` is written as the draft from before documents, which the app moves in at launch.
+pub(crate) fn seed(paths: &Paths, text: &str) {
+    let _ = std::fs::remove_dir_all(paths.dir.join("documents"));
+    std::fs::create_dir_all(&paths.dir).expect("data dir");
+    std::fs::write(paths.dir.join("draft.md"), text).expect("write the draft");
 }
 
 fn fail(what: &str) -> ! {
@@ -315,9 +329,9 @@ pub fn run(dir: &Path) {
     let page_text = s.point_for(0).map(|(p, _)| p);
 
     s.advance(499);
-    check(paths.load_draft().is_empty(), "nothing is saved 499 ms after the last edit");
+    check(s.saved().is_empty(), "nothing is saved 499 ms after the last edit");
     s.advance(2);
-    check(paths.load_draft() == typed, "autosave writes the draft 500 ms after the last edit");
+    check(s.saved() == typed, "autosave writes the draft 500 ms after the last edit");
 
     s.click("fix-grammar");
     s.wait(3000, |r| matches!(r, Revision::Asking { answer, .. } if answer.split_whitespace().count() >= 12));
@@ -358,7 +372,7 @@ pub fn run(dir: &Path) {
     check(s.review().stats().pending == 4, "Undo makes a rejected change pending again");
     s.click(("reject", 1usize));
     s.shot("06-rejected-one");
-    check(paths.load_draft() == typed && s.text() == typed, "the draft file and the page don't change during review");
+    check(s.saved() == typed && s.text() == typed, "the draft file and the page don't change during review");
 
     let expected = s.review().result();
     s.press("escape");
@@ -399,7 +413,7 @@ pub fn run(dir: &Path) {
     }
     check(s.text() == expected, "Shift-Cmd-Z redoes them");
     s.advance(501);
-    check(paths.load_draft() == expected, "the result is autosaved");
+    check(s.saved() == expected, "the result is autosaved");
 
     s.click("fix-grammar");
     s.wait(10_000, |r| !r.is_busy());
@@ -464,6 +478,7 @@ pub fn run(dir: &Path) {
     feedback(dir);
     appearance(dir);
     live_page(dir);
+    documents::run(dir);
 }
 
 /// The cog at the top left: hover peeks at the menu, a click pins it, and it never covers the text.
@@ -767,7 +782,7 @@ fn feedback(dir: &Path) {
     s.shot("20-restart");
     s.input("Restart now. ");
     s.click("restart");
-    check(paths.load_draft() == s.text() && s.text().contains("Restart now."), "Restart saves the draft first");
+    check(s.saved() == s.text() && s.text().contains("Restart now."), "Restart saves the draft first");
     check(restarts.get() == 1, "Restart asks the host once");
     drop(s);
 
@@ -803,7 +818,7 @@ fn live_page(dir: &Path) {
     let paths = Paths::mac();
     let l = "page-01";
     println!("ok   {l} every step above, the write, ask, review, accept and finish flow, passed on the live page");
-    paths.save_draft(PAGE).expect("write the draft");
+    seed(&paths, PAGE);
     let mut s = Snap::open(dir);
     s.shot("page-01-flow");
 
@@ -861,7 +876,7 @@ fn live_page(dir: &Path) {
     drop(s);
 
     let l = "page-06";
-    paths.save_draft(GRAMMAR).expect("write the draft");
+    seed(&paths, GRAMMAR);
     let mut s = Snap::open(dir);
     s.click("fix-grammar");
     s.wait(10_000, reviewing);
@@ -921,7 +936,7 @@ fn live_page(dir: &Path) {
     drop(s);
 
     let l = "page-09";
-    paths.save_draft("").expect("clear the draft");
+    seed(&paths, "");
     let mut s = Snap::open(dir);
     s.hover("column");
     s.advance(200);
@@ -942,7 +957,7 @@ fn live_page(dir: &Path) {
     let typed = s.text();
     lane(typed.starts_with("# Crossing\n\n- The ferry") && typed.ends_with("give or take."), l, "a heading, a list and a formula typed by key events");
     s.advance(501);
-    lane(std::fs::read(paths.draft()).ok() == Some(typed.clone().into_bytes()), l, "500 ms later draft.md is the page's source byte for byte");
+    lane(std::fs::read(s.read(|v, _| v.open_document_path())).ok() == Some(typed.clone().into_bytes()), l, "500 ms later the document's file is the page's source byte for byte");
     let snap = s.live();
     lane(snap.leaves.iter().any(|leaf| leaf.block == 0 && !leaf.is_source), l, "the heading is drawn once the caret leaves it");
     s.shot("page-09-autosave");

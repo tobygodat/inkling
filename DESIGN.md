@@ -51,7 +51,8 @@ from `inkling_core::Appearance::tokens`. Light is the default.
 
 ## Layout
 - One centred column, at most 700 pt wide by default, 480 to 960 pt on the Appearance panel. No
-  sidebar and no toolbar.
+  sidebar and no toolbar. The page's one control of its own is "‹ Documents" at the top, after the
+  corner, as "‹ Library" sits on a book. On iPhone it gives its place to Done while the keyboard is up.
 - Mac, top to bottom: version bar (only during review), the page, quick actions, the ask field, a footer.
 - iPhone: the version bar at the top, the page, then a sheet for the change that was tapped.
 
@@ -80,6 +81,12 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   the pen while the books are open), Keep reading with the book icon once a book has been opened
   (not while one is open), Appearance with the artboard icon, and Provider with the chosen
   provider's logo, its name unwritten. The menu is as wide as its rows.
+- **Documents.** The list of the writer's pieces, each a row with its title (the first line, in the
+  body face, semibold) and the day it last changed in muted ink ("Today", "Yesterday", "3 Nov"),
+  newest first, with the open one on Segment. New at the top right; it and Cmd-N open an empty
+  page with the caret in it. On the Mac a click chooses a row, the arrows move it, and a double click
+  or Enter opens it; Delete removes the chosen row and Cmd-Z brings it back. On iPhone a tap opens a
+  row and a swipe left removes it, and an Undo button sits at the bottom until the next action.
 - **Library.** The title, Find books and Add at the top, then the books as 150 pt tiles, newest
   first: the cover or the title in the body face on a Segment tile, a progress line once started,
   then the title and the author or format and how far through. Find books lists what it found with
@@ -94,7 +101,7 @@ from `inkling_core::Appearance::tokens`. Light is the default.
 - **Write and Read toggle.** One pill on Segment holding two square halves, pen then book, 28 pt on
   the Mac and 44 pt on iPhone. The view on screen sits on a lighter square (the surface on a light
   ground, the hairline tone on a dark one) with its icon in ink; the other is muted. Write goes to the
-  draft; Read goes back to where reading was left: the library, or the last book at its place (the
+  document open last; Read goes back to where reading was left: the library, or the last book at its place (the
   library before any reading since launch). Keep reading in the cog's menu always opens the last book.
   Cmd-1 and Cmd-2 do the same; each half has a tooltip and a label, "Writing" and "Reading".
 - **Feedback button.** 40 pt round, an ink outline and the message icon. Shown once a feedback link
@@ -129,7 +136,7 @@ shows its source.
 - **Links.** In Link (accent), underlined. A click puts the caret there. Links never open from the
   page.
 - **Images.** A local file draws at its size, inside the column. A path is read relative to the
-  draft's folder. A remote image draws as its alt text in brackets, muted, and is never fetched.
+  document's folder. A remote image draws as its alt text in brackets, muted, and is never fetched.
 - **Maths.** `$…$` draws inline, sitting on the text's baseline. `$$…$$` draws centred, as its own block.
   Both are in Ink, at the body size. A formula that doesn't parse, and a price such as `$5`, stay text.
 - **The caret's block.** Its source, with the Markdown syntax (`#`, `**`, `-`, `$`, the backticks)

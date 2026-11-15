@@ -40,8 +40,27 @@
   {
     "name": "read_draft",
     "title": "Read the draft",
-    "description": "Gives the writer's current draft, as the Markdown they are writing.",
+    "description": "Gives the document the writer had open last, as the Markdown they are writing.",
     "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
+  },
+  {
+    "name": "list_documents",
+    "title": "List documents",
+    "description": "Lists the writer's documents, the one changed last first, with each one's id, title and when it last changed.",
+    "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
+  },
+  {
+    "name": "read_document",
+    "title": "Read a document",
+    "description": "Gives one of the writer's documents as Markdown.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "document_id": { "type": "string", "description": "The id list_documents gives." } },
+      "required": ["document_id"],
+      "additionalProperties": false
+    },
     "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
   }
 ]
