@@ -59,13 +59,18 @@ impl Folder {
         }
     }
 
-    /// When the draft was last saved, in milliseconds since the Unix epoch, or 0 if it never was.
+    /// When the draft last changed, in milliseconds since the Unix epoch, or 0 if it never did.
+    /// Opening an older document makes it the draft without touching its file, so the time the
+    /// open document was chosen, kept in `settings.json`, counts too.
     pub fn draft_saved_at(&self) -> u64 {
-        fs::metadata(self.draft_file())
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_millis() as u64)
+        let modified = |path: PathBuf| {
+            fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_millis() as u64)
+        };
+        modified(self.draft_file()).max(modified(self.paths.settings()))
     }
 
     fn library_dir(&self) -> PathBuf {
