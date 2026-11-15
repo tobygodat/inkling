@@ -3816,6 +3816,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "gpui-kit",
+ "image",
  "inkling-books",
  "inkling-core",
  "ratex-layout",
