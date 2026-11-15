@@ -11,9 +11,14 @@ mod snap_live;
 
 gpui_kit::actions!(inkling_mac, [Quit]);
 
-pub fn window_options(size: Size<Pixels>, focus: bool, show: bool) -> WindowOptions {
+/// The window centred on the main display, at its full size so the live snap's tall window stays
+/// tall. With no display it sits at the origin.
+pub fn window_options(size: Size<Pixels>, focus: bool, show: bool, cx: &App) -> WindowOptions {
+    let bounds = cx
+        .primary_display()
+        .map_or(Bounds { origin: Default::default(), size }, |d| Bounds::centered_at(d.visible_bounds().center(), size));
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds { origin: Default::default(), size })),
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions { title: Some("Inkling".into()), ..Default::default() }),
         focus,
         show,
@@ -58,7 +63,7 @@ pub fn open_sized(
     keys: Box<dyn KeyStore>,
     build: Build,
 ) -> Result<(AnyWindowHandle, Entity<Inkling>)> {
-    gpui_kit::open_window(window_options(window_size, focus, show), cx, |window, cx| {
+    gpui_kit::open_window(window_options(window_size, focus, show, cx), cx, |window, cx| {
         cx.new(|cx| Inkling::new(form, inkling_core::Paths::mac(), keys, build, window, cx))
     })
 }

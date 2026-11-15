@@ -77,7 +77,7 @@ impl Live {
         let images = images.to_path_buf();
         let (window, view) = cx
             .update(|cx| {
-                gpui_kit::open_window(window_options(size(px(1280.), px(1400.)), false, false), cx, |window, cx| {
+                gpui_kit::open_window(window_options(size(px(1280.), px(1400.)), false, false, cx), cx, |window, cx| {
                     cx.new(|cx| {
                         let mut e = LiveEditor::new(&text, Options { markdown: true, maths: true }, FormFactor::Mac, &Appearance::default(), Some(images), window, cx);
                         e.set_options(options, cx);
