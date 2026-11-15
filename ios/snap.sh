@@ -61,12 +61,12 @@ point() {
     contents) echo "343 90" ;;
     chapter-one) echo "120 189" ;;    # Contents' second row
     back-to-library) echo "192 90" ;;  # "‹ Library", right of the 150 pt corner
-    # The Appearance sheet, from its top; Pages after the sheet is panned up 320 pt.
+    # The Appearance sheet, from its top; Pages once the sheet is panned to its end.
     sheet-done) echo "363 402" ;;
     sync) echo "353 458" ;;
     tone-sepia) echo "127 582" ;;
-    pages-scroll) echo "110 782" ;;
-    pages-paged) echo "290 782" ;;
+    pages-scroll) echo "110 495" ;;
+    pages-paged) echo "290 495" ;;
     # The documents: "‹ Documents" after the corner, then the list's New and rows, newest first.
     open-documents) echo "200 84" ;;
     new-document) echo "366 84" ;;
@@ -577,8 +577,10 @@ tap sheet-done
 tap page-forward 1.5
 held="$(book_state Microsoft | cut -d' ' -f1-2)"
 tap cog 1.5
-"$ad" gesture pan 330 760 0 -320 1200 >/dev/null
-sleep 1
+# Past the sheet's end, so where it stops doesn't hang on the pan's speed. x = 392 is right of the
+# sliders.
+"$ad" gesture pan 392 800 0 -700 1200 >/dev/null
+sleep 1.5
 tap pages-scroll 1.5
 [ "$(setting "s['reading']['pages']")" = scroll ] || fail "Scroll did not switch the book to scrolling"
 tap pages-paged 1.5
