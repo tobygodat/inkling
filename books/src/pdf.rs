@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 
-use crate::book::{Block, Chapter};
+use crate::book::{Chapter, display_title};
+use crate::markdown::{Doc, Inline};
 
 #[derive(Debug)]
 pub struct Parsed {
@@ -48,8 +49,18 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed, PdfError> {
     let chapters = sections
         .into_iter()
         .filter_map(|(title, range)| {
-            let blocks = paragraphs(&pages[range]);
-            (!blocks.is_empty()).then_some(Chapter { title, blocks })
+            let paragraphs = paragraphs(&pages[range]);
+            if paragraphs.is_empty() {
+                return None;
+            }
+            let mut doc = Doc::default();
+            if let Some(title) = &title {
+                doc.heading(1, &[Inline::text(display_title(title))]);
+            }
+            for p in paragraphs {
+                doc.paragraph(&[Inline::text(p)]);
+            }
+            Some(Chapter { title, text: doc.finish() })
         })
         .collect::<Vec<_>>();
     if chapters.is_empty() {
@@ -165,7 +176,7 @@ fn strip_furniture(pages: &[String]) -> Vec<Vec<String>> {
 
 /// Joins wrapped lines into paragraphs. A paragraph ends at a blank line, or at a line that ends
 /// a sentence well short of the usual line length.
-fn paragraphs(pages: &[Vec<String>]) -> Vec<Block> {
+fn paragraphs(pages: &[Vec<String>]) -> Vec<String> {
     let lines: Vec<&str> = pages.iter().flat_map(|p| p.iter().map(String::as_str)).collect();
     let mut lengths: Vec<usize> = lines.iter().map(|l| l.trim().chars().count()).filter(|&n| n > 0).collect();
     lengths.sort_unstable();
@@ -173,11 +184,11 @@ fn paragraphs(pages: &[Vec<String>]) -> Vec<Block> {
 
     let mut blocks = Vec::new();
     let mut para = String::new();
-    let flush = |para: &mut String, blocks: &mut Vec<Block>| {
+    let flush = |para: &mut String, blocks: &mut Vec<String>| {
         let text = crate::epub::collapse(para);
         para.clear();
         if !text.is_empty() {
-            blocks.push(Block::Paragraph(text));
+            blocks.push(text);
         }
     };
     for line in lines {
@@ -265,14 +276,14 @@ pub(crate) mod tests {
         let p = parse(&pdf).unwrap();
         assert_eq!(p.title.as_deref(), Some("Generated Paper"));
         assert_eq!(p.author.as_deref(), Some("P. Writer"));
-        let blocks = &p.chapters[0].blocks;
+        let blocks: Vec<&str> = p.chapters[0].text.split("\n\n").collect();
         assert_eq!(
             blocks[0],
-            Block::Paragraph("The apple line of a long paragraph that wraps across several lines of the page and keeps on going with a hyphenated word in the middle of the apple.".into())
+            "The apple line of a long paragraph that wraps across several lines of the page and keeps on going with a hyphenated word in the middle of the apple."
         );
-        assert_eq!(blocks[1], Block::Paragraph("A second apple paragraph begins here and runs for a line or two before the apple ends.".into()));
+        assert_eq!(blocks[1], "A second apple paragraph begins here and runs for a line or two before the apple ends.");
         assert_eq!(blocks.len(), 6, "{blocks:#?}");
-        assert!(blocks.iter().all(|b| !matches!(b, Block::Paragraph(t) if t.contains("Journal"))));
+        assert!(blocks.iter().all(|b| !b.contains("Journal")));
     }
 
     #[test]

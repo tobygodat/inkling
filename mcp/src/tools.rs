@@ -2,7 +2,7 @@
 //! asked answers with `isError` and a sentence the agent can act on, not a protocol error.
 
 use crate::store::Store;
-use inkling_books::{Block, Book, BookId, Chapter, Entry, Format};
+use inkling_books::{Book, BookId, Chapter, Entry, Format};
 use serde_json::{Value, json};
 use std::fmt::Write;
 use std::ops::Range;
@@ -67,7 +67,7 @@ fn read_book(store: &impl Store, arguments: &Value) -> Result<String, String> {
     let chapter = book.chapters.get(at).ok_or_else(|| {
         format!("{} has {} chapters, numbered 0 to {}.", book.title, book.chapters.len(), book.chapters.len().saturating_sub(1))
     })?;
-    Ok(markdown(chapter, at))
+    Ok(chapter.text.clone())
 }
 
 fn load(store: &impl Store, arguments: &Value) -> Result<Book, String> {
@@ -77,28 +77,6 @@ fn load(store: &impl Store, arguments: &Value) -> Result<Book, String> {
 
 pub(crate) fn chapter_title(chapter: &Chapter, at: usize) -> String {
     chapter.title.clone().unwrap_or_else(|| format!("Chapter {}", at + 1))
-}
-
-pub(crate) fn markdown(chapter: &Chapter, at: usize) -> String {
-    let mut text = format!("# {}\n", chapter_title(chapter, at));
-    for block in &chapter.blocks {
-        text.push('\n');
-        match block {
-            Block::Heading { level, text: heading } => {
-                let _ = writeln!(text, "{} {heading}", "#".repeat((*level).clamp(2, 6) as usize));
-            }
-            Block::Paragraph(paragraph) => {
-                let _ = writeln!(text, "{paragraph}");
-            }
-            Block::Quote(quote) => {
-                for line in quote.lines() {
-                    let _ = writeln!(text, "> {line}");
-                }
-            }
-            Block::Break => text.push_str("* * *\n"),
-        }
-    }
-    text
 }
 
 fn read_draft(store: &impl Store) -> Result<String, String> {
@@ -142,11 +120,8 @@ fn search_library(store: &impl Store, arguments: &Value) -> Result<String, Strin
     'books: for entry in entries.iter().filter(|e| only.is_none_or(|id| e.id.0 == id)) {
         let book = store.book(&entry.id).map_err(|e| format!("{} couldn't be read ({e}).", entry.title))?;
         for (at, chapter) in book.chapters.iter().enumerate() {
-            for block in &chapter.blocks {
-                let text = match block {
-                    Block::Heading { text, .. } | Block::Paragraph(text) | Block::Quote(text) => text,
-                    Block::Break => continue,
-                };
+            // One block at a time, so a passage stays within its paragraph, as the server's does.
+            for text in chapter.text.split("\n\n") {
                 for range in find(text, query) {
                     hits.push(json!({
                         "book_id": book.id.0,

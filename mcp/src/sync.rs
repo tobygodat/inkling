@@ -7,7 +7,7 @@
 //! Positions and the draft only go up for the same reason: the Mac is the one device that syncs.
 
 use crate::store::{Folder, Store};
-use crate::tools::{chapter_title, markdown};
+use crate::tools::chapter_title;
 use inkling_books::{Book, Entry, Format, import};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -177,7 +177,7 @@ fn upload(folder: &Folder, remote: &impl Remote, entry: &Entry) -> Result<(), Er
     let book: Book = serde_json::from_slice(&bytes).map_err(|e| Error::Local(format!("its file couldn't be read ({e})")))?;
     remote.send(Method::Put, &format!("/v1/books/{}/file", entry.id.0), Body::Bytes(&bytes))?;
     for (at, chapter) in book.chapters.iter().enumerate() {
-        let body = json!({ "title": chapter_title(chapter, at), "text": markdown(chapter, at) });
+        let body = json!({ "title": chapter_title(chapter, at), "text": chapter.text });
         remote.send(Method::Put, &format!("/v1/books/{}/chapters/{at}", entry.id.0), Body::Json(body))?;
     }
     if entry.cover.is_some() {
@@ -230,7 +230,7 @@ fn file_name(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inkling_books::{Block, Chapter, Library, Position};
+    use inkling_books::{Chapter, Library, PARSER, Position};
     use std::cell::RefCell;
 
     /// Answers with what the test set up and remembers every request.
@@ -264,8 +264,8 @@ mod tests {
 
     fn book(title: &str, chapters: usize) -> Book {
         let id = import::book_id(title.as_bytes());
-        let chapters = (0..chapters).map(|i| Chapter { title: None, blocks: vec![Block::Paragraph(format!("Page {i}."))] }).collect();
-        Book { id, title: title.into(), author: Some("A. Writer".into()), format: Format::Epub, chapters }
+        let chapters = (0..chapters).map(|i| Chapter { title: None, text: format!("Page {i}.\n") }).collect();
+        Book { id, title: title.into(), author: Some("A. Writer".into()), format: Format::Epub, parser: PARSER, chapters }
     }
 
     #[test]
@@ -323,7 +323,7 @@ mod tests {
 
         let sent = fake.calls.borrow();
         assert_eq!(sent[1].2, json!({ "chapter": 0, "fraction": 0.5, "at": old_at }));
-        assert_eq!(sent[4].2, json!({ "title": "Chapter 2", "text": "# Chapter 2\n\nPage 1.\n" }), "a chapter goes up as read_book shows it");
+        assert_eq!(sent[4].2, json!({ "title": "Chapter 2", "text": "Page 1.\n" }), "a chapter goes up as it is stored, which is what read_book gives");
         assert_eq!(sent[6].2["cover"], json!(cover));
         assert_eq!(sent[6].2["format"], json!("Epub"));
         assert_eq!(sent[8].2["text"], json!("My draft."));

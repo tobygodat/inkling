@@ -5,7 +5,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::book::{Book, BookId, Format};
+use crate::book::{Book, BookId, Format, PARSER};
 use crate::{epub, pdf};
 
 /// Why a file couldn't become a book, in words the reader is shown.
@@ -54,23 +54,36 @@ pub fn sniff(path: &Path, bytes: &[u8]) -> Result<Format, ImportError> {
     }
 }
 
-pub fn parse(path: &Path, bytes: &[u8]) -> Result<Book, ImportError> {
+/// A parsed book and the images its chapters show, each by its file name in `images/<id>/`.
+#[derive(Debug)]
+pub struct Parsed {
+    pub book: Book,
+    pub images: Vec<(String, Vec<u8>)>,
+}
+
+pub fn parse(path: &Path, bytes: &[u8]) -> Result<Parsed, ImportError> {
     let format = sniff(path, bytes)?;
-    let (title, author, chapters) = match format {
+    let id = book_id(bytes);
+    let (title, author, chapters, images) = match format {
         Format::Epub => {
-            let p = epub::parse(bytes).map_err(ImportError::BadEpub)?;
-            (p.title, p.author, p.chapters)
+            let p = epub::parse(bytes, &format!("{}/", image_dir(&id))).map_err(ImportError::BadEpub)?;
+            (p.title, p.author, p.chapters, p.images)
         }
         Format::Pdf => {
             let p = pdf::parse(bytes).map_err(|e| match e {
                 pdf::PdfError::NoText => ImportError::Scanned,
                 pdf::PdfError::Unreadable(why) => ImportError::BadPdf(why),
             })?;
-            (p.title, p.author, p.chapters)
+            (p.title, p.author, p.chapters, vec![])
         }
     };
     let title = title.unwrap_or_else(|| title_from_file(path));
-    Ok(Book { id: book_id(bytes), title, author, format, chapters })
+    Ok(Parsed { book: Book { id, title, author, format, parser: PARSER, chapters }, images })
+}
+
+/// Where a book's images are, relative to the library: what its chapters' image links start with.
+pub fn image_dir(id: &BookId) -> String {
+    format!("images/{}", id.0)
 }
 
 fn title_from_file(path: &Path) -> String {
@@ -102,7 +115,7 @@ mod tests {
         doc.trailer.remove(b"Info");
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).unwrap();
-        let book = parse(Path::new("/x/my_field-notes.pdf"), &bytes).unwrap();
+        let book = parse(Path::new("/x/my_field-notes.pdf"), &bytes).unwrap().book;
         assert_eq!(book.title, "my field notes");
         assert_eq!(book.format, Format::Pdf);
     }

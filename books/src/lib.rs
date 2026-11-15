@@ -6,9 +6,10 @@ pub mod book;
 pub(crate) mod epub;
 pub mod import;
 pub mod library;
+mod markdown;
 mod pdf;
 pub mod scan;
 
-pub use book::{Block, Book, BookId, Chapter, Format, Position};
+pub use book::{Book, BookId, Chapter, Format, PARSER, Position, display_title};
 pub use import::ImportError;
 pub use library::{Entry, Library, Prepared, load, prepare};
