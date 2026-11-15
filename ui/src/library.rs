@@ -8,7 +8,7 @@ use crate::theme::Colors;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_books::scan::{self, Found};
-use inkling_books::{BookId, Entry, Format, Library, Prepared};
+use inkling_books::{Position, BookId, Entry, Format, Library, Prepared};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -251,30 +251,38 @@ impl Inkling {
         }
     }
 
-    /// Loads the book on the background executor and opens it where the reader left off.
+    /// Loads the book on the background executor and opens it where the reader left off. A book
+    /// an older parser stored is parsed again from its original first, and its place follows.
     pub fn open_book(&mut self, id: BookId, cx: &mut Context<Self>) {
         let Ok(library) = &self.books.library else { return };
-        let Some(entry) = library.entry(&id) else { return };
-        let (dir, position) = (library.dir().to_path_buf(), entry.position);
+        if library.entry(&id).is_none() {
+            return;
+        }
+        let dir = library.dir().to_path_buf();
         self.books.opening = Some(id.clone());
         let load = cx.background_spawn({
-            let id = id.clone();
-            async move { inkling_books::load(&dir, &id) }
+            let (id, dir) = (id.clone(), dir.clone());
+            async move { inkling_books::library::open(&dir, &id) }
         });
         cx.spawn(async move |this, cx| {
-            let book = load.await;
+            let opened = load.await;
             let _ = this.update(cx, |this, cx| {
                 if this.books.opening.as_ref() != Some(&id) || this.screen.keys().is_some() || this.screen.feedback().is_some() {
                     return;
                 }
                 this.books.opening = None;
-                match book {
-                    Ok(book) => {
+                match opened {
+                    Ok((book, upgrade)) => {
+                        let mut position = Position::default();
                         if let Ok(library) = &mut this.books.library {
+                            if let Some(upgrade) = &upgrade {
+                                let _ = library.add(upgrade);
+                            }
+                            position = library.entry(&book.id).map(|e| e.position).unwrap_or_default();
                             let _ = library.opened(&book.id);
                         }
                         this.books.left_in_book = true;
-                        this.screen = Screen::Reading(Reading::new(book, position));
+                        this.screen = Screen::Reading(Reading::new(book, position, dir));
                     }
                     Err(e) => this.books.errors = vec![format!("The book couldn't be opened ({e}).")],
                 }

@@ -3814,6 +3814,7 @@ name = "inkling-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
  "inkling-books",
  "inkling-core",
  "ratex-layout",

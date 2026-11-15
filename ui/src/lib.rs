@@ -12,6 +12,7 @@ mod library;
 pub mod live;
 mod page;
 mod picker;
+mod chapter;
 mod reading;
 mod review;
 mod theme;

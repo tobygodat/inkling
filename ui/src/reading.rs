@@ -8,13 +8,16 @@
 //! resize, a new text size) puts the view back on it.
 
 use crate::app::{Inkling, Screen, ghost_button};
+use crate::chapter::{self, Kind, Laid, Mark, Text};
 use crate::library::outlined_button;
 use crate::theme::{Body, Colors, Theme};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use inkling_books::{Block, Book, Position};
+use inkling_books::{Book, Position, display_title};
 use inkling_core::PageMode;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -38,6 +41,8 @@ struct Piece {
     top: Pixels,
     bottom: Pixels,
     line: Option<Pixels>,
+    /// Where its block starts in the chapter's Markdown.
+    source: Option<usize>,
 }
 
 /// The chapter as the last frame laid it out.
@@ -47,10 +52,26 @@ struct Layout {
     height: Pixels,
 }
 
+/// A footnote shown beside its marker.
+pub(crate) struct OpenNote {
+    pub label: String,
+    /// Where its marker was tapped, in the window.
+    pub at: Point<Pixels>,
+}
+
 /// Open while `Inkling::screen` is `Screen::Reading(_)`.
 pub(crate) struct Reading {
     pub book: Book,
     pub chapter: usize,
+    /// The library's folder, which the chapters' image paths are relative to.
+    dir: PathBuf,
+    /// The chapter on screen, parsed.
+    laid: Rc<Laid>,
+    /// Each image's size in pixels, read once from its file.
+    sizes: RefCell<HashMap<String, Option<Size<f32>>>>,
+    pub note: Option<OpenNote>,
+    /// A byte offset to show once the chapter is laid out: where a link inside the book goes.
+    seek: Option<usize>,
     pub scroll: ScrollHandle,
     /// How far down the chapter the view's top is, from 0 to 1. See the module comment.
     anchor: f32,
@@ -74,12 +95,18 @@ pub(crate) struct Reading {
 }
 
 impl Reading {
-    pub fn new(book: Book, at: Position) -> Self {
+    pub fn new(book: Book, at: Position, dir: PathBuf) -> Self {
         let chapter = at.chapter.min(book.chapters.len().saturating_sub(1));
         let anchor = if chapter == at.chapter { at.fraction.clamp(0., 1.) } else { 0. };
+        let laid = Rc::new(book.chapters.get(chapter).map(|c| chapter::lay(&c.text)).unwrap_or_default());
         Reading {
             book,
             chapter,
+            dir,
+            laid,
+            sizes: RefCell::default(),
+            note: None,
+            seek: None,
             scroll: ScrollHandle::new(),
             anchor,
             pending: true,
@@ -104,6 +131,14 @@ impl Reading {
             return self.anchor;
         }
         (-self.scroll.offset().y / self.height).clamp(0., 1.)
+    }
+
+    /// An image's size in pixels, from its file's header.
+    fn image_size(&self, src: &str) -> Option<Size<f32>> {
+        *self.sizes.borrow_mut().entry(src.to_string()).or_insert_with(|| {
+            let (w, h) = image::ImageReader::open(self.dir.join(src)).ok()?.with_guessed_format().ok()?.into_dimensions().ok()?;
+            (w > 0 && h > 0).then(|| size(w as f32, h as f32))
+        })
     }
 
     fn chapter_title(&self, at: usize) -> String {
@@ -191,9 +226,14 @@ impl Inkling {
         if at >= r.book.chapters.len() {
             return;
         }
+        if r.chapter != at {
+            r.laid = Rc::new(chapter::lay(&r.book.chapters[at].text));
+        }
         r.chapter = at;
         r.anchor = anchor.clamp(0., 1.);
         r.pending = true;
+        r.note = None;
+        r.seek = None;
         *r.layout.borrow_mut() = Layout::default();
         r.height = px(0.);
         r.page = 0;
@@ -203,6 +243,41 @@ impl Inkling {
         self.saves += 1;
         self.save_position();
         cx.notify();
+    }
+
+    /// A link inside the book: its chapter, at the block that holds `offset`.
+    pub fn go_to_place(&mut self, at: usize, offset: usize, cx: &mut Context<Self>) {
+        self.go_to_chapter(at, 0., cx);
+        if let Screen::Reading(r) = &mut self.screen {
+            r.seek = Some(offset);
+        }
+    }
+
+    /// A tap on a book's text: a footnote marker shows its note beside it, a link inside the book
+    /// goes to its target, and a link out of the book does nothing. Any tap closes an open note.
+    fn tapped(&mut self, hit: Option<Mark>, at: Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        let Screen::Reading(r) = &mut self.screen else { return false };
+        let was_open = r.note.take().is_some();
+        match hit {
+            Some(Mark::Note(label)) => r.note = Some(OpenNote { label, at }),
+            Some(Mark::Link(href)) => match chapter::inside(&href) {
+                Some((chapter, offset)) if chapter < r.book.chapters.len() => self.go_to_place(chapter, offset, cx),
+                _ => return was_open,
+            },
+            _ => {
+                cx.notify();
+                return was_open;
+            }
+        }
+        cx.notify();
+        true
+    }
+
+    pub fn close_note(&mut self, cx: &mut Context<Self>) {
+        if let Screen::Reading(r) = &mut self.screen {
+            r.note = None;
+            cx.notify();
+        }
     }
 
     pub fn toggle_contents(&mut self, cx: &mut Context<Self>) {
@@ -228,6 +303,7 @@ impl Inkling {
         if r.pending {
             return;
         }
+        r.note = None;
         let (chapter, last) = (r.chapter, r.book.chapters.len().saturating_sub(1));
         let at_edge = match pages {
             PageMode::Paged => {
@@ -421,6 +497,11 @@ impl Inkling {
             r.height = layout.height;
             r.pending = true;
         }
+        if let Some(offset) = r.seek.take() {
+            let top = layout.pieces.iter().filter(|p| p.source.is_some_and(|s| s <= offset)).map(|p| p.top).last().unwrap_or_default();
+            r.anchor = (top / layout.height).clamp(0., 1.);
+            r.pending = true;
+        }
         if !r.pending {
             return;
         }
@@ -501,7 +582,8 @@ impl Inkling {
             .text_color(c.muted)
             .child(div().truncate().child(format!("{} · {percent}%{page_note}", r.chapter_title(r.chapter))))
             .test_support();
-        let column = self.render_chapter(r, &t, cx);
+        let width = t.body.column.min(window.viewport_size().width - m.gutter * 2.);
+        let column = self.render_chapter(r, &t, page_h, width, cx);
         let body = match pages {
             PageMode::Scroll => div()
                 .id("reading-body")
@@ -537,6 +619,10 @@ impl Inkling {
                         .w_full()
                         .max_w(t.body.column)
                         .h(page_h)
+                        // The edges turn the page; the text over them keeps its taps for markers
+                        // and links, and passes the rest through.
+                        .child(zone("page-back").left_0().on_click(cx.listener(|this, _, window, cx| this.page_back(window, cx))).test_support())
+                        .child(zone("page-forward").right_0().on_click(cx.listener(|this, _, window, cx| this.page_forward(window, cx))).test_support())
                         .child(
                             div()
                                 .relative()
@@ -545,8 +631,6 @@ impl Inkling {
                                 .overflow_hidden()
                                 .child(div().absolute().left_0().right_0().top(-start).child(column)),
                         )
-                        .child(zone("page-back").left_0().on_click(cx.listener(|this, _, window, cx| this.page_back(window, cx))).test_support())
-                        .child(zone("page-forward").right_0().on_click(cx.listener(|this, _, window, cx| this.page_forward(window, cx))).test_support())
                         .test_support(),
                 )
                 .into_any_element()
@@ -562,6 +646,7 @@ impl Inkling {
             .child(body)
             .child(bottom)
             .when(r.contents, |screen| screen.child(self.render_contents(r, &c, window.viewport_size().width, cx)))
+            .children(self.render_note(r, window))
     }
 
     /// The contents list, under the Contents button.
@@ -604,16 +689,17 @@ impl Inkling {
             .test_support()
     }
 
-    fn render_chapter(&self, r: &Reading, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    fn render_chapter(&self, r: &Reading, t: &Theme, page_h: Pixels, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
         let (c, body): (Colors, Body) = (t.c, t.body);
         let size = body.size;
         let line = size * body.line;
         let gap = size * 0.8;
-        let chapter = &r.book.chapters[r.chapter];
         let mut lines: Vec<Option<Pixels>> = vec![];
+        let mut sources: Vec<Option<usize>> = vec![];
         let mut children: Vec<AnyElement> = vec![];
         if let Some(prev) = r.chapter.checked_sub(1) {
             lines.push(None);
+            sources.push(None);
             children.push(
                 div()
                     .id("prev-chapter")
@@ -627,33 +713,50 @@ impl Inkling {
                     .into_any_element(),
             );
         }
-        if let Some(title) = chapter.title.as_deref() {
-            lines.push(Some(size * 1.7 * 1.2));
-            children.push(
-                div()
-                    .id("chapter-title")
-                    .text_size(size * 1.7)
-                    .line_height(relative(1.2))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(display_title(title))
-                    .test_support()
-                    .into_any_element(),
-            );
-        }
-        for block in &chapter.blocks {
-            let (element, step) = match block {
-                Block::Paragraph(text) => (div().child(text.clone()), Some(line)),
-                Block::Heading { level, text } => {
+        for (i, block) in r.laid.blocks.iter().enumerate() {
+            let (element, step) = match &block.kind {
+                Kind::Title => (
+                    div()
+                        .id("chapter-title")
+                        .text_size(size * 1.7)
+                        .line_height(relative(1.2))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(self.reading_text(i, &block.text, &c, cx))
+                        .test_support()
+                        .into_any_element(),
+                    Some(size * 1.7 * 1.2),
+                ),
+                Kind::Heading(level) => {
                     let size = size * heading_scale(*level);
-                    (div().text_size(size).line_height(relative(1.3)).font_weight(FontWeight::SEMIBOLD).child(text.clone()), Some(size * 1.3))
+                    (
+                        div().text_size(size).line_height(relative(1.3)).font_weight(FontWeight::SEMIBOLD).child(self.reading_text(i, &block.text, &c, cx)).into_any_element(),
+                        Some(size * 1.3),
+                    )
                 }
-                Block::Quote(text) => (div().pl(px(18.)).border_l_2().border_color(c.hairline).child(text.clone()), Some(line)),
-                Block::Break => (div().w_full().flex().justify_center().text_color(c.muted).child("*   *   *"), None),
+                Kind::Paragraph => (self.reading_text(i, &block.text, &c, cx).into_any_element(), Some(line)),
+                Kind::Image { src, alt, caption } => (self.reading_image(r, i, src, alt, caption, &c, page_h * 0.6, width), None),
+                Kind::Rule => (div().w_full().flex().justify_center().text_color(c.muted).child("*   *   *").into_any_element(), None),
+            };
+            let indent = px(28.) * block.indent as f32;
+            let element = if block.quote > 0 || block.indent > 0 || block.marker.is_some() {
+                div()
+                    .relative()
+                    .pl(indent + px(20.) * block.quote as f32)
+                    .when(block.quote > 0, |d| d.border_l_2().border_color(c.hairline).ml(px(2.) * (block.quote - 1) as f32))
+                    .when_some(block.marker.clone(), |d, marker| {
+                        d.child(div().absolute().top_0().left(indent - px(28.)).w(px(22.)).flex().justify_end().text_color(c.muted).child(marker))
+                    })
+                    .child(element)
+                    .into_any_element()
+            } else {
+                element
             };
             lines.push(step);
-            children.push(element.into_any_element());
+            sources.push(Some(block.source));
+            children.push(element);
         }
         lines.push(None);
+        sources.push(None);
         children.push(match r.chapter + 1 < r.book.chapters.len() {
             true => {
                 let next = r.chapter + 1;
@@ -681,8 +784,11 @@ impl Inkling {
         div()
             .on_children_prepainted(move |bounds, window, cx| {
                 let Some(first) = bounds.first().map(|b| b.top()) else { return };
-                let pieces: Vec<Piece> =
-                    bounds.iter().zip(&lines).map(|(b, line)| Piece { top: b.top() - first, bottom: b.bottom() - first, line: *line }).collect();
+                let pieces: Vec<Piece> = bounds
+                    .iter()
+                    .zip(lines.iter().zip(&sources))
+                    .map(|(b, (line, source))| Piece { top: b.top() - first, bottom: b.bottom() - first, line: *line, source: *source })
+                    .collect();
                 let height = pieces.last().map(|p| p.bottom).unwrap_or_default();
                 let next = Layout { pieces, height };
                 if *layout.borrow() != next {
@@ -707,35 +813,129 @@ impl Inkling {
             .test_support()
             .into_any_element()
     }
+
+    /// A block's text, set as the book set it. A tap on a footnote marker or a link acts on it.
+    fn reading_text(&self, i: usize, text: &Text, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let styled = styled(text, c);
+        let layout = styled.layout().clone();
+        let marks = text.clone();
+        div().id(("block", i)).child(styled).on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+            let hit = layout.index_for_position(event.position()).ok().and_then(|ix| marks.target(ix).cloned());
+            if this.tapped(hit, event.position(), cx) {
+                cx.stop_propagation();
+            }
+        }))
+    }
+
+    /// An image inside the column, no wider than its file and at most `tallest`, so it sits on a
+    /// page with text around it and its caption under it.
+    #[allow(clippy::too_many_arguments)]
+    fn reading_image(&self, r: &Reading, i: usize, src: &str, alt: &str, caption: &str, c: &Colors, tallest: Pixels, widest: Pixels) -> AnyElement {
+        let shown = r.image_size(src).map(|natural| {
+            let scale = (widest / px(natural.width)).min(tallest.max(px(80.)) / px(natural.height)).min(1.);
+            size(px(natural.width) * scale, px(natural.height) * scale)
+        });
+        let picture = match shown {
+            Some(s) => img(r.dir.join(src)).w(s.width).h(s.height).into_any_element(),
+            None => div().italic().text_color(c.muted).child(format!("[{}]", if alt.is_empty() { "image" } else { alt })).into_any_element(),
+        };
+        div()
+            .id(("image", i))
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(8.))
+            .child(picture)
+            .when(!caption.is_empty(), |d| {
+                d.child(div().id(("caption", i)).text_size(rems(0.8)).line_height(relative(1.4)).italic().text_color(c.muted).text_center().child(caption.to_string()).test_support())
+            })
+            .test_support()
+            .into_any_element()
+    }
+
+    /// The footnote beside its marker.
+    fn render_note(&self, r: &Reading, window: &Window) -> Option<impl IntoElement + use<>> {
+        let open = r.note.as_ref()?;
+        let text = r.laid.notes.get(&open.label)?;
+        let t = self.theme();
+        let c = t.c;
+        let viewport = window.viewport_size();
+        let gutter = self.metrics().gutter;
+        let width = px(320.).min(viewport.width - gutter * 2.);
+        let left = (open.at.x - px(24.)).clamp(gutter, (viewport.width - gutter - width).max(gutter));
+        let below = open.at.y + t.body.size;
+        Some(
+            div()
+                .id("note")
+                .absolute()
+                .left(left)
+                .top(below)
+                .w(width)
+                .p(px(12.))
+                .bg(c.surface)
+                .border_1()
+                .border_color(c.hairline)
+                .rounded(px(10.))
+                .shadow_md()
+                .occlude()
+                .font_family(t.body.face)
+                .text_size(t.body.size * 0.75)
+                .line_height(relative(1.45))
+                .text_color(c.ink)
+                .flex()
+                .gap(px(8.))
+                .child(div().text_color(c.muted).child(open.label.clone()))
+                .child(div().flex_1().min_w_0().child(styled(text, &c)))
+                .test_support(),
+        )
+    }
+}
+
+/// Text with its emphasis, and links and footnote markers in the link colour.
+fn styled(text: &Text, c: &Colors) -> StyledText {
+    let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = vec![];
+    for (range, mark) in &text.marks {
+        let style = match mark {
+            Mark::Em => HighlightStyle { font_style: Some(FontStyle::Italic), ..Default::default() },
+            Mark::Strong => HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() },
+            Mark::Link(_) => HighlightStyle {
+                color: Some(c.link.into()),
+                underline: Some(UnderlineStyle { thickness: px(1.), color: Some(c.link.into()), wavy: false }),
+                ..Default::default()
+            },
+            Mark::Note(_) => HighlightStyle { color: Some(c.link.into()), ..Default::default() },
+        };
+        highlights.push((range.clone(), style));
+    }
+    StyledText::new(text.text.clone()).with_highlights(split(highlights))
+}
+
+/// Highlights that overlap, cut into runs that don't, each with every style that covers it.
+fn split(highlights: Vec<(std::ops::Range<usize>, HighlightStyle)>) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+    let mut cuts: Vec<usize> = highlights.iter().flat_map(|(r, _)| [r.start, r.end]).collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut out = vec![];
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let mut style: Option<HighlightStyle> = None;
+        for (r, h) in &highlights {
+            if r.start <= a && b <= r.end {
+                style = Some(match style {
+                    Some(s) => s.highlight(*h),
+                    None => *h,
+                });
+            }
+        }
+        if let Some(style) = style {
+            out.push((a..b, style));
+        }
+    }
+    out
 }
 
 /// How tall a page is in this window: the reading area between the bars, less its margins.
 fn page_height(window: &Window) -> Pixels {
     (window.viewport_size().height - TOP_BAR - BOTTOM_LINE - MARGIN * 2.).max(px(120.))
-}
-
-/// A chapter title as a reader would set it: "CHAPTER I." becomes "Chapter I", and roman numerals
-/// stay in capitals.
-pub(crate) fn display_title(raw: &str) -> String {
-    let t = raw.trim().trim_end_matches('.').trim();
-    let letters: Vec<char> = t.chars().filter(|c| c.is_alphabetic()).collect();
-    let upper = letters.iter().filter(|c| c.is_uppercase()).count();
-    let shouting = letters.len() > 3 && upper * 4 >= letters.len() * 3;
-    if !shouting {
-        return t.to_string();
-    }
-    t.split(' ')
-        .map(|w| {
-            let roman = !w.is_empty() && w.chars().all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M' | '.' | ','));
-            if roman || w.chars().any(char::is_lowercase) {
-                return w.to_string();
-            }
-            let mut cs = w.chars();
-            match cs.next() {
-                Some(first) => first.to_uppercase().chain(cs.flat_map(char::to_lowercase)).collect(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
