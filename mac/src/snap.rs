@@ -297,6 +297,8 @@ pub fn run(dir: &Path) {
         ["Source Serif 4", "Inter"].iter().all(|f| fonts.iter().any(|n| n == f)),
         "the bundled Source Serif 4 and Inter are loaded",
     );
+    let (window, display) = s.with(|w, cx| (w.bounds(), cx.primary_display().map(|d| d.visible_bounds())));
+    check(display.is_some_and(|d| window.center() == d.center()), "the window opens centred on the main display");
     s.shot("01-empty");
     cog(&mut s);
 
