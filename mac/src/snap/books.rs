@@ -421,10 +421,13 @@ fn walden(dir: &Path, folder: &Path, picked: &Picked, fixtures: &Path) {
     s.click(("pages", 1usize));
     s.click("appearance-done");
     s.press("home");
-    let page = s.bounds("page").unwrap_or_else(|| fail("the chapter is in pages"));
+    s.hover("reading-column");
+    s.advance(200);
     let mut whole = false;
     for _ in 0..6 {
-        if let Some(p) = (0..20usize).find_map(|i| s.bounds(("image", i))).filter(|p| p.top() >= page.top() && p.bottom() <= page.bottom()) {
+        // What the page shows: the text up to its last whole line.
+        let shown = s.bounds("page-text").unwrap_or_else(|| fail("the chapter is in pages"));
+        if let Some(p) = (0..20usize).find_map(|i| s.bounds(("image", i))).filter(|p| p.top() >= shown.top() && p.bottom() <= shown.bottom()) {
             whole = p.size.height > px(100.);
             break;
         }

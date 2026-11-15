@@ -663,11 +663,13 @@ impl Inkling {
                         .child(zone("page-forward").right_0().on_click(cx.listener(|this, _, window, cx| this.page_forward(window, cx))).test_support())
                         .child(
                             div()
+                                .id("page-text")
                                 .relative()
                                 .w_full()
                                 .h((end - start).min(page_h))
                                 .overflow_hidden()
-                                .child(div().absolute().left_0().right_0().top(-start).child(column)),
+                                .child(div().absolute().left_0().right_0().top(-start).child(column))
+                                .test_support(),
                         )
                         .test_support(),
                 )

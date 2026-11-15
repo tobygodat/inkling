@@ -159,8 +159,10 @@ impl Library {
 
     /// Records that the book was opened now.
     pub fn opened(&mut self, id: &BookId) -> io::Result<()> {
+        let latest = self.entries.iter().map(|e| e.opened).max().unwrap_or(0);
         let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(()) };
-        entry.opened = now().max(entry.opened + 1);
+        // Later than any book opened before, even within the same second.
+        entry.opened = now().max(latest + 1);
         self.save()
     }
 
@@ -377,6 +379,13 @@ mod tests {
         let mut reopened = reopened;
         reopened.opened(&id).unwrap();
         assert_eq!(Library::open(dir.path().join("data")).unwrap().last_opened().map(|e| &e.id), Some(&id), "the last book opened is kept");
+        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![] };
+        reopened.insert(&other).unwrap();
+        for _ in 0..3 {
+            reopened.opened(&id).unwrap();
+        }
+        reopened.opened(&other.id).unwrap();
+        assert_eq!(reopened.last_opened().map(|e| &e.id), Some(&other.id), "the book opened last wins, however often another was opened in the same second");
 
         let leftovers = fs::read_dir(lib.dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
         assert_eq!(leftovers, 0);
