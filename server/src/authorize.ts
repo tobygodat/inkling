@@ -15,8 +15,8 @@ import { escapeHtml, page } from "./http";
 /** What each scope lets a client do, as the consent form says it. */
 const SCOPES: Record<string, { label: string; ticked: boolean }> = {
   "library:read": { label: "Read your library: the books, their text and where you are in each", ticked: true },
-  "draft:read": { label: "Read your draft", ticked: false },
-  sync: { label: "Keep this device’s library and draft in step with your others", ticked: true },
+  "draft:read": { label: "Read your documents", ticked: false },
+  sync: { label: "Keep this device’s documents and books in step with your others", ticked: true },
 };
 /** Scopes every MCP client is offered, whatever it asked for. */
 const OFFERED_TO_AGENTS = ["library:read", "draft:read"];
@@ -60,7 +60,7 @@ ${local}
 <form method="post">
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">
   ${boxes}
-  <p class="note">It can only read. Nothing it does changes your books or your draft.</p>
+  <p class="note">It can only read. Nothing it does changes your books or your documents.</p>
   <p><button name="decision" value="allow">Sign in with Google and allow</button><button name="decision" value="deny">Don’t allow</button></p>
 </form>`;
 }

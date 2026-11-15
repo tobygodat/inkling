@@ -52,6 +52,16 @@ impl Docs {
     pub fn text(&self, id: &str) -> String {
         self.store.read(id).unwrap_or_default()
     }
+
+    /// Documents sync must leave alone: those parked with a review open.
+    pub fn held(&self) -> std::collections::HashSet<String> {
+        self.parked.iter().filter(|(_, p)| p.revision.review().is_some() || p.revision.is_busy()).map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Drops a parked page whose file sync changed, so it opens again from the file.
+    pub fn forget(&mut self, id: &str) {
+        self.parked.remove(id);
+    }
 }
 
 /// The list while it is open.
@@ -178,6 +188,19 @@ impl Inkling {
         cx.notify();
     }
 
+    /// Sync changed the open document's file: the page shows it afresh, without the old undo
+    /// history, which would undo text the writer never typed here.
+    pub(crate) fn reload_page(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let fresh = self.fresh_page(text, window, cx);
+        let focused = self.page.focus_handle(cx).is_focused(window);
+        self.page = fresh.page;
+        self.page_edited = fresh.edited;
+        self.saved = Saved::Saved;
+        if focused {
+            self.page.focus_handle(cx).focus(window, cx);
+        }
+    }
+
     fn fresh_page(&self, text: String, window: &mut Window, cx: &mut Context<Self>) -> Parked {
         let theme = Theme::new(self.form, &self.settings.appearance, &self.faces);
         let page = Page::new(self.form, text, &self.settings.appearance, theme, self.docs.store.dir().to_path_buf(), window, cx);
@@ -244,6 +267,7 @@ impl Inkling {
             list.removed = Some(Removed { id: entry.id, text, changed: entry.changed, parked });
             list.chosen = (!list.entries.is_empty()).then(|| at.min(list.entries.len() - 1));
         }
+        self.sync_soon(cx);
         cx.notify();
     }
 
@@ -264,6 +288,7 @@ impl Inkling {
         if let Some(parked) = removed.parked {
             self.docs.parked.insert(removed.id.clone(), parked);
         }
+        self.sync_soon(cx);
         self.refresh_list(Some(&removed.id));
         cx.notify();
     }

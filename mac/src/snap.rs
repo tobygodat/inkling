@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod a11y;
+pub mod account;
 pub mod books;
 pub mod documents;
 

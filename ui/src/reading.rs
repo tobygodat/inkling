@@ -452,12 +452,13 @@ impl Inkling {
         let anchor = (pages == PageMode::Paged || r.pending).then_some(r.anchor);
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_AFTER).await;
-            let _ = this.update(cx, |this, _| {
+            let _ = this.update(cx, |this, cx| {
                 if this.saves == save
                     && let Ok(library) = &mut this.books.library
                 {
                     let fraction = anchor.unwrap_or_else(|| if height > px(0.) { (-scroll.offset().y / height).clamp(0., 1.) } else { 0. });
                     let _ = library.set_position(&id, Position { chapter, fraction });
+                    this.sync_soon(cx);
                 }
             });
         })

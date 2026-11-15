@@ -40,7 +40,7 @@ describe("signing in", () => {
   it("answers the protocol's own requests and errors", async () => {
     const { token } = await signIn({ scope: "library:read", tick: ["library:read"] });
     const tools = await (await rpc(token!, "tools/list")).json<{ result: { tools: { name: string }[] } }>();
-    expect(tools.result.tools.map((t) => t.name)).toEqual(["list_books", "read_book", "search_library", "read_draft"]);
+    expect(tools.result.tools.map((t) => t.name)).toEqual(["list_books", "read_book", "search_library", "read_draft", "list_documents", "read_document"]);
     const unknown = await (await rpc(token!, "resources/list")).json<{ error: { code: number } }>();
     expect(unknown.error.code).toBe(-32601);
     const notification = await call("/mcp", {

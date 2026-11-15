@@ -116,6 +116,7 @@ final class InklingController: UIViewController {
         view.addSubview(gpui)
         gpui.attach(to: self)
         Books.shared.presenter = self
+        SignIn.shared.presenter = self
         NSLayoutConstraint.activate([
             gpui.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             gpui.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),

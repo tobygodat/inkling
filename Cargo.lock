@@ -3790,6 +3790,7 @@ dependencies = [
  "gpui-kit",
  "inkling-books",
  "inkling-core",
+ "inkling-sync",
  "inkling-ui",
  "serde_json",
 ]
@@ -3798,8 +3799,20 @@ dependencies = [
 name = "inkling-mcp"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
+ "inkling-books",
+ "inkling-core",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "inkling-sync"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
  "inkling-books",
  "inkling-core",
  "proptest",
@@ -3819,6 +3832,7 @@ dependencies = [
  "image",
  "inkling-books",
  "inkling-core",
+ "inkling-sync",
  "ratex-layout",
  "ratex-parser",
  "ratex-svg",

@@ -59,26 +59,15 @@ After that, `bun run deploy` deploys and applies any new migration.
 
 The consent page lets you tick what the agent may read. The draft is unticked unless you tick it.
 
-## Connect the Mac
+## Connect a device
 
-Agents see only what a device has sent up. Until the Integrations screen exists, the Mac sends it
-with `inkling-mcp`:
-
-```sh
-cargo install --path mcp --locked
-inkling-mcp sign-in      # the browser opens; allow it and sign in with Google
-inkling-mcp sync         # run it again whenever you want the server to catch up
-```
-
-The sign-in is kept in the Keychain. `sync` sends up the books, reading positions and draft the
-server doesn't have yet, and it never changes anything in the app's data folder.
+Agents see only what a device has sent up. In the app, open Account from the cog (the end of the
+Appearance sheet on iPhone) and Sign in with Google. The sign-in is kept in the Keychain, and from
+then on the app syncs its documents, books and reading positions on its own.
 
 ## Readwise
 
-`inkling-mcp readwise` asks for the token from readwise.io/access_token and gives the webhook
-address. Add a webhook at readwise.io/webhook for "Reader: new non-feed document" with that address
-and paste its secret when asked, so uploads arrive within a minute; without it the server checks
-every 30 minutes. Underneath, it is `PUT /v1/readwise` with `{"token": …, "webhook_secret": …}`.
-
-Only documents saved after you connect come in. EPUBs and PDFs land in the inbox, and the next
-`inkling-mcp sync` saves them in `~/Downloads/Readwise`, where Find books shows them.
+On Account, Readwise's Connect asks for the token from readwise.io/access_token. Underneath, it is
+`PUT /v1/readwise` with `{"token": …}`. The server checks Reader every 30 minutes; only documents
+saved after you connect come in. EPUBs and PDFs land in the inbox, and the next device to sync adds
+them to its library.

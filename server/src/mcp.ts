@@ -14,9 +14,9 @@ const INSTRUCTIONS =
   "Inkling is the writer's app for writing and reading. These tools read their library of books " +
   "(EPUBs and PDFs) and their draft. They never change anything. Chapters and positions count from 0.";
 
-/** The tools this server answers. The documents' tools come with documents' sync. */
-const SERVED = ["list_books", "read_book", "search_library", "read_draft"];
-const tools = allTools.filter((t) => SERVED.includes(t.name));
+
+/** Tools that read the writer's writing, which the `draft:read` box on the consent page allows. */
+const WRITING = ["read_draft", "list_documents", "read_document"];
 
 const DEFAULT_HITS = 20;
 const MAX_HITS = 100;
@@ -61,11 +61,11 @@ export async function serveMcp(request: Request, env: Env, ctx: OAuthResourceCon
     case "ping":
       return json(success(message.id, {}));
     case "tools/list":
-      return json(success(message.id, { tools }));
+      return json(success(message.id, { tools: allTools }));
     case "tools/call": {
       const name = params.name;
       const args = (params.arguments ?? {}) as Record<string, unknown>;
-      if (name === "read_draft" && !ctx.auth.scope.includes("draft:read")) {
+      if (WRITING.includes(String(name)) && !ctx.auth.scope.includes("draft:read")) {
         return insufficientScope(ctx.auth, ["library:read", "draft:read"]);
       }
       const result = await callTool(env, String(name), args);
@@ -86,6 +86,10 @@ async function callTool(env: Env, name: string, args: Record<string, unknown>): 
       return searchLibrary(env, args);
     case "read_draft":
       return readDraft(env);
+    case "list_documents":
+      return listDocuments(env);
+    case "read_document":
+      return readDocument(env, args);
     default:
       return null;
   }
@@ -186,7 +190,28 @@ async function searchLibrary(env: Env, args: Record<string, unknown>): Promise<T
   return text(JSON.stringify(hits, null, 2));
 }
 
+/** The document saved last, as `read_draft` on the Mac gives the document open last. */
 async function readDraft(env: Env): Promise<ToolResult> {
-  const draft = await env.DB.prepare("SELECT text FROM drafts ORDER BY version DESC LIMIT 1").first<{ text: string }>();
+  const draft = await env.DB.prepare("SELECT text FROM documents WHERE deleted = 0 ORDER BY saved_at DESC LIMIT 1").first<{ text: string }>();
   return text(draft && draft.text.trim() ? draft.text : "The draft is empty.");
+}
+
+/** A document's title: its first line with text, without a heading's `#`s, as `documents::title`. */
+const titleOf = (body: string) => (body.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "").replace(/^#+/, "").trim();
+
+async function listDocuments(env: Env): Promise<ToolResult> {
+  const { results } = await env.DB.prepare("SELECT id, text, saved_at FROM documents WHERE deleted = 0 ORDER BY saved_at DESC, id DESC").all<{
+    id: string;
+    text: string;
+    saved_at: number;
+  }>();
+  const documents = results.map((d) => ({ id: d.id, title: titleOf(d.text), changed: new Date(d.saved_at).toISOString().replace(/\.\d{3}Z$/, "Z") }));
+  return text(JSON.stringify(documents, null, 2));
+}
+
+async function readDocument(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
+  if (typeof args.document_id !== "string") return problem("document_id is required.");
+  const doc = await env.DB.prepare("SELECT text FROM documents WHERE id = ? AND deleted = 0").bind(args.document_id).first<{ text: string }>();
+  if (!doc) return problem(`That document couldn't be read: No document has the id ${args.document_id}.`);
+  return text(doc.text.trim() ? doc.text : "The document is empty.");
 }

@@ -79,8 +79,17 @@ from `inkling_core::Appearance::tokens`. Light is the default.
 - **Cog.** A 32 pt button with the cog icon. Hover opens its menu and leaving closes it; a click pins
   it open until a second click, Escape or a choice. Rows: Library with the book icon (Writing with
   the pen while the books are open), Keep reading with the book icon once a book has been opened
-  (not while one is open), Appearance with the artboard icon, and Provider with the chosen
-  provider's logo, its name unwritten. The menu is as wide as its rows.
+  (not while one is open), Appearance with the artboard icon, Provider with the chosen
+  provider's logo, its name unwritten, and Account with the circle-user icon. The menu is as wide
+  as its rows. While sync has stopped, the cog carries a 6 pt ink dot at its top right, on the Mac
+  and on iPhone; it is ink, not red, because red is for changes.
+- **Account.** Reached from the cog's menu on the Mac and from a last row, Account, at the end of
+  the Appearance sheet on iPhone. Signed out, one primary "Sign in with Google" in the middle of the
+  screen: the system browser on the Mac, the system sign-in sheet on iPhone. Signed in, rows in a
+  480 pt column, each a label and a button with a Hairline under it: Readwise with Connect (which
+  opens a masked field for the access token; Disconnect once connected), Agents with Copy address
+  (Copied once pressed), Google with Sign out. While sync has stopped, a first row, "Sync stopped",
+  with a primary Try again. Nothing shows while sync works.
 - **Documents.** The list of the writer's pieces, each a row with its title (the first line, in the
   body face, semibold) and the day it last changed in muted ink ("Today", "Yesterday", "3 Nov"),
   newest first, with the open one on Segment. New at the top right; it and Cmd-N open an empty

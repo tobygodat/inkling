@@ -2,6 +2,7 @@
 #include <stdbool.h>
 void inkling_ios_register(const char *data_dir);
 void inkling_ios_picked(uint64_t token, const char *paths);
+void inkling_ios_signed_in(uint64_t token, const char *url);
 void gpui_ios_run_demo(void);
 void gpui_ios_set_embedded(void);
 void *gpui_ios_get_window(void);

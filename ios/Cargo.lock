@@ -3596,6 +3596,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkling-sync"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "inkling-books",
+ "inkling-core",
+ "ring",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "inkling-ui"
 version = "0.1.0"
 dependencies = [
@@ -3604,6 +3617,7 @@ dependencies = [
  "image",
  "inkling-books",
  "inkling-core",
+ "inkling-sync",
  "ratex-layout",
  "ratex-parser",
  "ratex-svg",

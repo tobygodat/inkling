@@ -1,7 +1,7 @@
 # Architecture
 
 ## Crates
-One Cargo workspace at the root holds five crates. `ios/` is a separate workspace for the iPhone
+One Cargo workspace at the root holds six crates. `ios/` is a separate workspace for the iPhone
 app.
 
 - `core/` is `inkling-core`. It has no UI dependency. It holds the requests (`Ask`, `Request`), the
@@ -19,16 +19,18 @@ app.
 - `mcp/` is `inkling-mcp`, the MCP server of ADR 0004. It has no UI dependency. `Server` answers
   one JSON-RPC message at a time, whatever carries it. Its six tools (`list_books`, `read_book`,
   `search_library`, `read_draft`, `list_documents`, `read_document`) only read, through a `Store`,
-  and are defined once in `mcp/tools.json`, which the Worker serves too, all but the documents'
-  two until it syncs documents. `read_draft` is the document open last. `Folder` is the store over the data
-  folder, read afresh on every call so a book the app just added shows at once. The binary,
-  `inkling-mcp --stdio`, is what Claude Desktop and Claude Code start on the Mac. Until the
-  Integrations screen exists, `inkling-mcp sign-in` and `inkling-mcp sync` put the Mac on the
-  server: `signin` is an OAuth client with a one-time listener on 127.0.0.1, which keeps its refresh
-  token in the Keychain, and `sync` sends up the books, positions and the document open last, as the
-  draft, when the server lacks them, and
-  saves waiting Readwise files in `~/Downloads/Readwise` for Find books. It writes nothing in the
-  data folder, because the running app owns `library.json`.
+  and are defined once in `mcp/tools.json`, which the Worker serves too. `read_draft` is the
+  document open last. `Folder` is the store over the data folder, read afresh on every call so a
+  book the app just added shows at once. The binary, `inkling-mcp --stdio`, is what Claude Desktop
+  and Claude Code start on the Mac. It writes nothing in the data folder.
+- `sync/` is `inkling-sync`, the devices' side of the server (ADR 0004, phase 3). It has no UI
+  dependency. `account` is the OAuth client: `begin` registers the device and builds the sign-in
+  page's address with PKCE, `Begun::finish` trades the code that comes back for a refresh token,
+  and `Loopback` is the Mac's one-time listener on 127.0.0.1. `run` is one sync: `documents::sync`
+  and `library::sync` talk to the server off the UI thread and return what to change, which the
+  app records on the UI thread (below). Everything goes through a `Transport`: `Net` (HTTPS) in
+  the app, `Fake` (the server in memory, with the Worker's rules and no Google) in tests and in
+  every headless run, kept in `fake-server.json` in the data folder.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
   `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and nine
@@ -214,6 +216,26 @@ has no file until it has text. Asking reads only `Inkling::page`, so it sends on
 document. The list (`Screen::Documents`) holds the document removed last until the next action;
 Cmd-Z or Undo writes it back with its old modified time and gives back its parked page.
 
+## Sync
+`ui::account` runs `inkling_sync::run` on the background executor at launch, when the window
+becomes active, 3 s after a change settles (an autosave, a reading place saved, a book added, a
+document removed or brought back) and every 5 minutes, one at a time; one asked for meanwhile runs
+when it ends. Only while signed in: a sign-in is `Secret::ServerSignIn` in the key store.
+
+- **Documents.** `sync.json` in the data folder holds this install's id and, per document, the
+  version and SHA-256 of the text it last agreed with the server on. Changed here and there, the
+  other device's text is kept under a new id with its own date and this device's goes up on the
+  original. `documents::apply` makes each change on disk only while the file still holds what sync
+  read; the page is saved first, a document under review or with a request running is held, and the
+  open document is never removed under the writer. A skipped change is a conflict at the next sync,
+  so both texts are kept. A changed open document's page is rebuilt from its file; a changed
+  parked one is dropped and opens afresh.
+- **Books and places.** Book files and covers that came down are written off the UI thread (they
+  are named by their hash); `Library::record`, `take_position` and `add` record them on the UI
+  thread. Readwise uploads are parsed with `prepare` like an Add.
+- **Failure.** Any failed sync sets `stopped`: the cog's dot and Account's "Sync stopped". The next
+  sync that succeeds clears it. An ended grant also signs the device out.
+
 ## What is open
 `Inkling::screen` is one `Screen`: the page, the key screen, the feedback screen, the library, a
 book being read or the documents. The library carries `Option<Finding>` while Find books is open over it.
@@ -233,7 +255,8 @@ there are no inline controls: a tap is hit-tested against the change ranges, bec
 Use the sheet moves to the next pending change.
 
 ## State
-- The documents and settings are files under the app's data folder (`Paths`). The page autosaves
+- The documents and settings are files under the app's data folder (`Paths`), with `sync.json`
+  once signed in. The page autosaves
   500 ms after the last edit into its document's file. Settings hold the provider, the models, the
   appearance and the document open last.
 - API keys and the feedback link are in the Apple Keychain (`KeychainKeys`, keyed by `Secret`),
@@ -258,17 +281,19 @@ more than 10 ms of CPU, so it never parses a book.
   falls back to `instr`.
 - **Sync.** `src/sync.ts`. A device uploads a book's parsed JSON to KV, then each chapter, then its
   row, which is refused until the rest is there. A position carries when it changed (an entry's
-  `position_at`), and the later wins. A draft save carries when it was saved; the later wins, and
-  20 versions are kept. Both times are milliseconds since the Unix epoch.
-- **Readwise.** `src/readwise.ts`. The token and webhook secret are kept as AES-GCM ciphertext under
-  `SECRET_KEY`. A webhook, or the poll every 30 minutes, streams each new EPUB or PDF from Reader
-  into KV as an inbox item. A device downloads it and settles the item; for now `inkling-mcp sync`
-  leaves the file for Find books, and the writer adds it. Only documents saved after the link was
-  made come in.
+  `position_at`), and the later wins. A document carries a `version`, counted up on every write
+  the server takes; a write names the version it was made on and is refused with 409 and what the
+  server has otherwise, in one statement so two devices can't both take a version. A delete is a
+  write that keeps the last text. Times are milliseconds since the Unix epoch.
+- **Readwise.** `src/readwise.ts`. The token is kept as AES-GCM ciphertext under `SECRET_KEY`. The
+  poll every 30 minutes streams each new EPUB or PDF from Reader into KV as an inbox item. The next
+  device to sync downloads it, parses it into its library and settles the item. Only documents
+  saved after the link was made come in.
 
 ## External services
 Anthropic, OpenAI and Google's generative language API, each called directly with the user's key.
 Feedback goes to the T3 webhook in the writer's feedback link, and only the feedback text and
 where it was sent from. An agent the writer connects through `inkling-mcp` reads the library and
-the draft, and the agent's own app decides where that goes. Inkling's own server (above) holds the library and the draft for agents away from the Mac and
-for sync. The Mac syncs to it with `inkling-mcp sync`. It calls Readwise with the writer's token and Google to sign in.
+the documents, and the agent's own app decides where that goes. Inkling's own server (above)
+holds the library and the documents for agents away from the Mac and for sync, once the writer
+signs in on Account. It calls Readwise with the writer's token and Google to sign in.

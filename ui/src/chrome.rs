@@ -88,7 +88,9 @@ impl Inkling {
             .when(open, |cog| cog.bg(c.segment))
             .hover(|cog| cog.bg(c.segment))
             .cursor_pointer()
+            .relative()
             .child(Icon::Cog.draw(px(18.), c.ink))
+            .children(self.render_stopped_dot())
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.hover_cog(true, cx)
@@ -151,6 +153,11 @@ impl Inkling {
                 .child(
                     row("menu-provider", Icon::provider(self.settings.provider), "Provider")
                         .on_click(cx.listener(|this, _, window, cx| this.on_open_keys(&OpenKeys, window, cx)))
+                        .test_support(),
+                )
+                .child(
+                    row("menu-account", Icon::Account, "Account")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx)))
                         .test_support(),
                 )
                 .test_support();
@@ -235,7 +242,7 @@ impl Inkling {
     /// the library, or the book read last at its place. Before any reading since launch it is the
     /// library. The view already on screen stays as it is.
     pub fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
-        if self.view() == view && !self.documents_open() {
+        if self.view() == view && !self.documents_open() && !self.account_open() {
             return;
         }
         if self.screen.keys().is_some() {
@@ -271,7 +278,7 @@ impl Inkling {
     pub(crate) fn render_phone_corner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let shown = match self.screen {
             Screen::Page => self.revision.review().is_none(),
-            Screen::Library(..) | Screen::Reading(_) | Screen::Documents(_) => true,
+            Screen::Library(..) | Screen::Reading(_) | Screen::Documents(_) | Screen::Account => true,
             Screen::Keys(_) | Screen::Feedback(_) => false,
         };
         shown.then(|| {
@@ -285,8 +292,10 @@ impl Inkling {
                 .justify_center()
                 .rounded(px(8.))
                 .when(self.panel.is_some(), |cog| cog.bg(c.segment))
+                .relative()
                 .aria_label("Appearance")
                 .child(Icon::Cog.draw(px(20.), c.ink))
+                .children(self.render_stopped_dot())
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.panel.is_some() {
                         this.close_appearance(cx)

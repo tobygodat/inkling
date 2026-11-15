@@ -1,6 +1,7 @@
 //! Inkling's views, shared by the Mac app and the iPhone host. Nothing here reads the platform:
 //! the host passes the form factor, the data folder and the key store.
 
+mod account;
 mod app;
 mod appearance;
 mod chrome;
@@ -18,6 +19,7 @@ mod reading;
 mod review;
 mod theme;
 
+pub use account::{AccountHost, OpenSignIn, WayBack};
 pub use app::{Ground, Inkling, OpenKeys, Saved, ShowReading, ShowWriting};
 pub use chrome::Menu;
 pub use documents::NewDocument;

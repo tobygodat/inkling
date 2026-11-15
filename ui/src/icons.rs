@@ -16,10 +16,11 @@ pub(crate) enum Icon {
     Book,
     Pen,
     Link,
+    Account,
 }
 
 impl Icon {
-    const ALL: [Icon; 9] = [Icon::Cog, Icon::Message, Icon::Artboard, Icon::Robot, Icon::Claude, Icon::Gemini, Icon::Book, Icon::Pen, Icon::Link];
+    const ALL: [Icon; 10] = [Icon::Cog, Icon::Message, Icon::Artboard, Icon::Robot, Icon::Claude, Icon::Gemini, Icon::Book, Icon::Pen, Icon::Link, Icon::Account];
 
     fn path(self) -> &'static str {
         match self {
@@ -32,6 +33,7 @@ impl Icon {
             Icon::Book => "icons/inkling/book-open.svg",
             Icon::Pen => "icons/inkling/pen-line.svg",
             Icon::Link => "icons/inkling/link.svg",
+            Icon::Account => "icons/inkling/circle-user.svg",
         }
     }
 
@@ -46,6 +48,7 @@ impl Icon {
             Icon::Book => include_bytes!("../icons/book-open.svg"),
             Icon::Pen => include_bytes!("../icons/pen-line.svg"),
             Icon::Link => include_bytes!("../icons/link.svg"),
+            Icon::Account => include_bytes!("../icons/circle-user.svg"),
         }
     }
 

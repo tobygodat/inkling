@@ -4,7 +4,6 @@ use inkling_core::{Document, Documents, Settings};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 /// What the tools read. On the Mac it is the app's data folder; on the server it will be the
 /// database the devices sync to.
@@ -39,16 +38,6 @@ impl Folder {
         &self.paths.dir
     }
 
-    /// A book's parsed file as the library keeps it, `books/<id>.json`.
-    pub fn book_file(&self, id: &BookId) -> io::Result<Vec<u8>> {
-        fs::read(self.library_dir().join("books").join(format!("{}.json", id.0)))
-    }
-
-    /// A cover image the library keeps, by its name in `covers/`.
-    pub fn cover_file(&self, name: &str) -> io::Result<Vec<u8>> {
-        fs::read(self.library_dir().join("covers").join(name))
-    }
-
     /// The file of the document that was open last. Until the app has moved `draft.md` into
     /// `documents/`, that draft.
     fn draft_file(&self) -> PathBuf {
@@ -57,20 +46,6 @@ impl Folder {
             Some(id) => documents.path(&id),
             None => self.paths.dir.join("draft.md"),
         }
-    }
-
-    /// When the draft last changed, in milliseconds since the Unix epoch, or 0 if it never did.
-    /// Opening an older document makes it the draft without touching its file, so the time the
-    /// open document was chosen, kept in `settings.json`, counts too.
-    pub fn draft_saved_at(&self) -> u64 {
-        let modified = |path: PathBuf| {
-            fs::metadata(path)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_millis() as u64)
-        };
-        modified(self.draft_file()).max(modified(self.paths.settings()))
     }
 
     fn library_dir(&self) -> PathBuf {

@@ -77,6 +77,11 @@ point() {
     row-one) echo "200 136" ;;
     row-two) echo "200 182" ;;
     undo-remove) echo "201 810" ;;
+    # Account: the last row of the Appearance sheet once it is panned to its end, then its rows.
+    sheet-account) echo "150 806" ;;
+    sign-in) echo "201 451" ;;
+    copy-address) echo "328 201" ;;  # Agents, the second row
+    try-again) echo "355 145" ;;     # the first row, while sync has stopped
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -625,5 +630,63 @@ shot
 tap reading-middle 1.5
 [ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap that closes the note turned the page: $(book_state Walden)"
 rm -rf "$plain"
+
+# Account and sync (TOB-490), against the fake server in fake-server.json: no Google, no network.
+fake_server() {
+  echo "$(data_dir)/fake-server.json"
+}
+
+# Runs `$1` as Python on the fake server's state `s`, saving it back.
+server_edit() {
+  python3 - "$(fake_server)" "$1" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+s = json.load(open(path)) if os.path.exists(path) else {}
+s.setdefault("documents", {})
+exec(sys.argv[2])
+json.dump(s, open(path, "w"))
+PY
+}
+
+begin account-signed-out
+account_draft="# On keeping accounts
+
+Every list I keep grows until it is the work itself."
+rm -f "$(fake_server)" "$(data_dir)/sync.json"
+server_edit 's["documents"]["1700000000000"] = {"text": "# Letter to the board\n\nWritten on the Mac.", "saved_at": 1700000000000, "device": "mac-a1b2", "version": 1, "deleted": False}'
+printf '{"provider":"Claude"}' >"$(data_dir)/settings.json"
+open_draft "$account_draft"
+tap cog 1.5
+"$ad" gesture pan 200 700 0 -600 500 >/dev/null
+sleep 1
+"$ad" gesture pan 200 700 0 -600 500 >/dev/null
+sleep 1
+tap sheet-account 1.5
+shot
+
+begin account-signed-in
+tap sign-in 3
+for _ in $(seq 20); do grep -q "every list I keep\|Every list I keep" "$(fake_server)" && break; sleep 0.5; done
+grep -q "Every list I keep" "$(fake_server)" || fail "signing in did not send the document up"
+grep -rq "Written on the Mac." "$(data_dir)/documents" || fail "the Mac's document did not come down"
+tap copy-address
+[ "$("$ad" clipboard read)" = "https://inkling.invalid/mcp" ] || fail "Copy address copied $("$ad" clipboard read)"
+shot
+
+begin account-sync-stopped
+server_edit 's["down"] = True'
+"$ad" home >/dev/null
+sleep 1
+"$ad" open "$app" >/dev/null
+sleep 3
+# While it is down, the Mac saves again; Try again must bring that down.
+server_edit 'd = s["documents"]["1700000000000"]; d.update(text="# Letter to the board\n\nWritten again on the Mac.", version=d["version"] + 1)'
+shot
+
+begin account-try-again
+server_edit 's["down"] = False'
+tap try-again 3
+grep -rq "Written again on the Mac." "$(data_dir)/documents" || fail "Try again did not sync"
+shot
 
 echo "all $step steps passed; screenshots in $shots"

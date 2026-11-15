@@ -1,21 +1,18 @@
-// Readwise Reader into the inbox (ADR 0004). The Worker only moves files: a webhook or the
-// 30-minute poll finds a new EPUB or PDF, its original is streamed into KV, and the next device to
-// sync parses it with inkling-books. https://readwise.io/reader_api
+// Readwise Reader into the inbox (ADR 0004). The Worker only moves files: the 30-minute poll finds a
+// new EPUB or PDF, its original is streamed into KV, and the next device to sync parses it with
+// inkling-books and adds it to its library. https://readwise.io/reader_api
 
 import type { Env } from "./env";
 import { MAX_FILE_BYTES, Refused, json, readJson } from "./http";
-import { open, sameSecret, seal } from "./secret";
+import { open, seal } from "./secret";
 
 const API = "https://readwise.io/api";
-/** Webhook events that mean a document was added. */
-const ADDED = new Set(["reader.any_document.created", "reader.non_feed_document.created"]);
 const CATEGORIES = new Set(["epub", "pdf"]);
 /** Each document costs two outgoing requests, and a Worker on the free plan may make 50. */
 const MAX_PER_POLL = 10;
 
 interface Link {
   token: string;
-  webhook_secret: string | null;
   connected_at: string;
   since: string;
 }
@@ -31,26 +28,14 @@ interface Document {
 }
 
 async function link(env: Env): Promise<Link | null> {
-  const row = await env.DB.prepare("SELECT token, webhook_secret, connected_at, since FROM readwise WHERE id = 1").first<Link>();
+  const row = await env.DB.prepare("SELECT token, connected_at, since FROM readwise WHERE id = 1").first<Link>();
   if (!row) return null;
-  return {
-    ...row,
-    token: await open(env.SECRET_KEY, row.token),
-    webhook_secret: row.webhook_secret ? await open(env.SECRET_KEY, row.webhook_secret) : null,
-  };
+  return { ...row, token: await open(env.SECRET_KEY, row.token) };
 }
 
 export async function readwiseStatus(env: Env) {
-  const row = await env.DB.prepare("SELECT webhook_secret IS NOT NULL AS webhook, since FROM readwise WHERE id = 1").first<{
-    webhook: number;
-    since: string;
-  }>();
-  return {
-    connected: row !== null,
-    webhook: row ? row.webhook === 1 : false,
-    webhook_url: `${env.PUBLIC_URL}/readwise/webhook`,
-    since: row?.since ?? null,
-  };
+  const row = await env.DB.prepare("SELECT since FROM readwise WHERE id = 1").first<{ since: string }>();
+  return { connected: row !== null, since: row?.since ?? null };
 }
 
 /**
@@ -58,21 +43,17 @@ export async function readwiseStatus(env: Env) {
  * on come in, so connecting doesn't pull a whole Reader library into KV at once.
  */
 export async function connectReadwise(request: Request, env: Env): Promise<Response> {
-  const body = await readJson<{ token?: unknown; webhook_secret?: unknown }>(request);
+  const body = await readJson<{ token?: unknown }>(request);
   if (typeof body.token !== "string" || !body.token.trim()) throw new Refused(400, "Paste the token from readwise.io/access_token.");
-  if (body.webhook_secret !== undefined && body.webhook_secret !== null && typeof body.webhook_secret !== "string") {
-    throw new Refused(400, "The webhook secret should be text.");
-  }
   const check = await fetch(`${API}/v2/auth/`, { headers: { authorization: `Token ${body.token.trim()}` } });
   if (check.status !== 204) throw new Refused(400, "Readwise didn’t accept that token.");
-  const secret = typeof body.webhook_secret === "string" && body.webhook_secret.trim() ? body.webhook_secret.trim() : null;
   const now = new Date().toISOString();
-  // A new token or secret keeps the link's start, so nothing saved meanwhile is skipped.
+  // A new token keeps the link's start, so nothing saved meanwhile is skipped.
   await env.DB.prepare(
-    `INSERT INTO readwise (id, token, webhook_secret, connected_at, since) VALUES (1, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET token = excluded.token, webhook_secret = excluded.webhook_secret`,
+    `INSERT INTO readwise (id, token, connected_at, since) VALUES (1, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET token = excluded.token`,
   )
-    .bind(await seal(env.SECRET_KEY, body.token.trim()), secret ? await seal(env.SECRET_KEY, secret) : null, now, now)
+    .bind(await seal(env.SECRET_KEY, body.token.trim()), now, now)
     .run();
   return json(await readwiseStatus(env));
 }
@@ -82,20 +63,7 @@ export async function disconnectReadwise(env: Env): Promise<Response> {
   return json(await readwiseStatus(env));
 }
 
-/** POST /readwise/webhook. Readwise puts the webhook's secret in the body. */
-export async function webhook(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const event = await readJson<Document & { event_type?: string; secret?: string }>(request);
-  const current = await link(env);
-  if (!current?.webhook_secret || typeof event.secret !== "string" || !(await sameSecret(event.secret, current.webhook_secret))) {
-    return json({ error: "Unknown webhook." }, 401);
-  }
-  if (event.event_type && ADDED.has(event.event_type) && event.category && CATEGORIES.has(event.category) && event.id) {
-    ctx.waitUntil(receive(env, current.token, event.id));
-  }
-  return json({ ok: true });
-}
-
-/** The backstop for a webhook that never came: documents updated since the last poll. */
+/** Every 30 minutes: documents saved to Reader since the last look. */
 export async function poll(env: Env): Promise<void> {
   const current = await link(env);
   if (!current) return;
