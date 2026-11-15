@@ -308,9 +308,10 @@ impl Inkling {
         })
     }
 
-    /// Round, outlined in ink, at the bottom right. Hidden until a feedback link is saved.
+    /// Round, outlined in ink, at the bottom right. Hidden until a feedback link is saved, and on
+    /// the feedback screen itself.
     pub(crate) fn render_feedback_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        if !self.feedback_on {
+        if !self.feedback_on || self.screen.feedback().is_some() {
             return None;
         }
         let c = self.theme().c;

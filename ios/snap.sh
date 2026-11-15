@@ -109,15 +109,6 @@ shot() {
   echo "ok $step $name"
 }
 
-# A fresh agent-device session has no app open yet, and appstate fails until one is.
-udid_now() { "$ad" appstate --json 2>/dev/null | sed -n 's/.*"device_udid": "\(.*\)".*/\1/p' || true; }
-udid="$(udid_now)"
-if [ -z "$udid" ]; then
-  "$ad" open com.apple.Preferences >/dev/null 2>&1 || true
-  udid="$(udid_now)"
-fi
-[ -n "$udid" ] || fail "no Simulator udid from agent-device"
-
 # Scrolls the key screen to its link section, or back to the top.
 scroll() {
   case "$1" in
@@ -215,6 +206,14 @@ mkdir -p "$shots"
 mkdir -p target
 ./run.sh "$ad" --fake-ai >target/snap-build.log 2>&1 || { tail -20 target/snap-build.log >&2; exit 1; }
 sleep 2
+# appstate names the Simulator once Inkling is open. Opening another app first to ask would put
+# its back link in the status bar of every screenshot.
+udid="$("$ad" appstate --json 2>/dev/null | sed -n 's/.*"device_udid": "\(.*\)".*/\1/p' || true)"
+[ -n "$udid" ] || fail "no Simulator udid from agent-device"
+# The same status bar on every run, so a screenshot changes only when the app does.
+xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 \
+  --wifiBars 3 --cellularMode active --cellularBars 4 --operatorName "" --dataNetwork wifi
+trap 'xcrun simctl status_bar "$udid" clear' EXIT
 
 begin empty
 expect_draft ""
