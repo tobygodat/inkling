@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_core::{Document, Documents, Revision};
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 gpui_kit::actions!(inkling, [NewDocument]);
 
@@ -19,6 +19,8 @@ gpui_kit::actions!(inkling, [NewDocument]);
 const TOP_BAR: Pixels = px(56.);
 /// How far a row on iPhone is swiped left before it is removed.
 const SWIPE: Pixels = px(96.);
+/// A gap this long between scroll events starts a new swipe.
+const SWIPE_PAUSE: Duration = Duration::from_millis(120);
 
 /// A document that is not on the page: its page, with its undo history, and its review.
 pub(crate) struct Parked {
@@ -61,6 +63,10 @@ pub(crate) struct DocList {
     removed: Option<Removed>,
     /// iPhone: the row being swiped and how far.
     swipe: Option<(usize, Pixels)>,
+    /// iPhone: a swipe removes one row. The rest of its stream of scroll events, the fling after
+    /// the finger lifts included, is passed over until it pauses or a new touch starts.
+    swiped: bool,
+    last_scroll: Option<Instant>,
 }
 
 struct Removed {
@@ -80,7 +86,7 @@ impl Inkling {
         }
         let entries = self.docs.store.list();
         let chosen = entries.iter().position(|d| d.id == self.docs.open);
-        self.screen = Screen::Documents(DocList { entries, chosen, removed: None, swipe: None });
+        self.screen = Screen::Documents(DocList { entries, chosen, removed: None, swipe: None, swiped: false, last_scroll: None });
         self.focus.focus(window, cx);
         window.dismiss_virtual_keyboard();
         cx.notify();
@@ -298,7 +304,16 @@ impl Inkling {
 
     /// iPhone: a row follows the finger left, and is removed once it has gone far enough.
     fn swiped_row(&mut self, at: usize, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
         let Screen::Documents(list) = &mut self.screen else { return };
+        let paused = list.last_scroll.is_none_or(|at| now.duration_since(at) >= SWIPE_PAUSE);
+        list.last_scroll = Some(now);
+        if paused || event.touch_phase == TouchPhase::Started {
+            list.swiped = false;
+        }
+        if list.swiped {
+            return;
+        }
         if matches!(event.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled) {
             list.swipe = None;
             return cx.notify();
@@ -312,6 +327,7 @@ impl Inkling {
             _ => delta.x.min(px(0.)),
         };
         if gone <= -SWIPE {
+            list.swiped = true;
             self.remove_document(at, window, cx);
         } else {
             list.swipe = Some((at, gone));
