@@ -190,6 +190,23 @@ impl Live {
     fn click(&mut self, at: Point<Pixels>) {
         self.drag(at, at);
     }
+
+    /// The first and last pixel rows holding ink left of the caret, and the caret's own rows, as
+    /// painted.
+    fn ink_beside_caret(&mut self) -> ((u32, u32), (u32, u32)) {
+        let (p, h) = self.snap().caret.unwrap_or_else(|| fail("the caret is drawn"));
+        let scale = self.with(|w, _| w.scale_factor());
+        let image = self.cx.capture_screenshot(self.window).expect("offscreen renderer");
+        let at = |v: Pixels| (v.as_f32() * scale).round() as u32;
+        let (x, y0, y1) = (at(p.x), at(p.y - h), at(p.y + h * 2.).min(image.height()));
+        let bg = image.get_pixel(x + at(px(24.)), at(p.y + h / 2.)).0;
+        let inked = |cx: u32, cy: u32| (0..3).any(|i| image.get_pixel(cx, cy).0[i].abs_diff(bg[i]) > 48);
+        let rows = |xs: std::ops::Range<u32>| {
+            let hit: Vec<u32> = (y0..y1).filter(|&y| xs.clone().any(|cx| inked(cx, y))).collect();
+            (*hit.first().unwrap_or(&0), *hit.last().unwrap_or(&0))
+        };
+        (rows(x.saturating_sub(at(px(80.)))..x.saturating_sub(at(px(2.)))), rows(x..x + at(px(1.5)).max(1)))
+    }
 }
 
 fn fail(what: &str) -> ! {
@@ -429,6 +446,32 @@ pub fn run(dir: &Path) {
         .map_or(0, |p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32);
     let near = |a: u32, b: u32| (0..3).all(|i| ((a >> (8 * i)) & 0xFF).abs_diff((b >> (8 * i)) & 0xFF) <= 10);
     check(near(brightest, ink), l, &format!("the page's text is drawn in Dark's ink (#{brightest:06X} vs #{ink:06X})"));
+
+    let l = "live-11";
+    for md in ["r", "Hgjy", "# Hgjy", "- Hgjy"] {
+        let mut t = Live::open(md, md.len(), on, &images, dir);
+        let (glyphs, caret) = t.ink_beside_caret();
+        check(
+            caret.0 <= glyphs.0 && caret.1 >= glyphs.1,
+            l,
+            &format!("the caret after {md:?} spans its glyphs (caret rows {caret:?}, glyph rows {glyphs:?})"),
+        );
+    }
+    let mut t = Live::open("Hgjy", 4, on, &images, dir);
+    let wait = |t: &mut Live, ms: u64| {
+        t.cx.advance_clock(std::time::Duration::from_millis(ms));
+        t.frame();
+        let (top, bottom) = t.ink_beside_caret().1;
+        bottom - top > 16
+    };
+    check(wait(&mut t, 0), l, "the caret shows when the editor opens");
+    check(!wait(&mut t, 500), l, "it blinks off after half a second");
+    check(wait(&mut t, 500), l, "and back on after another");
+    check(!wait(&mut t, 500), l, "and off again");
+    t.input("x");
+    check(wait(&mut t, 0), l, "a typed character shows it at once");
+    check(wait(&mut t, 499), l, "and keeps it on for a full beat");
+    check(!wait(&mut t, 1), l, "before it blinks again");
     std::fs::remove_dir_all(&images).ok();
 }
 

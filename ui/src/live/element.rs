@@ -72,6 +72,7 @@ impl Render for LiveEditor {
         let head = self.draft.selection().head;
         // On iPhone the page is being read until it has focus: every block is drawn.
         let editing = !self.form.system_selection() || self.focus.is_focused(window);
+        self.blink(self.draws_caret(window), cx);
         if !self.dragging {
             self.active = self.draft.block_at(head).filter(|_| editing);
         }
@@ -174,6 +175,7 @@ impl Render for LiveEditor {
             .font_family(body.face)
             .text_size(body.size)
             .line_height(relative(body.line))
+            .cursor_text()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
@@ -198,6 +200,12 @@ impl Render for LiveEditor {
 }
 
 impl LiveEditor {
+    /// Whether this editor paints its own caret. A selection shows as its highlight alone, as on
+    /// the rest of the Mac, and on iPhone UIKit draws the caret.
+    fn draws_caret(&self, window: &Window) -> bool {
+        self.focus.is_focused(window) && !self.form.system_selection() && self.draft.selection().is_empty()
+    }
+
     fn mouse_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(at) = (if e.click_count > 1 { self.pressed(e.position) } else { self.hit(e.position) }) else { return };
         self.focus.focus(window, cx);
@@ -311,12 +319,7 @@ impl Element for Host {
         if let Some((p, h)) = caret {
             editor.frame.borrow_mut().caret = Some(Bounds::new(p, size(px(2.), h)));
         }
-        // A selection shows as its highlight alone, as on the rest of the Mac: no caret beside it.
-        if editor.focus.is_focused(window)
-            && !editor.form.system_selection()
-            && editor.draft.selection().is_empty()
-            && let Some((p, h)) = caret
-        {
+        if editor.draws_caret(window) && !editor.blink.hidden && let Some((p, h)) = caret {
             window.paint_quad(fill(Bounds::new(p, size(CARET_WIDTH, h)), ink).corner_radii(CARET_WIDTH / 2.));
         }
         let reveal = editor.reveal;

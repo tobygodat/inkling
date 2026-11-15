@@ -98,6 +98,19 @@ pub struct LiveEditor {
     frame: Rc<RefCell<Frame>>,
     /// Blocks whose kit text didn't match their `SourceMap`, drawn as source instead.
     mismatches: Vec<String>,
+    blink: Blink,
+}
+
+/// How long the caret stays on, and then off, while it blinks.
+const BLINK: Duration = Duration::from_millis(500);
+
+/// The caret's blink. Every edit, move or focus shows it for a full beat before it blinks.
+#[derive(Default)]
+struct Blink {
+    /// The draft's revision and selection the caret was last shown for, while it is drawn.
+    shown: Option<(u64, Selection)>,
+    hidden: bool,
+    _task: Option<Task<()>>,
 }
 
 impl LiveEditor {
@@ -135,6 +148,7 @@ impl LiveEditor {
             scroll: ScrollHandle::new(),
             frame: Rc::default(),
             mismatches: vec![],
+            blink: Blink::default(),
         };
         editor.extensions = Arc::new(editor.build_extensions());
         editor.rebuild();
@@ -344,12 +358,38 @@ impl LiveEditor {
         best
     }
 
-    /// The top of the caret for source byte `at`, and its height.
+    /// The top of the caret for source byte `at`, and its height. The kit gives the top of the
+    /// line box, but draws the glyphs centred in it, so the caret moves down by half the leading.
     fn caret_at(&self, at: usize) -> Option<(Point<Pixels>, Pixels)> {
         let (key, index) = self.locate(at)?;
         let frame = self.frame.borrow();
         let g = frame.geometry.get(&key)?;
-        Some((g.position_for_index(index), g.caret_height()))
+        let (top, h) = (g.position_for_index(index), g.caret_height());
+        Some((point(top.x, top.y + (g.line_height() - h) / 2.), h))
+    }
+
+    /// Restarts the blink when the draft changes, the caret moves or the caret starts being
+    /// drawn, and stops it when the caret isn't drawn, so an idle editor never repaints.
+    fn blink(&mut self, drawn: bool, cx: &mut Context<Self>) {
+        let shown = drawn.then(|| (self.revision, self.draft.selection()));
+        if shown == self.blink.shown {
+            return;
+        }
+        let task = shown.map(|_| {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(BLINK).await;
+                    let toggled = this.update(cx, |e, cx| {
+                        e.blink.hidden = !e.blink.hidden;
+                        cx.notify();
+                    });
+                    if toggled.is_err() {
+                        break;
+                    }
+                }
+            })
+        });
+        self.blink = Blink { shown, hidden: false, _task: task };
     }
 
     /// A caret's box at source byte `at`. While an edit waits for its frame, the last caret
@@ -480,9 +520,12 @@ impl LiveEditor {
         }
     }
 
-    /// Where source byte `at` is drawn: the top of a caret there and its height.
+    /// Where source byte `at` is laid out: the top of its line and the line's height.
     pub fn point_for(&self, at: usize) -> Option<(Point<Pixels>, Pixels)> {
-        self.caret_at(at)
+        let (key, index) = self.locate(at)?;
+        let frame = self.frame.borrow();
+        let g = frame.geometry.get(&key)?;
+        Some((g.position_for_index(index), g.line_height()))
     }
 
     /// The top of a caret before drawn byte `index` of leaf `key`, from the last frame.

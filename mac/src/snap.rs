@@ -152,7 +152,7 @@ impl Snap {
         self.point_for(0).map(|(_, h)| h).unwrap_or_default()
     }
 
-    /// The top of a caret at source byte `at` on the live page, and its height.
+    /// The top of the line holding source byte `at` on the live page, and its height.
     fn point_for(&mut self, at: usize) -> Option<(Point<Pixels>, Pixels)> {
         self.read(|v, cx| v.page().live().read(cx).point_for(at))
     }
