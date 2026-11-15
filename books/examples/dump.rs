@@ -5,7 +5,7 @@ fn main() {
     let path = std::path::Path::new(&args[1]);
     let bytes = std::fs::read(path).expect("readable file");
     let book = match inkling_books::import::parse(path, &bytes) {
-        Ok(b) => b,
+        Ok(p) => p.book,
         Err(e) => return eprintln!("{e}"),
     };
     println!("{} / {:?} / {} chapters", book.title, book.author, book.chapters.len());
@@ -13,13 +13,11 @@ fn main() {
         Some(i) => {
             let c = &book.chapters[i];
             println!("== {:?}", c.title);
-            for b in &c.blocks {
-                println!("{b:?}");
-            }
+            println!("{}", c.text);
         }
         None => {
             for (i, c) in book.chapters.iter().enumerate() {
-                println!("{i:3} {:?} ({} blocks) {:.70?}", c.title, c.blocks.len(), c.blocks.first());
+                println!("{i:3} {:?} ({} bytes) {:.70?}", c.title, c.text.len(), c.text.lines().find(|l| !l.is_empty() && !l.starts_with('#')));
             }
         }
     }

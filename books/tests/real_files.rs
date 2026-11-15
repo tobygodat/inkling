@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use inkling_books::{Block, Format, Library, prepare};
+use inkling_books::{Format, Library, prepare};
 
 fn fixture(name: &str) -> PathBuf {
     let dir = std::env::var_os("INKLING_FIXTURES")
@@ -14,11 +14,9 @@ fn fixture(name: &str) -> PathBuf {
     path
 }
 
-fn text(b: &Block) -> &str {
-    match b {
-        Block::Paragraph(t) | Block::Quote(t) | Block::Heading { text: t, .. } => t,
-        Block::Break => "",
-    }
+/// A chapter's blocks: its Markdown between blank lines.
+fn blocks(text: &str) -> Vec<&str> {
+    text.split("\n\n").map(str::trim).collect()
 }
 
 #[test]
@@ -38,16 +36,23 @@ fn pride_and_prejudice_epub() {
     assert_eq!(book.chapters.len(), 62, "{titles:#?}");
 
     let one = book.chapters.iter().find(|c| c.title.as_deref() == Some("Chapter I.")).expect("a Chapter I.");
-    assert_eq!(
-        text(&one.blocks[0]),
-        "IT is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife."
+    let text = blocks(&one.text);
+    assert_eq!(text[0], "# Chapter I");
+    assert!(
+        text.contains(&"IT is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife."),
+        "{text:#?}"
     );
-    let two = &book.chapters.iter().find(|c| c.title.as_deref() == Some("CHAPTER II.")).expect("a CHAPTER II.").blocks[0];
-    assert!(text(two).starts_with("MR. BENNET was among the earliest"), "drop cap rejoined: {two:?}");
+    let two = book.chapters.iter().find(|c| c.title.as_deref() == Some("CHAPTER II.")).expect("a CHAPTER II.");
+    assert!(blocks(&two.text).iter().any(|b| b.starts_with("MR. BENNET was among the earliest")), "drop cap rejoined: {}", &two.text[..400]);
 
-    let all: String = book.chapters.iter().flat_map(|c| c.blocks.iter().map(text)).collect();
+    let all: String = book.chapters.iter().map(|c| c.text.as_str()).collect();
     assert!(!all.contains("Project Gutenberg"), "licence boilerplate is left out");
-    assert!(!all.contains("Copyright 1894 by George Allen"), "image captions are left out");
+    assert!(all.contains("*"), "italics survive");
+    let image = all.lines().find(|l| l.contains("they entered the breakfast room")).expect("an illustration with its caption");
+    assert!(image.starts_with(&format!("![](images/{}/", entry.id.0)) && image.ends_with(".jpg \"“they entered the breakfast room”\")"), "{image}");
+    let name = image.split(['(', ' ']).nth(1).unwrap();
+    assert!(lib.dir().join(name).is_file(), "the image is stored where the chapter says");
+    assert!(lib.dir().join("originals").join(format!("{}.epub", entry.id.0)).is_file(), "the original is kept");
 
     let again = prepare(lib.dir(), &fixture("pride-and-prejudice.epub")).unwrap();
     lib.add(&again).unwrap();
@@ -65,7 +70,7 @@ fn rfc_2616_pdf() {
     assert_eq!(book.chapters.len(), 12, "114 pages in sections of ten");
     assert_eq!(book.chapters[0].title.as_deref(), Some("Pages 1–10"));
 
-    let all: Vec<&str> = book.chapters.iter().flat_map(|c| c.blocks.iter().map(text)).collect();
+    let all: Vec<&str> = book.chapters.iter().flat_map(|c| blocks(&c.text)).collect();
     assert!(all.iter().all(|t| !t.contains("Standards Track [Page")), "page footers are dropped");
     assert!(all.iter().all(|t| !t.starts_with("RFC 2616 HTTP/1.1 June 1999")), "page headers are dropped");
     let abstract_ = all.iter().find(|t| t.starts_with("The Hypertext Transfer Protocol (HTTP) is an application-level")).expect("the abstract");

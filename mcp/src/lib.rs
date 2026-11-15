@@ -97,7 +97,7 @@ fn failure(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inkling_books::{Block, Book, BookId, Chapter, Format, Library, Position};
+    use inkling_books::{Book, BookId, Chapter, Format, Library, PARSER, Position};
 
     fn library() -> (tempfile::TempDir, Server<Folder>) {
         let dir = tempfile::tempdir().unwrap();
@@ -107,16 +107,12 @@ mod tests {
             title: "The Waves".into(),
             author: Some("Virginia Woolf".into()),
             format: Format::Epub,
+            parser: PARSER,
             chapters: vec![
-                Chapter { title: Some("One".into()), blocks: vec![Block::Paragraph("The sun had not yet risen.".into())] },
+                Chapter { title: Some("One".into()), text: "# One\n\nThe sun had not yet risen.\n".into() },
                 Chapter {
                     title: Some("Two".into()),
-                    blocks: vec![
-                        Block::Heading { level: 2, text: "Morning".into() },
-                        Block::Paragraph("The sea was indistinguishable from the sky.".into()),
-                        Block::Quote("I see a ring,\nsaid Bernard.".into()),
-                        Block::Break,
-                    ],
+                    text: "# Two\n\n## Morning\n\nThe sea was *indistinguishable* from the sky.\n\n> I see a ring,\\\n> said Bernard.\n".into(),
                 },
             ],
         };
@@ -184,7 +180,8 @@ mod tests {
         let chapter = call(&server, "read_book", json!({ "book_id": id, "chapter": 1 }));
         assert_eq!(
             text(&chapter),
-            "# Two\n\n## Morning\n\nThe sea was indistinguishable from the sky.\n\n> I see a ring,\n> said Bernard.\n\n* * *\n"
+            "# Two\n\n## Morning\n\nThe sea was *indistinguishable* from the sky.\n\n> I see a ring,\\\n> said Bernard.\n",
+            "the chapter's Markdown as the library stores it"
         );
         let past = call(&server, "read_book", json!({ "book_id": id, "chapter": 2 }));
         assert_eq!(past["isError"], true);
