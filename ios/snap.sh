@@ -8,6 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ad="${1:-${AGENT_DEVICE:-}}"
 [ -n "$ad" ] || { echo "usage: snap.sh <agent-device> (or set AGENT_DEVICE)" >&2; exit 2; }
+# Every call, keys.sh's and run.sh's too, goes through device.sh, which outlasts the daemon's gaps.
+export INKLING_AGENT_DEVICE="$ad"
+ad="$(pwd)/device.sh"
 app=com.tobygodat.inkling
 shots="$(cd .. && pwd)/docs/screenshots/ios/snap"
 
@@ -57,7 +60,7 @@ point() {
     page-forward) echo "370 450" ;;   # the page's right third
     contents) echo "343 90" ;;
     chapter-one) echo "120 189" ;;    # Contents' second row
-    back-to-library) echo "148 90" ;;
+    back-to-library) echo "192 90" ;;  # "‹ Library", right of the 150 pt corner
     # The Appearance sheet, from its top; Pages after the sheet is panned up 320 pt.
     sheet-done) echo "363 402" ;;
     sync) echo "353 458" ;;

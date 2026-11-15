@@ -247,7 +247,9 @@ live editor replaced. The scripted run below proves the same page behaviour on t
 `snap.sh <agent-device>` uninstalls the app, builds and installs it through `run.sh` with
 `--fake-ai`, drives the main flow through `agent-device` and saves each step to
 `docs/screenshots/ios/snap/`. It stops with a non-zero exit at the first failed check. A run takes
-about three and a half minutes, the build included.
+about three and a half minutes, the build included. Every `agent-device` call goes through
+`device.sh`, which runs it again when the shared daemon answers "Remote daemon is unavailable".
+Other sessions on the Mac cause these gaps, and they last from a few seconds to a minute.
 
 | Step | Checked | Screenshot only |
 | --- | --- | --- |
