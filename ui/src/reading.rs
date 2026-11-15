@@ -70,6 +70,8 @@ pub(crate) struct Reading {
     /// Each image's size in pixels, read once from its file.
     sizes: RefCell<HashMap<String, Option<Size<f32>>>>,
     pub note: Option<OpenNote>,
+    /// Each block's text as last laid out, for finding where a marker or link was drawn.
+    drawn: Rc<RefCell<HashMap<usize, (TextLayout, Text)>>>,
     /// A byte offset to show once the chapter is laid out: where a link inside the book goes.
     seek: Option<usize>,
     pub scroll: ScrollHandle,
@@ -106,6 +108,7 @@ impl Reading {
             laid,
             sizes: RefCell::default(),
             note: None,
+            drawn: Rc::default(),
             seek: None,
             scroll: ScrollHandle::new(),
             anchor,
@@ -119,6 +122,14 @@ impl Reading {
             last_scroll: None,
             turned: false,
         }
+    }
+
+    /// Set aside while another screen shows: it is put back on its place when it shows again.
+    pub fn park(&mut self, pages: PageMode) {
+        self.anchor = self.anchor_now(pages);
+        self.pending = true;
+        self.note = None;
+        self.contents = false;
     }
 
     /// Where the reader is: the chapter, and how far down it the view starts.
@@ -214,6 +225,7 @@ impl Inkling {
     /// Back to the library, keeping the place.
     pub fn close_book(&mut self, cx: &mut Context<Self>) {
         self.save_position();
+        self.park_book();
         self.books.opening = None;
         self.books.left_in_book = false;
         self.screen = Screen::Library(None);
@@ -228,6 +240,7 @@ impl Inkling {
         }
         if r.chapter != at {
             r.laid = Rc::new(chapter::lay(&r.book.chapters[at].text));
+            r.drawn.borrow_mut().clear();
         }
         r.chapter = at;
         r.anchor = anchor.clamp(0., 1.);
@@ -271,6 +284,31 @@ impl Inkling {
         }
         cx.notify();
         true
+    }
+
+    /// Where the first footnote marker (or, with `note` false, the first link inside the book) on
+    /// screen was drawn, in the window: for the headless proof, which taps it.
+    pub fn reading_mark(&self, note: bool) -> Option<Point<Pixels>> {
+        let Screen::Reading(r) = &self.screen else { return None };
+        let drawn = r.drawn.borrow();
+        let mut blocks: Vec<_> = drawn.iter().collect();
+        blocks.sort_by_key(|(i, _)| **i);
+        blocks.into_iter().find_map(|(_, (layout, text))| {
+            let (range, _) = text.marks.iter().find(|(_, m)| match m {
+                Mark::Note(_) => note,
+                Mark::Link(href) => !note && href.starts_with('#'),
+                _ => false,
+            })?;
+            let at = layout.position_for_index(range.start)?;
+            Some(point(at.x + px(3.), at.y + layout.line_height() / 2.))
+        })
+    }
+
+    /// The footnote open beside its marker, as its label and text.
+    pub fn reading_note(&self) -> Option<(String, String)> {
+        let Screen::Reading(r) = &self.screen else { return None };
+        let open = r.note.as_ref()?;
+        Some((open.label.clone(), r.laid.notes.get(&open.label)?.text.to_string()))
     }
 
     pub fn close_note(&mut self, cx: &mut Context<Self>) {
@@ -647,6 +685,7 @@ impl Inkling {
             .child(bottom)
             .when(r.contents, |screen| screen.child(self.render_contents(r, &c, window.viewport_size().width, cx)))
             .children(self.render_note(r, window))
+            .test_support()
     }
 
     /// The contents list, under the Contents button.
@@ -721,7 +760,7 @@ impl Inkling {
                         .text_size(size * 1.7)
                         .line_height(relative(1.2))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(self.reading_text(i, &block.text, &c, cx))
+                        .child(self.reading_text(r, i, &block.text, &c, cx))
                         .test_support()
                         .into_any_element(),
                     Some(size * 1.7 * 1.2),
@@ -729,11 +768,11 @@ impl Inkling {
                 Kind::Heading(level) => {
                     let size = size * heading_scale(*level);
                     (
-                        div().text_size(size).line_height(relative(1.3)).font_weight(FontWeight::SEMIBOLD).child(self.reading_text(i, &block.text, &c, cx)).into_any_element(),
+                        div().text_size(size).line_height(relative(1.3)).font_weight(FontWeight::SEMIBOLD).child(self.reading_text(r, i, &block.text, &c, cx)).into_any_element(),
                         Some(size * 1.3),
                     )
                 }
-                Kind::Paragraph => (self.reading_text(i, &block.text, &c, cx).into_any_element(), Some(line)),
+                Kind::Paragraph => (self.reading_text(r, i, &block.text, &c, cx).into_any_element(), Some(line)),
                 Kind::Image { src, alt, caption } => (self.reading_image(r, i, src, alt, caption, &c, page_h * 0.6, width), None),
                 Kind::Rule => (div().w_full().flex().justify_center().text_color(c.muted).child("*   *   *").into_any_element(), None),
             };
@@ -815,9 +854,10 @@ impl Inkling {
     }
 
     /// A block's text, set as the book set it. A tap on a footnote marker or a link acts on it.
-    fn reading_text(&self, i: usize, text: &Text, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn reading_text(&self, r: &Reading, i: usize, text: &Text, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let styled = styled(text, c);
         let layout = styled.layout().clone();
+        r.drawn.borrow_mut().insert(i, (layout.clone(), text.clone()));
         let marks = text.clone();
         div().id(("block", i)).child(styled).on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
             let hit = layout.index_for_position(event.position()).ok().and_then(|ix| marks.target(ix).cloned());

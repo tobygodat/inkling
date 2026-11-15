@@ -215,7 +215,7 @@ fn text(p: &Paragraph) -> (Text, Vec<(String, String, String)>) {
             if custom.name() == NOTE {
                 let label = custom.as_text().to_string();
                 let start = out.len();
-                out.push_str(&label);
+                out.push_str(&superscript(&label));
                 marks.push((start..out.len(), Mark::Note(label)));
             }
             continue;
@@ -236,6 +236,26 @@ fn text(p: &Paragraph) -> (Text, Vec<(String, String, String)>) {
         }
     }
     (Text { text: out.into(), marks }, images)
+}
+
+/// A footnote marker as a book prints it, raised: "12" becomes "¹²".
+fn superscript(label: &str) -> String {
+    label
+        .chars()
+        .map(|c| match c {
+            '0' => '⁰',
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            '4' => '⁴',
+            '5' => '⁵',
+            '6' => '⁶',
+            '7' => '⁷',
+            '8' => '⁸',
+            '9' => '⁹',
+            c => c,
+        })
+        .collect()
 }
 
 /// Where a link inside the book goes: a chapter and a byte offset in it.

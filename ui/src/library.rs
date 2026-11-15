@@ -44,12 +44,16 @@ pub(crate) struct Books {
     /// Whether reading was last left in a book rather than the library, so Read goes back there.
     /// False at launch: Read starts at the library.
     pub left_in_book: bool,
+    /// The book last left, laid out where it was, so going back to it doesn't read it again.
+    pub parked: Option<Reading>,
+    /// How many times a book has been read from disk to open it.
+    pub loads: usize,
 }
 
 impl Books {
     pub fn open(dir: PathBuf) -> Self {
         let library = Library::open(dir).map_err(|e| format!("The library couldn't be opened ({e})."));
-        Books { library, host: None, adding: 0, errors: vec![], opening: None, left_in_book: false }
+        Books { library, host: None, adding: 0, errors: vec![], opening: None, left_in_book: false, parked: None, loads: 0 }
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -82,6 +86,7 @@ impl Inkling {
     pub fn open_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu(cx);
         self.save_position();
+        self.park_book();
         self.books.left_in_book = false;
         self.screen = Screen::Library(None);
         self.focus.focus(window, cx);
@@ -108,10 +113,28 @@ impl Inkling {
     pub fn back_to_writing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu(cx);
         self.save_position();
+        self.park_book();
         self.books.opening = None;
         self.screen = Screen::Page;
         self.focus_page(window, cx);
         cx.notify();
+    }
+
+    /// Keeps the open book, laid out, for going back to it.
+    pub(crate) fn park_book(&mut self) {
+        if !matches!(self.screen, Screen::Reading(_)) {
+            return;
+        }
+        let pages = self.settings.reading.pages;
+        if let Screen::Reading(mut r) = std::mem::replace(&mut self.screen, Screen::Page) {
+            r.park(pages);
+            self.books.parked = Some(r);
+        }
+    }
+
+    /// How many times a book has been read from disk to open it.
+    pub fn book_loads(&self) -> usize {
+        self.books.loads
     }
 
     pub fn library_open(&self) -> bool {
@@ -174,6 +197,13 @@ impl Inkling {
 
     fn imported(&mut self, result: Result<Prepared, String>, cx: &mut Context<Self>) {
         self.books.adding = self.books.adding.saturating_sub(1);
+        if let Ok(prepared) = &result
+            && prepared.before.is_some()
+            && self.books.parked.as_ref().is_some_and(|r| r.book.id == prepared.id)
+        {
+            // Parsed anew: the next open reads the new parse.
+            self.books.parked = None;
+        }
         let added = result.and_then(|prepared| match &mut self.books.library {
             Ok(library) => library.add(&prepared).map(|_| ()).map_err(|e| format!("The book couldn't be added ({e}).")),
             Err(e) => Err(e.clone()),
@@ -254,10 +284,21 @@ impl Inkling {
     /// Loads the book on the background executor and opens it where the reader left off. A book
     /// an older parser stored is parsed again from its original first, and its place follows.
     pub fn open_book(&mut self, id: BookId, cx: &mut Context<Self>) {
-        let Ok(library) = &self.books.library else { return };
+        let Ok(library) = &mut self.books.library else { return };
         if library.entry(&id).is_none() {
             return;
         }
+        if self.books.parked.as_ref().is_some_and(|r| r.book.id == id) {
+            let _ = library.opened(&id);
+            if let Some(reading) = self.books.parked.take() {
+                self.books.opening = None;
+                self.books.left_in_book = true;
+                self.screen = Screen::Reading(reading);
+                cx.notify();
+            }
+            return;
+        }
+        self.books.loads += 1;
         let dir = library.dir().to_path_buf();
         self.books.opening = Some(id.clone());
         let load = cx.background_spawn({

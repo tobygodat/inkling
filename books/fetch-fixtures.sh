@@ -10,3 +10,6 @@ fetch() {
 }
 fetch pride-and-prejudice.epub https://www.gutenberg.org/ebooks/1342.epub3.images
 fetch rfc2616.pdf https://www.rfc-editor.org/rfc/rfc2616.pdf
+# A small EPUB with italics, a picture and a footnote, written from books/examples/walden.rs.
+cargo run -q -p inkling-books --example walden -- "$dir/walden.epub"
+echo "$dir/walden.epub"

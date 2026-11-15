@@ -365,4 +365,71 @@ pub fn run(dir: &Path) {
     s.frame();
     check(position(&mut s) == Some(paged) && paged.fraction > 0.1, &format!("a book first shown in pages switches to Scroll at the same place ({:.3})", paged.fraction));
     check(s.bounds("chapter-title").is_some_and(|t| t.bottom() < px(56.)), "scrolled down to it");
+    s.click("appearance-done");
+    drop(s);
+    walden(dir, &folder, &picked, &fixtures);
+}
+
+/// A book with italics, a picture with its caption and a footnote (`books/examples/walden.rs`).
+fn walden(dir: &Path, folder: &Path, picked: &Picked, fixtures: &Path) {
+    let mut s = open(dir, folder, picked);
+    s.click("show-reading");
+    set_mode(&mut s, Mode::Light);
+    *picked.borrow_mut() = vec![fixtures.join("walden.epub")];
+    s.click("add-book");
+    settle_work(&mut s, |s| s.read(|v, _| v.adding() == 0));
+    check(entries(&mut s)[0].title == "Walden", "Add puts Walden in the library");
+    s.click(("book", 0usize));
+    settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
+    s.frame();
+    let text = s.read(|v, _| v.reading().map(|(b, _)| b.chapters[0].text.clone())).unwrap_or_default();
+    check(text.contains("*deliberately*") && text.contains("[^1]") && text.contains("\\# 1. \\*Not\\*"), "the chapter is stored as Markdown, its italics kept and its Markdown-like text escaped");
+    let column = s.bounds("reading-column").unwrap_or_else(|| fail("Walden opens"));
+    let picture = (0..20usize).find_map(|i| s.bounds(("image", i))).unwrap_or_else(|| fail("the picture is drawn"));
+    check(picture.left() >= column.left() && picture.right() <= column.right() && picture.size.height > px(100.), "the picture draws inside the column");
+    check((0..20usize).any(|i| s.bounds(("caption", i)).is_some_and(|c| c.top() > picture.top() + px(100.) && c.bottom() <= picture.bottom() + px(1.))), "with its caption under it");
+    s.shot("books-17-walden");
+
+    let marker = s.update(|v, _, _| v.reading_mark(true)).unwrap_or_else(|| fail("the footnote marker is drawn"));
+    s.with(|w, cx| w.click_at("reading", marker, cx));
+    s.frame();
+    let note = s.read(|v, _| v.reading_note());
+    check(note == Some(("1".into(), "Written at the pond in the spring of 1846.".into())), &format!("a tap on the marker shows its note ({note:?})"));
+    let popover = s.bounds("note").unwrap_or_else(|| fail("the note is drawn"));
+    check(popover.top() > marker.y && popover.top() < marker.y + px(60.) && (popover.left() - marker.x).abs() < px(80.), "beside the marker");
+    s.shot("books-18-footnote");
+    s.press("escape");
+    check(s.read(|v, _| v.reading_note().is_none() && v.reading().is_some()), "Escape closes the note and leaves the book open");
+
+    let loads = s.read(|v, _| v.book_loads());
+    let place = position(&mut s);
+    s.press("cmd-1");
+    check(s.read(|v, _| v.reading().is_none()) && s.text() == DRAFT, "Cmd-1 goes to the page");
+    s.press("cmd-2");
+    let (back, now) = (position(&mut s), s.read(|v, _| v.book_loads()));
+    check(back == place && now == loads, &format!("and Cmd-2 comes back to the book without reading it again ({place:?} → {back:?}, {loads} → {now} loads)"));
+
+    s.press("end");
+    let link = s.update(|v, _, _| v.reading_mark(false)).filter(|p| p.y > px(56.) && p.y < px(760.)).unwrap_or_else(|| fail("the link to the next chapter is on screen"));
+    s.with(|w, cx| w.click_at("reading", link, cx));
+    s.frame();
+    check(position(&mut s).map(|at| at.chapter) == Some(1), "a link inside the book goes to its target");
+    s.press("pageup");
+
+    s.click("cog");
+    s.click("menu-appearance");
+    s.click(("pages", 1usize));
+    s.click("appearance-done");
+    s.press("home");
+    let page = s.bounds("page").unwrap_or_else(|| fail("the chapter is in pages"));
+    let mut whole = false;
+    for _ in 0..6 {
+        if let Some(p) = (0..20usize).find_map(|i| s.bounds(("image", i))).filter(|p| p.top() >= page.top() && p.bottom() <= page.bottom()) {
+            whole = p.size.height > px(100.);
+            break;
+        }
+        s.press("right");
+    }
+    check(whole, "in pages the picture sits whole on a page");
+    s.shot("books-19-walden-paged");
 }
