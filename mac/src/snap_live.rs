@@ -509,7 +509,7 @@ pub fn bench(page: &str) {
             if std::env::var_os("INKLING_DATA_DIR").is_none() {
                 fail("the app bench needs INKLING_DATA_DIR set to a temp folder");
             }
-            inkling_core::Paths::mac().save_draft(&doc).expect("write the bench draft");
+            crate::snap::seed(&inkling_core::Paths::mac(), &doc);
             let mut cx = HeadlessAppContext::with_platform(
                 gpui_kit::platform::current_platform(true).text_system(),
                 Arc::new(inkling_ui::Assets),

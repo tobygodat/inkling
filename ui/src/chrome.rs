@@ -235,7 +235,7 @@ impl Inkling {
     /// the library, or the book read last at its place. Before any reading since launch it is the
     /// library. The view already on screen stays as it is.
     pub fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
-        if self.view() == view {
+        if self.view() == view && !self.documents_open() {
             return;
         }
         if self.screen.keys().is_some() {
@@ -271,7 +271,7 @@ impl Inkling {
     pub(crate) fn render_phone_corner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let shown = match self.screen {
             Screen::Page => self.revision.review().is_none(),
-            Screen::Library(..) | Screen::Reading(_) => true,
+            Screen::Library(..) | Screen::Reading(_) | Screen::Documents(_) => true,
             Screen::Keys(_) | Screen::Feedback(_) => false,
         };
         shown.then(|| {

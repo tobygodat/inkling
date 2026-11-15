@@ -98,9 +98,10 @@ fn byte_at(runs: &[String], (run, index): (usize, usize)) -> Option<usize> {
 pub fn run(dir: &Path) {
     std::fs::create_dir_all(dir).expect("screenshot dir");
     let paths = Paths::mac();
-    std::fs::create_dir_all(&paths.dir).expect("data dir");
-    std::fs::write(paths.dir.join("gull.svg"), GULL).expect("write the image");
-    paths.save_draft(DRAFT).expect("write the draft");
+    super::seed(&paths, DRAFT);
+    // Image paths are read relative to the document's folder.
+    std::fs::create_dir_all(paths.dir.join("documents")).expect("documents dir");
+    std::fs::write(paths.dir.join("documents/gull.svg"), GULL).expect("write the image");
     let mut s = Snap::open(dir);
     let caret = DRAFT.find("starts in").expect("caret text") + 3;
     s.select(caret..caret);

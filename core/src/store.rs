@@ -23,20 +23,8 @@ impl Paths {
         Paths { dir }
     }
 
-    pub fn draft(&self) -> PathBuf {
-        self.dir.join("draft.md")
-    }
-
     pub fn settings(&self) -> PathBuf {
         self.dir.join("settings.json")
-    }
-
-    pub fn load_draft(&self) -> String {
-        fs::read_to_string(self.draft()).unwrap_or_default()
-    }
-
-    pub fn save_draft(&self, text: &str) -> io::Result<()> {
-        write_atomic(&self.draft(), text.as_bytes())
     }
 
     /// What this device has sent as feedback. See `feedback::Desk`.
@@ -65,6 +53,9 @@ pub struct Settings {
     /// Reading's look and layout. Change a look through `change_look` and `set_synced`, which keep
     /// the two in step while they are synced.
     pub reading: ReadingLook,
+    /// The id of the document open last. See `Documents::last_open`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<String>,
 }
 
 /// `settings.json` as read, before the two looks are put in step.
@@ -79,6 +70,8 @@ struct Stored {
     /// then reading takes the writing look, synced.
     #[serde(default, deserialize_with = "lenient")]
     reading: Option<ReadingLook>,
+    #[serde(default)]
+    document: Option<String>,
 }
 
 impl From<Stored> for Settings {
@@ -87,13 +80,19 @@ impl From<Stored> for Settings {
         if reading.synced {
             reading.look.take_look(&s.appearance);
         }
-        Settings { provider: s.provider, models: s.models, appearance: s.appearance, reading }
+        Settings { provider: s.provider, models: s.models, appearance: s.appearance, reading, document: s.document }
     }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { provider: Provider::Claude, models: BTreeMap::new(), appearance: Appearance::default(), reading: ReadingLook::default() }
+        Settings {
+            provider: Provider::Claude,
+            models: BTreeMap::new(),
+            appearance: Appearance::default(),
+            reading: ReadingLook::default(),
+            document: None,
+        }
     }
 }
 
@@ -326,15 +325,14 @@ mod tests {
     }
 
     #[test]
-    fn draft_and_settings_survive_a_reload() {
+    fn settings_survive_a_reload() {
         let paths = temp();
-        assert_eq!(paths.load_draft(), "");
-        paths.save_draft("héllo\n").unwrap();
         let mut s = Settings::load(&paths);
+        assert_eq!(s.document, None);
         s.provider = Provider::Gemini;
         s.set_model(Provider::Gemini, " custom-model ");
+        s.document = Some("1763200000000".into());
         s.save(&paths).unwrap();
-        assert_eq!(paths.load_draft(), "héllo\n");
         let back = Settings::load(&paths);
         assert_eq!(back, s);
         assert_eq!(back.model(Provider::Gemini), "custom-model");

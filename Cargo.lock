@@ -3797,6 +3797,7 @@ name = "inkling-mcp"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "inkling-books",
  "inkling-core",
  "proptest",
@@ -3811,6 +3812,7 @@ dependencies = [
 name = "inkling-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gpui-kit",
  "inkling-books",
  "inkling-core",

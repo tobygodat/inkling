@@ -26,6 +26,8 @@ pub fn call(store: &impl Store, name: &str, arguments: &Value) -> Option<Value> 
         "read_book" => read_book(store, arguments),
         "search_library" => search_library(store, arguments),
         "read_draft" => read_draft(store),
+        "list_documents" => list_documents(store),
+        "read_document" => read_document(store, arguments),
         _ => return None,
     };
     Some(match result {
@@ -102,6 +104,24 @@ pub(crate) fn markdown(chapter: &Chapter, at: usize) -> String {
 fn read_draft(store: &impl Store) -> Result<String, String> {
     let draft = store.draft().map_err(|e| format!("The draft couldn't be read ({e})."))?;
     Ok(if draft.trim().is_empty() { "The draft is empty.".to_string() } else { draft })
+}
+
+fn list_documents(store: &impl Store) -> Result<String, String> {
+    let documents = store.documents().map_err(|e| format!("The documents couldn't be read ({e})."))?;
+    let documents: Vec<Value> = documents
+        .iter()
+        .map(|d| {
+            let changed: chrono::DateTime<chrono::Local> = d.changed.into();
+            json!({ "id": d.id, "title": d.title, "changed": changed.to_rfc3339_opts(chrono::SecondsFormat::Secs, false) })
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&documents).expect("JSON values serialise"))
+}
+
+fn read_document(store: &impl Store, arguments: &Value) -> Result<String, String> {
+    let id = arguments.get("document_id").and_then(Value::as_str).ok_or("document_id is required.")?;
+    let text = store.document(id).map_err(|e| format!("That document couldn't be read: {e}"))?;
+    Ok(if text.trim().is_empty() { "The document is empty.".to_string() } else { text })
 }
 
 fn search_library(store: &impl Store, arguments: &Value) -> Result<String, String> {

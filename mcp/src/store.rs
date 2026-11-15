@@ -1,5 +1,6 @@
 use inkling_books::{Book, BookId, Entry, Library};
 use inkling_core::store::Paths;
+use inkling_core::{Document, Documents, Settings};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,10 @@ pub trait Store {
     /// Newest first, with each book's reading position.
     fn books(&self) -> io::Result<Vec<Entry>>;
     fn book(&self, id: &BookId) -> io::Result<Book>;
+    /// The writer's documents, the one changed last first.
+    fn documents(&self) -> io::Result<Vec<Document>>;
+    fn document(&self, id: &str) -> io::Result<String>;
+    /// The document that was open last.
     fn draft(&self) -> io::Result<String>;
 }
 
@@ -44,9 +49,19 @@ impl Folder {
         fs::read(self.library_dir().join("covers").join(name))
     }
 
+    /// The file of the document that was open last. Until the app has moved `draft.md` into
+    /// `documents/`, that draft.
+    fn draft_file(&self) -> PathBuf {
+        let documents = Documents::new(&self.paths);
+        match documents.last_open(Settings::load(&self.paths).document.as_deref()) {
+            Some(id) => documents.path(&id),
+            None => self.paths.dir.join("draft.md"),
+        }
+    }
+
     /// When the draft was last saved, in milliseconds since the Unix epoch, or 0 if it never was.
     pub fn draft_saved_at(&self) -> u64 {
-        fs::metadata(self.paths.draft())
+        fs::metadata(self.draft_file())
             .and_then(|m| m.modified())
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -84,7 +99,23 @@ impl Store for Folder {
         library.load(id)
     }
 
+    fn documents(&self) -> io::Result<Vec<Document>> {
+        Ok(Documents::new(&self.paths).list())
+    }
+
+    fn document(&self, id: &str) -> io::Result<String> {
+        let documents = Documents::new(&self.paths);
+        // Only an id from the list, so no path outside the folder is ever read.
+        if !documents.list().iter().any(|d| d.id == id) {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("No document has the id {id}.")));
+        }
+        documents.read(id)
+    }
+
     fn draft(&self) -> io::Result<String> {
-        Ok(self.paths.load_draft())
+        match fs::read_to_string(self.draft_file()) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+            read => read,
+        }
     }
 }

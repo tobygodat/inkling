@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod appearance;
+pub mod documents;
 pub mod draft;
 pub mod ask;
 pub mod feedback;
@@ -18,6 +19,7 @@ pub use appearance::{Appearance, Face, Mode, PageMode, Part, ReadingLook, Rgb, T
 pub use ai::{AiEvent, Backend, Cancel, Prompt, Provider, start};
 pub use ask::{AnswerError, Ask, BadRequest, Request, Revision, parse_alternatives};
 pub use feedback::{Build, BuildNumber, Desk};
+pub use documents::{Document, Documents};
 pub use review::{Change, ChangeId, Decision, Edit, Review, Segment, Stats};
 pub use store::{KeyStore, MemoryKeys, Paths, Secret, Settings, backend_for_request, default_keys, headless};
 #[cfg(target_vendor = "apple")]
