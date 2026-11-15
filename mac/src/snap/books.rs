@@ -366,3 +366,85 @@ pub fn run(dir: &Path) {
     check(position(&mut s) == Some(paged) && paged.fraction > 0.1, &format!("a book first shown in pages switches to Scroll at the same place ({:.3})", paged.fraction));
     check(s.bounds("chapter-title").is_some_and(|t| t.bottom() < px(56.)), "scrolled down to it");
 }
+
+/// TOB-483 spike: times opening, scrolling and paging a long chapter with the renderer named by
+/// `INKLING_SPIKE` (own, kit or plain).
+pub fn spike() {
+    use inkling_books::{Book, Chapter, Library, prepare};
+    use std::time::Instant;
+    let fixtures = PathBuf::from(std::env::var_os("INKLING_FIXTURES").expect("fixtures"));
+    let paths = Paths::mac();
+    let dir = paths.dir.join("library");
+    let mut lib = Library::open(&dir).unwrap();
+    let p = prepare(lib.dir(), &fixtures.join("pride-and-prejudice.epub")).unwrap();
+    let source = lib.load(&p.id).unwrap();
+    // One chapter of chapters 1 to 12, pictures left out: about 26,000 words.
+    let text: String = source.chapters[1..13]
+        .iter()
+        .map(|c| c.text.lines().filter(|l| !l.starts_with("![")).collect::<Vec<_>>().join("\n"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let words = text.split_whitespace().count();
+    let book = Book {
+        id: inkling_books::BookId("f".repeat(64)),
+        title: "Long".into(),
+        author: None,
+        format: inkling_books::Format::Epub,
+        parser: inkling_books::PARSER,
+        chapters: vec![Chapter { title: Some("All".into()), text }],
+    };
+    lib.insert(&book).unwrap();
+    drop(lib);
+
+    let mut s = Snap::open(Path::new("/tmp"));
+    let t0 = Instant::now();
+    s.update(|v, _, cx| v.open_book(book.id.clone(), cx));
+    for _ in 0..200 {
+        if s.read(|v, _| v.reading().is_some()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+        s.cx.run_until_parked();
+    }
+    s.frame();
+    let open = t0.elapsed();
+    let column = s.bounds("reading-column").map(|b| b.size.height).unwrap_or_default();
+
+    let mut scrolls = vec![];
+    for _ in 0..40 {
+        let t = Instant::now();
+        s.with(|w, cx| w.scroll("reading-body", ScrollDelta::Pixels(point(px(0.), px(-200.))), cx));
+        s.cx.run_until_parked();
+        s.with(|w, cx| w.render_frame(cx));
+        scrolls.push(t.elapsed());
+    }
+    s.update(|v, w, cx| v.set_page_mode(PageMode::Paged, w, cx));
+    s.frame();
+    s.frame();
+    let pages = s.update(|v, w, _| v.reading_page(w)).unwrap_or_default();
+    let mut turns = vec![];
+    for _ in 0..20 {
+        let t = Instant::now();
+        s.with(|w, cx| w.press("right", cx));
+        s.cx.run_until_parked();
+        s.with(|w, cx| w.render_frame(cx));
+        turns.push(t.elapsed());
+    }
+    let median = |v: &mut Vec<Duration>| {
+        v.sort();
+        (v[v.len() / 2], v[v.len() - 1])
+    };
+    let (scroll, scroll_worst) = median(&mut scrolls);
+    let (turn, turn_worst) = median(&mut turns);
+    println!(
+        "{:5} words={words} column={:.0}px open={:?} scroll median={:?} worst={:?} pages={} turn median={:?} worst={:?}",
+        std::env::var("INKLING_SPIKE").unwrap_or_else(|_| "own".into()),
+        column.as_f32(),
+        open,
+        scroll,
+        scroll_worst,
+        pages.1,
+        turn,
+        turn_worst
+    );
+}

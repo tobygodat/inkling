@@ -67,6 +67,7 @@ pub(crate) struct Reading {
     dir: PathBuf,
     /// The chapter on screen, parsed.
     laid: Rc<Laid>,
+    kit: std::cell::OnceCell<Vec<gpui_kit::base::text::editor_host::BlockNode>>,
     /// Each image's size in pixels, read once from its file.
     sizes: RefCell<HashMap<String, Option<Size<f32>>>>,
     pub note: Option<OpenNote>,
@@ -104,6 +105,7 @@ impl Reading {
             chapter,
             dir,
             laid,
+            kit: Default::default(),
             sizes: RefCell::default(),
             note: None,
             seek: None,
@@ -583,7 +585,7 @@ impl Inkling {
             .child(div().truncate().child(format!("{} · {percent}%{page_note}", r.chapter_title(r.chapter))))
             .test_support();
         let width = t.body.column.min(window.viewport_size().width - m.gutter * 2.);
-        let column = self.render_chapter(r, &t, page_h, width, cx);
+        let column = self.render_chapter(r, &t, page_h, width, window, cx);
         let body = match pages {
             PageMode::Scroll => div()
                 .id("reading-body")
@@ -689,7 +691,7 @@ impl Inkling {
             .test_support()
     }
 
-    fn render_chapter(&self, r: &Reading, t: &Theme, page_h: Pixels, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
+    fn render_chapter(&self, r: &Reading, t: &Theme, page_h: Pixels, width: Pixels, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (c, body): (Colors, Body) = (t.c, t.body);
         let size = body.size;
         let line = size * body.line;
@@ -713,7 +715,28 @@ impl Inkling {
                     .into_any_element(),
             );
         }
-        for (i, block) in r.laid.blocks.iter().enumerate() {
+        let spike = std::env::var("INKLING_SPIKE").unwrap_or_default();
+        if spike == "kit" {
+            use gpui_kit::base::text::TextViewStyle;
+            use gpui_kit::base::text::editor_host::{self as eh, FlowPosition, RenderContext};
+            let nodes = r.kit.get_or_init(|| eh::parse_markdown(&r.book.chapters[r.chapter].text, Default::default()).unwrap_or_default());
+            let style = TextViewStyle::default().with_foreground(c.ink.into()).with_muted_foreground(c.muted.into()).with_link(c.link.into()).with_border(c.hairline.into());
+            let rcx = RenderContext::new(style).with_body_font_size(size).on_link_click(|_, _, _, _| {});
+            let flat: Vec<&eh::BlockNode> = nodes.iter().collect();
+            for (ix, node) in nodes.iter().enumerate() {
+                let el = node.render_with_id(("kit", ix), FlowPosition::at(&flat, ix, ix + 1 == flat.len()), &rcx, window, cx);
+                lines.push(matches!(node, eh::BlockNode::Paragraph(_)).then_some(line));
+                sources.push(node.span().map(|s| s.start));
+                children.push(el);
+            }
+        }
+        for (i, block) in r.laid.blocks.iter().enumerate().filter(|_| spike != "kit") {
+            if spike == "plain" {
+                lines.push(Some(line));
+                sources.push(Some(block.source));
+                children.push(div().child(block.text.text.clone()).into_any_element());
+                continue;
+            }
             let (element, step) = match &block.kind {
                 Kind::Title => (
                     div()

@@ -78,6 +78,11 @@ fn main() {
         return snap_live::run(std::path::Path::new(&dir));
     }
     #[cfg(feature = "snap")]
+    #[cfg(feature = "snap")]
+    if std::env::args().any(|a| a == "--spike-reading") {
+        snap::books::spike();
+        return;
+    }
     if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-books").nth(1) {
         return snap::books::run(std::path::Path::new(&dir));
     }
