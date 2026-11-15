@@ -105,14 +105,6 @@ impl Fake {
         }
         out
     }
-
-    /// Puts an inbox file in, as a Readwise upload the server fetched.
-    pub fn add_to_inbox(&self, readwise_id: &str, title: &str, category: &str, bytes: &[u8]) {
-        self.with(|s| {
-            s.files.insert(format!("inbox/{readwise_id}"), STANDARD.encode(bytes));
-            s.inbox.push(InboxItem { readwise_id: readwise_id.into(), title: title.into(), category: category.into(), state: "waiting".into() });
-        });
-    }
 }
 
 impl Transport for Fake {

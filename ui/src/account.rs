@@ -17,7 +17,7 @@ use inkling_sync::{Disk, Error, SignIn, Synced, Transport};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 /// How long after the last change a sync starts.
 const SETTLE: Duration = Duration::from_secs(3);
@@ -300,14 +300,13 @@ impl Inkling {
             let begin = {
                 let transport = transport.clone();
                 cx.background_spawn(async move {
-                    let loopback = match way_back {
-                        WayBack::Loopback => Some(inkling_sync::Loopback::bind()?),
-                        WayBack::Scheme(_) => None,
-                    };
-                    let redirect = match (&loopback, way_back) {
-                        (Some(l), _) => l.redirect(),
-                        (None, WayBack::Scheme(address)) => address.to_string(),
-                        (None, WayBack::Loopback) => unreachable!(),
+                    let (loopback, redirect) = match way_back {
+                        WayBack::Loopback => {
+                            let listener = inkling_sync::Loopback::bind()?;
+                            let redirect = listener.redirect();
+                            (Some(listener), redirect)
+                        }
+                        WayBack::Scheme(address) => (None, address.to_string()),
                     };
                     inkling_sync::account::begin(transport.as_ref(), server, &redirect, client).map(|begun| (begun, loopback))
                 })
@@ -520,8 +519,7 @@ impl Disk for PageDisk<'_> {
     }
 
     fn write(&mut self, id: &str, text: &str, saved_at: u64) -> Result<(), String> {
-        let at = UNIX_EPOCH + Duration::from_millis(saved_at);
-        self.store.restore(id, text, at.min(SystemTime::now())).map_err(|e| e.to_string())
+        self.store.restore(id, text, UNIX_EPOCH + Duration::from_millis(saved_at)).map_err(|e| e.to_string())
     }
 
     /// The open document stays while it is on the page: it goes once the writer leaves it.
