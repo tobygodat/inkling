@@ -536,7 +536,7 @@ impl Inkling {
             r.pending = true;
         }
         if let Some(offset) = r.seek.take() {
-            let top = layout.pieces.iter().filter(|p| p.source.is_some_and(|s| s <= offset)).map(|p| p.top).last().unwrap_or_default();
+            let top = layout.pieces.iter().filter(|p| p.source.is_some_and(|s| s <= offset)).map(|p| p.top).next_back().unwrap_or_default();
             r.anchor = (top / layout.height).clamp(0., 1.);
             r.pending = true;
         }
@@ -862,7 +862,8 @@ impl Inkling {
         r.drawn.borrow_mut().insert(i, (layout.clone(), text.clone()));
         let marks = text.clone();
         div().id(("block", i)).child(styled).on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-            let hit = layout.index_for_position(event.position()).ok().and_then(|ix| marks.target(ix).cloned());
+            let at = event.position();
+            let hit = layout.index_for_position(at).ok().and_then(|ix| marks.target(ix).cloned()).or_else(|| near_marker(&layout, &marks, at));
             if this.tapped(hit, event.position(), cx) {
                 cx.stop_propagation();
             }
@@ -932,6 +933,20 @@ impl Inkling {
                 .test_support(),
         )
     }
+}
+
+/// A footnote marker within reach of a finger: half of a 44 pt target either side of it, on its
+/// line. The raised digit itself is far narrower.
+fn near_marker(layout: &TextLayout, text: &Text, at: Point<Pixels>) -> Option<Mark> {
+    let reach = px(22.);
+    text.marks.iter().find_map(|(range, mark)| {
+        let Mark::Note(_) = mark else { return None };
+        let start = layout.position_for_index(range.start)?;
+        let end = layout.position_for_index(range.end).filter(|e| e.y == start.y).unwrap_or(point(start.x + reach, start.y));
+        let middle = (start.x + end.x) / 2.;
+        let line = layout.line_height();
+        ((at.x - middle).abs() <= reach && at.y >= start.y - reach / 2. && at.y <= start.y + line + reach / 2.).then(|| mark.clone())
+    })
 }
 
 /// Text with its emphasis, and links and footnote markers in the link colour.

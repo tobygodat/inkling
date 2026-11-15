@@ -236,7 +236,10 @@ pub fn open(dir: &Path, id: &BookId) -> io::Result<(Book, Option<Prepared>)> {
     if book.parser >= PARSER {
         return Ok((book, None));
     }
-    let Some(original) = original_path(dir, id, book.format).filter(|p| p.is_file()) else { return Ok((book, None)) };
+    let original = original_path(dir, id, book.format);
+    if !original.is_file() {
+        return Ok((book, None));
+    }
     let bytes = fs::read(&original)?;
     match parse_and_store(dir, &original, &bytes) {
         Ok(new) => {
@@ -249,12 +252,12 @@ pub fn open(dir: &Path, id: &BookId) -> io::Result<(Book, Option<Prepared>)> {
 }
 
 /// The file a book was added from, as the library keeps it.
-pub fn original_path(dir: &Path, id: &BookId, format: Format) -> Option<PathBuf> {
+pub fn original_path(dir: &Path, id: &BookId, format: Format) -> PathBuf {
     let extension = match format {
         Format::Epub => "epub",
         Format::Pdf => "pdf",
     };
-    Some(dir.join("originals").join(format!("{}.{extension}", id.0)))
+    dir.join("originals").join(format!("{}.{extension}", id.0))
 }
 
 fn titles(book: &Book) -> Vec<Option<String>> {
@@ -278,7 +281,7 @@ fn parse_and_store(dir: &Path, path: &Path, bytes: &[u8]) -> Result<Book, Import
 }
 
 fn keep_original(dir: &Path, book: &Book, bytes: &[u8]) -> io::Result<()> {
-    let Some(path) = original_path(dir, &book.id, book.format) else { return Ok(()) };
+    let path = original_path(dir, &book.id, book.format);
     if path.is_file() {
         return Ok(());
     }
@@ -428,7 +431,7 @@ mod tests {
         assert_eq!((lib.entries().len(), entry.chapters), (1, 3));
         assert_eq!(entry.position, Position { chapter: 2, fraction: 0.66 }, "the place follows \"Three\"");
         assert_eq!(load(&data, &id).unwrap().parser, PARSER);
-        assert_eq!(fs::read(original_path(&data, &id, Format::Epub).unwrap()).unwrap(), bytes, "the file is kept");
+        assert_eq!(fs::read(original_path(&data, &id, Format::Epub)).unwrap(), bytes, "the file is kept");
 
         // A later parser: the stored book is stale, and opening it parses the original again.
         fs::write(book_path(&data, &id), &old).unwrap();

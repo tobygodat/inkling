@@ -61,6 +61,10 @@ point() {
     contents) echo "343 90" ;;
     chapter-one) echo "120 189" ;;    # Contents' second row
     back-to-library) echo "192 90" ;;  # "‹ Library", right of the 150 pt corner
+    add-one-found) echo "200 343" ;;  # Add, under a single book Find books found
+    book-newest) echo "90 296" ;;     # first tile
+    footnote-marker) echo "190 344" ;; # the raised 1 after "what it had to teach."
+    reading-middle) echo "200 650" ;; # the page's middle third, on text
     # The Appearance sheet, from its top; Pages once the sheet is panned to its end.
     sheet-done) echo "363 402" ;;
     sync) echo "353 458" ;;
@@ -588,5 +592,28 @@ tap sheet-done
 tap back-to-library 1.5
 [ "$(book_state Microsoft | cut -d' ' -f1-2)" = "$held" ] || fail "the place moved from $held to $(book_state Microsoft) through Scroll and back"
 shot
+
+# A book with italics, a picture with its caption and a footnote (books/examples/walden.rs).
+begin books-walden
+cp ../target/fixtures/walden.epub "$docs/"
+tap find-books 4
+tap add-one-found 3
+for _ in $(seq 25); do [ "$(book_count)" = 3 ] && break; sleep 0.4; done
+[ "$(book_count)" = 3 ] || fail "Find books did not add Walden"
+tap book-newest 3
+[ "$(book_state Walden | cut -d' ' -f3)" != 0 ] || fail "Walden was not opened"
+shot
+
+begin books-footnote
+plain="$(mktemp -d)"
+"$ad" screenshot "$plain/before.png" >/dev/null
+tap footnote-marker 1.5
+"$ad" screenshot "$plain/note.png" >/dev/null
+cmp -s "$plain/before.png" "$plain/note.png" && fail "a tap on the footnote marker showed nothing"
+[ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap on the marker turned the page: $(book_state Walden)"
+shot
+tap reading-middle 1.5
+[ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap that closes the note turned the page: $(book_state Walden)"
+rm -rf "$plain"
 
 echo "all $step steps passed; screenshots in $shots"

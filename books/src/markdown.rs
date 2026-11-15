@@ -254,8 +254,8 @@ fn write(toks: &[Tok], escaped: &[bool], links: &[&str], notes: &[&str]) -> Stri
                 let keep = style != Style::default() && !closed_emphasis && opens && closes && !char_at(from).is_whitespace() && !char_at(to - 1).is_whitespace();
                 let delimiter = if keep { style.delimiter() } else { "" };
                 out.push_str(delimiter);
-                for i in from..to {
-                    if escaped[i] {
+                for (i, escape) in escaped.iter().enumerate().take(to).skip(from) {
+                    if *escape {
                         out.push('\\');
                     }
                     out.push(char_at(i));

@@ -31,7 +31,7 @@ pub(crate) struct Text {
 impl Text {
     /// What a tap on byte `at` of the text reaches: a footnote marker or a link.
     pub fn target(&self, at: usize) -> Option<&Mark> {
-        self.marks.iter().filter(|(r, m)| r.contains(&at) && matches!(m, Mark::Link(_) | Mark::Note(_))).map(|(_, m)| m).last()
+        self.marks.iter().filter(|(r, m)| r.contains(&at) && matches!(m, Mark::Link(_) | Mark::Note(_))).map(|(_, m)| m).next_back()
     }
 }
 
