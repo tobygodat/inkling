@@ -8,7 +8,7 @@
 
 import { insufficientScope, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
 import type { Env, Owner } from "./env";
-import { BOOK_ID, COVER_NAME, DOCUMENT_ID, MAX_FILE_BYTES, Refused, isWhole, json, readJson } from "./http";
+import { BOOK_ID, COVER_NAME, DOCUMENT_ID, IMAGE_NAME, MAX_FILE_BYTES, Refused, isWhole, json, readJson } from "./http";
 import { connectReadwise, disconnectReadwise, readwiseStatus } from "./readwise";
 
 export async function serveSync(request: Request, env: Env, ctx: OAuthResourceContext<Owner>): Promise<Response> {
@@ -24,6 +24,12 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
   }
   if ((m = at(/^\/v1\/books\/([^/]+)\/file$/))) {
     const key = `book/${bookId(m[1])}`;
+    if (method === "PUT") return putFile(request, env, key);
+    if (method === "GET") return getFile(env, key);
+  }
+  if ((m = at(/^\/v1\/books\/([^/]+)\/images\/([^/]+)$/))) {
+    if (!IMAGE_NAME.test(m[2])) throw new Refused(400, "That isn’t an image name.");
+    const key = `image/${bookId(m[1])}/${m[2]}`;
     if (method === "PUT") return putFile(request, env, key);
     if (method === "GET") return getFile(env, key);
   }

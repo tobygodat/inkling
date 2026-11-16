@@ -33,6 +33,9 @@ describe("the library and the documents", () => {
     expect(await (await position(1, 200)).json()).toEqual({ ok: true, kept: true });
     expect(await (await position(0, 100)).json()).toEqual({ ok: true, kept: false }); // Older: the later stays.
     expect(await (await call(`/v1/books/${ID}/file`, bearer(token))).text()).toBe('{"parsed":true}');
+    expect((await call(`/v1/books/${ID}/images/1.png`, bearer(token, { method: "PUT", body: "png" }))).status).toBe(200);
+    expect(await (await call(`/v1/books/${ID}/images/1.png`, bearer(token))).text()).toBe("png");
+    expect((await call(`/v1/books/${ID}/images/..png`, bearer(token, { method: "PUT", body: "x" }))).status).toBe(400);
 
     const agent = (await signIn({ scope: "library:read", tick: ["library:read"] })).token!;
     const books = JSON.parse((await tool(agent, "list_books")).text);

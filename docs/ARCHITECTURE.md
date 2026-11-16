@@ -230,8 +230,9 @@ when it ends. Only while signed in: a sign-in is `Secret::ServerSignIn` in the k
   open document is never removed under the writer. A skipped change is a conflict at the next sync,
   so both texts are kept. A changed open document's page is rebuilt from its file; a changed
   parked one is dropped and opens afresh.
-- **Books and places.** Book files and covers that came down are written off the UI thread (they
-  are named by their hash); `Library::record`, `take_position` and `add` record them on the UI
+- **Books and places.** A book goes up as its parsed file, its chapters' Markdown, the pictures
+  its chapters link to (`images/<id>/`) and its cover, never its original. Those that came down
+  are written off the UI thread (they are named by the book's hash); `Library::record`, `take_position` and `add` record them on the UI
   thread. Readwise uploads are parsed with `prepare` like an Add.
 - **Failure.** Any failed sync sets `stopped`: the cog's dot and Account's "Sync stopped". The next
   sync that succeeds clears it. An ended grant also signs the device out.
@@ -279,7 +280,7 @@ more than 10 ms of CPU, so it never parses a book.
   `inkling-mcp`. Each chapter is stored as the Markdown `read_book` gives, in a trigram FTS5 index,
   so a search runs inside D1. It finds one hit per chapter, and a query under three characters
   falls back to `instr`.
-- **Sync.** `src/sync.ts`. A device uploads a book's parsed JSON to KV, then each chapter, then its
+- **Sync.** `src/sync.ts`. A device uploads a book's parsed JSON and its pictures to KV, then each chapter, then its
   row, which is refused until the rest is there. A position carries when it changed (an entry's
   `position_at`), and the later wins. A document carries a `version`, counted up on every write
   the server takes; a write names the version it was made on and is refused with 409 and what the

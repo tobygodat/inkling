@@ -137,8 +137,9 @@ fn import_upload(dir: &Path, item: &InboxItem, bytes: &[u8]) -> Result<Prepared,
     prepared
 }
 
-/// The parsed file, every chapter, the cover, then the row: the server refuses the row until the
-/// rest is there, so a sync cut short leaves no half book in an agent's list.
+/// The parsed file, every chapter, its images, the cover, then the row: the server refuses the
+/// row until the file and chapters are there, so a sync cut short leaves no half book in an
+/// agent's list.
 fn upload(api: &Api, dir: &Path, entry: &Entry) -> Result<(), Error> {
     let bytes = fs::read(book_path(dir, &entry.id)).map_err(|e| Error::Local(format!("its file couldn't be read ({e})")))?;
     if bytes.len() > MAX_FILE_BYTES {
@@ -147,8 +148,13 @@ fn upload(api: &Api, dir: &Path, entry: &Entry) -> Result<(), Error> {
     let book: Book = serde_json::from_slice(&bytes).map_err(|e| Error::Local(format!("its file couldn't be read ({e})")))?;
     api.send(Method::Put, &format!("/v1/books/{}/file", entry.id.0), Body::Bytes(&bytes))?;
     for (at, chapter) in book.chapters.iter().enumerate() {
-        let body = json!({ "title": chapter.title_at(at), "text": chapter.markdown(at) });
+        let title = chapter.title.clone().unwrap_or_else(|| format!("Chapter {}", at + 1));
+        let body = json!({ "title": title, "text": chapter.text });
         api.send(Method::Put, &format!("/v1/books/{}/chapters/{at}", entry.id.0), Body::Json(body))?;
+    }
+    for name in images(&book) {
+        let Ok(bytes) = fs::read(dir.join(import::image_dir(&entry.id)).join(&name)) else { continue };
+        api.send(Method::Put, &format!("/v1/books/{}/images/{name}", entry.id.0), Body::Bytes(&bytes))?;
     }
     send_cover(api, dir, entry)?;
     send_row(api, entry)
@@ -180,6 +186,15 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
     if book.id != id {
         return Err(Error::Local("its file is another book".into()));
     }
+    let folder = dir.join(import::image_dir(&id));
+    for name in images(&book) {
+        match api.send(Method::Get, &format!("/v1/books/{}/images/{name}", row.id), Body::None) {
+            Ok(image) => fs::create_dir_all(&folder).and_then(|()| write_atomic(&folder.join(&name), &image)).map_err(|e| Error::Local(e.to_string()))?,
+            // A picture the other device couldn't send shows as its alt text.
+            Err(Error::Refused { status: 404, .. }) => {}
+            Err(e) => return Err(e),
+        }
+    }
     write_atomic(&book_path(dir, &id), &bytes).map_err(|e| Error::Local(e.to_string()))?;
     let cover = match &row.cover {
         Some(name) if !name.contains('/') && !name.starts_with('.') => {
@@ -202,15 +217,33 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
     })
 }
 
+/// The file names of the pictures a book's chapters show, as `images/<id>/<n>.<ext>` links name them.
+fn images(book: &Book) -> Vec<String> {
+    let prefix = format!("{}/", import::image_dir(&book.id));
+    let mut names: Vec<String> = book
+        .chapters
+        .iter()
+        .flat_map(|c| c.text.match_indices(&prefix).map(|(at, _)| &c.text[at + prefix.len()..]))
+        .filter_map(|rest| {
+            let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
+            (name.contains('.') && !name.starts_with('.')).then_some(name)
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Fake;
-    use inkling_books::{Block, Chapter};
+    use inkling_books::Chapter;
 
     fn book(title: &str) -> Book {
-        let chapters = vec![Chapter { title: None, blocks: vec![Block::Paragraph(format!("{title}, page one."))] }];
-        Book { id: import::book_id(title.as_bytes()), title: title.into(), author: None, format: Format::Epub, chapters }
+        let id = import::book_id(title.as_bytes());
+        let text = format!("{title}, page one.\n\n![The pond](images/{}/1.png \"In winter\")\n", id.0);
+        Book { id, title: title.into(), author: None, format: Format::Epub, parser: inkling_books::book::PARSER, chapters: vec![Chapter { title: None, text }] }
     }
 
     #[test]
@@ -224,6 +257,9 @@ mod tests {
 
         let mut library = Library::open(mac.path()).unwrap();
         library.insert(&walden).unwrap();
+        let pictures = mac.path().join(import::image_dir(&walden.id));
+        fs::create_dir_all(&pictures).unwrap();
+        fs::write(pictures.join("1.png"), b"png").unwrap();
         library.set_position(&walden.id, Position { chapter: 0, fraction: 0.25 }).unwrap();
         assert_eq!(sync(&api, mac.path()).unwrap(), Outcome::default());
 
@@ -233,6 +269,7 @@ mod tests {
         let mut on_phone = Library::open(phone.path()).unwrap();
         on_phone.record(came.books[0].clone()).unwrap();
         assert_eq!(on_phone.load(&walden.id).unwrap(), walden);
+        assert_eq!(fs::read(phone.path().join(import::image_dir(&walden.id)).join("1.png")).unwrap(), b"png", "its pictures come with it");
 
         // Read further on the phone: the Mac takes that place, and doesn't send its older one back.
         let later = library.entry(&walden.id).unwrap().position_at + 10;

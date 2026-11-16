@@ -14,7 +14,7 @@ Gemini or ChatGPT. No account is needed. Keys live in the Keychain and writing g
 provider the writer picked. Signing in to Inkling's own server with Google is optional (ADR 0004):
 it turns on sync, Readwise and agents away from the Mac. Signed in, each device sends Inkling's
 server, a Cloudflare Worker that only the writer's Google account can use, its documents, its books
-(their text, the parsed book and the cover, never the original file) and where it is in each one,
+(their text, the parsed book, its pictures and the cover, never the original file) and where it is in each one,
 and takes back what the other devices sent. Signed out, nothing goes to it. AI keys and the
 feedback link never leave the Keychain. An agent the writer connects reads the library and the
 documents but never changes them. Find books only looks through folders on the device.

@@ -165,6 +165,8 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
         }
         (Method::Put, ["books", id, "file"]) => file_in(s, format!("book/{id}"), body),
         (Method::Get, ["books", id, "file"]) => file_out(s, &format!("book/{id}")),
+        (Method::Put, ["books", id, "images", name]) => file_in(s, format!("image/{id}/{name}"), body),
+        (Method::Get, ["books", id, "images", name]) => file_out(s, &format!("image/{id}/{name}")),
         (Method::Put, ["covers", name]) => file_in(s, format!("cover/{name}"), body),
         (Method::Get, ["covers", name]) => file_out(s, &format!("cover/{name}")),
         (Method::Get, ["inbox", id, "file"]) => file_out(s, &format!("inbox/{id}")),
