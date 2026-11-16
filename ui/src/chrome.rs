@@ -1,5 +1,5 @@
-//! What sits in the Mac window's corners on every screen: the cog and its menu at the top left,
-//! and the round feedback button at the bottom right.
+//! What sits in the Mac window's corners: the cog and its menu at the top left on every screen,
+//! and the round feedback button at the bottom right on every screen but the feedback screen.
 
 use crate::app::{Inkling, OpenKeys, Screen, ShowReading, ShowWriting};
 use crate::FormFactor;
