@@ -72,8 +72,9 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo install --path mcp --locked` installs `inkling-mcp` in `~/.cargo/bin`, and
   `claude mcp add inkling -- ~/.cargo/bin/inkling-mcp --stdio` connects Claude Code to it. Claude
   Desktop takes the same command in `claude_desktop_config.json`.
-- `cd server && bun install && bun run check && bun run test` checks the Worker's types and runs its
-  tests in workerd. Any change under `server/` runs them.
+- `cd server && bun install && bun run lint && bun run check && bun run test` lints the Worker with
+  oxlint and anti-slop, checks its types and runs its tests in workerd. Any change under `server/`
+  runs them.
 - `cd server && bun run deploy` deploys the Worker and applies its migrations. Only Toby runs it.
 - `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
   `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
@@ -96,7 +97,7 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 
 ## Review
 
-- CI runs clippy and `cargo test --workspace` on every PR and on `main`, and the Worker's types and
+- CI runs clippy and `cargo test --workspace` on every PR and on `main`, and the Worker's lint, types and
   tests. Run what you changed before you push.
   Nobody runs them again by hand after that.
 - The final check runs once per PR. It waits for CI to be green on the final head, then runs

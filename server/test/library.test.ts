@@ -5,6 +5,7 @@ const ID = "ab".repeat(32);
 
 async function device() {
   const { token } = await signIn({ scope: "sync offline_access", tick: ["sync"], resource: "http://localhost/v1" });
+
   return token!;
 }
 
@@ -13,13 +14,16 @@ async function upload(token: string) {
   expect((await call(`/v1/books/${ID}/file`, bearer(token, { method: "PUT", body: '{"parsed":true}' }))).status).toBe(200);
   const early = await call(`/v1/books/${ID}`, bearer(token, { method: "PUT", body: JSON.stringify({ title: "The Waves", format: "Epub", chapters: 2, added: 1 }) }));
   expect(early.status).toBe(409); // No chapters yet, so no row.
+
   const chapters = [
     { title: "One", text: "# One\n\nThe sun had not yet risen.\n" },
     { title: "Two", text: "# Two\n\nThe sea was indistinguishable from the sky. Straße.\n" },
   ];
+
   for (const [n, c] of chapters.entries()) {
     expect((await call(`/v1/books/${ID}/chapters/${n}`, bearer(token, { method: "PUT", body: JSON.stringify(c) }))).status).toBe(200);
   }
+
   const row = { title: "The Waves", author: "Virginia Woolf", format: "Epub", chapters: 2, added: 1 };
   expect((await call(`/v1/books/${ID}`, bearer(token, { method: "PUT", body: JSON.stringify(row) }))).status).toBe(200);
 }
@@ -28,8 +32,10 @@ describe("the library and the documents", () => {
   it("syncs a book, keeps the later position, and serves it to agents", async () => {
     const token = await device();
     await upload(token);
+
     const position = (chapter: number, at: number) =>
       call(`/v1/books/${ID}/position`, bearer(token, { method: "PUT", body: JSON.stringify({ chapter, fraction: 0.5, at }) }));
+
     expect(await (await position(1, 200)).json()).toEqual({ ok: true, kept: true });
     expect(await (await position(0, 100)).json()).toEqual({ ok: true, kept: false }); // Older: the later stays.
     expect(await (await call(`/v1/books/${ID}/file`, bearer(token))).text()).toBe('{"parsed":true}');
@@ -57,8 +63,10 @@ describe("the library and the documents", () => {
 
   it("takes a document only on the version it was made on, and serves documents to agents", async () => {
     const token = await device();
-    const put = (id: string, body: Record<string, unknown>) =>
+
+    const put = (id: string, body: { text: string; base: number; saved_at?: number; device?: string; deleted?: boolean }) =>
       call(`/v1/documents/${id}`, bearer(token, { method: "PUT", body: JSON.stringify({ saved_at: 1, device: "mac", ...body }) }));
+
     expect(await (await put("1700000000000", { text: "# On keeping accounts\n\nEvery list.", base: 0 })).json()).toEqual({ version: 1 });
     expect(await (await put("1700000000001", { text: "Letter to the board", saved_at: 5, base: 0 })).json()).toEqual({ version: 1 });
 

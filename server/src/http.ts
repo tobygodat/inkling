@@ -1,5 +1,7 @@
 // Small pieces every route uses.
 
+import { z } from "zod";
+
 /** A request the Worker turns down, with the sentence the device or agent sees. */
 export class Refused extends Error {
   constructor(
@@ -10,13 +12,19 @@ export class Refused extends Error {
   }
 }
 
-export const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
+export const json = <Body>(body: Body, status = 200, headers: HeadersInit = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
-const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const ENTITIES = new Map([
+  ["&", "&amp;"],
+  ["<", "&lt;"],
+  [">", "&gt;"],
+  ['"', "&quot;"],
+  ["'", "&#39;"],
+]);
 
 /** For anything a client or Readwise chose, before it goes into a page. */
-export const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ENTITIES[c]);
+export const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ENTITIES.get(c) ?? c);
 
 /** A plain page for the sign-in flow: the consent form, and what went wrong. */
 export function page(title: string, body: string, status = 200, headers?: Headers): Response {
@@ -34,28 +42,46 @@ export function page(title: string, body: string, status = 200, headers?: Header
 <h1>${escapeHtml(title)}</h1>
 ${body}
 </html>`;
+
   const h = new Headers(headers);
   h.set("content-type", "text/html; charset=utf-8");
   h.set("x-frame-options", "DENY");
   h.set("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
+
   return new Response(html, { status, headers: h });
 }
 
 export const BOOK_ID = /^[0-9a-f]{64}$/;
+
 /** A device's document file name: the time it was made in milliseconds, or `draft`. */
 export const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 /** A picture a book's chapters show, as the device names it in `images/<book id>/`. */
 export const IMAGE_NAME = /^[0-9]+\.[a-z0-9]{1,5}$/;
 export const COVER_NAME = /^[0-9a-f]{64}\.(jpg|png|gif|webp)$/;
+
 /** KV's largest value. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
-export async function readJson<T>(request: Request): Promise<T> {
+/** The request's body checked against `schema`, or null when it isn't JSON at all. */
+export async function parseBody<T>(request: Request, schema: z.ZodType<T>): Promise<z.ZodSafeParseResult<T> | null> {
   try {
-    return (await request.json()) as T;
+    return schema.safeParse(await request.json());
   } catch {
-    throw new Refused(400, "That request wasn’t valid JSON.");
+    return null;
   }
 }
 
-export const isWhole = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+/** The request's body as `schema` describes it, or a 400 with `refusal`. */
+export async function readJson<T>(request: Request, schema: z.ZodType<T>, refusal: string): Promise<T> {
+  const parsed = await parseBody(request, schema);
+
+  if (!parsed) throw new Refused(400, "That request wasn’t valid JSON.");
+
+  if (!parsed.success) throw new Refused(400, refusal);
+
+  return parsed.data;
+}
+
+/** A count or a time in milliseconds. */
+export const whole = z.int().nonnegative();

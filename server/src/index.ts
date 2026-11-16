@@ -27,6 +27,7 @@ function servers(env: Env): Servers {
   if (built?.url === env.PUBLIC_URL) return built;
   const url = env.PUBLIC_URL;
   const resources = { mcp: `${url}/mcp`, sync: `${url}/v1` };
+
   const auth = new OAuthAuthorizationServer<Env>({
     issuer: url,
     resources: [resources.mcp, resources.sync],
@@ -40,7 +41,9 @@ function servers(env: Env): Servers {
     // A grant lasts while it is used, and ends after 60 idle days.
     refreshTokenIdleTTL: 60 * 24 * 60 * 60,
   });
+
   const validate = (env: Env) => (resource: string, token: string) => auth.validateToken<Owner>(resource, token, env);
+
   const errors = (handler: (request: Request, env: Env, ctx: Parameters<typeof serveMcp>[2]) => Promise<Response>) => ({
     fetch: async (request: Request, env: Env, ctx: Parameters<typeof serveMcp>[2]) => {
       try {
@@ -51,6 +54,7 @@ function servers(env: Env): Servers {
       }
     },
   });
+
   built = {
     url,
     auth,
@@ -67,6 +71,7 @@ function servers(env: Env): Servers {
       handler: errors(serveSync),
     }),
   };
+
   return built;
 }
 
@@ -76,20 +81,27 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const s = servers(env);
     const { pathname } = new URL(request.url);
+
     try {
       if (under(pathname, "/mcp") || pathname.startsWith("/.well-known/oauth-protected-resource/mcp")) {
         return await s.mcp.fetch(request, env, ctx);
       }
+
       if (under(pathname, "/v1") || pathname.startsWith("/.well-known/oauth-protected-resource/v1")) {
         return await s.sync.fetch(request, env, ctx);
       }
+
       if (pathname === "/authorize") return await authorize(request, env, s.auth.getOAuthApi(env));
+
       if (pathname === "/google/callback") return await googleCallback(request, env, s.auth.getOAuthApi(env));
+
       if (pathname === "/") return new Response("Inkling's server. Connect to it from the app or an agent at /mcp.\n");
+
       return await s.auth.fetch(request, env, ctx);
     } catch (e) {
       if (e instanceof Refused) return json({ error: e.message }, e.status);
       console.error(e);
+
       return json({ error: "Something went wrong on the server." }, 500);
     }
   },

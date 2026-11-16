@@ -17,25 +17,37 @@ interface Doc {
 /** Readwise's API and its S3 links, answering from `docs`. */
 function fakeReadwise(docs: Doc[]) {
   const real = globalThis.fetch;
+
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const auth = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get("authorization");
+
     if (url.hostname === "readwise.io") {
       if (auth !== `Token ${TOKEN}`) return new Response(null, { status: 401 });
+
       if (url.pathname === "/api/v2/auth/") return new Response(null, { status: 204 });
       const id = url.searchParams.get("id");
       const category = url.searchParams.get("category");
       const after = url.searchParams.get("updatedAfter");
-      const results = docs
-        .filter((d) => (id ? d.id === id : d.category === category && Date.parse(d.updated_at) > Date.parse(after ?? "")))
-        .map((d) => ({ ...d, raw_source_url: url.searchParams.get("withRawSourceUrl") ? `https://s3.example/${d.id}` : undefined }));
+
+      const raw = url.searchParams.get("withRawSourceUrl");
+
+      const results = docs.flatMap((d) =>
+        (id ? d.id === id : d.category === category && Date.parse(d.updated_at) > Date.parse(after ?? ""))
+          ? [{ ...d, raw_source_url: raw ? `https://s3.example/${d.id}` : undefined }]
+          : [],
+      );
+
       return Response.json({ count: results.length, nextPageCursor: null, results });
     }
+
     if (url.hostname === "s3.example") {
       const doc = docs.find((d) => url.pathname === `/${d.id}`)!;
       const bytes = doc.bytes ?? 11;
+
       return new Response(bytes > 1000 ? "x" : "epub-bytes!", { headers: { "content-length": String(bytes) } });
     }
+
     return real(input, init);
   });
 }
@@ -46,10 +58,12 @@ describe("Readwise", () => {
   it("takes uploads into the inbox on the 30-minute poll, and a device settles them", async () => {
     const { token } = await signIn({ scope: "sync", tick: ["sync"], resource: "http://localhost/v1" });
     const later = new Date(Date.now() + 60_000).toISOString();
+
     const docs: Doc[] = [
       { id: "epub1", title: "Mrs Dalloway", category: "epub", saved_at: later, updated_at: later },
       { id: "huge1", title: "An Atlas", category: "pdf", saved_at: later, updated_at: later, bytes: 30 * 1024 * 1024 },
     ];
+
     fakeReadwise(docs);
 
     const wrong = await call("/v1/readwise", bearer(token!, { method: "PUT", body: JSON.stringify({ token: "nope" }) }));

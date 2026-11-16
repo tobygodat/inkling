@@ -15,8 +15,8 @@ describe("Sign in with Google", () => {
   });
 
   it("takes the email only from an unexpired token Google issued for this sign-in", () => {
-    const token = (claims: Record<string, unknown>) => `e30.${base64url(new TextEncoder().encode(JSON.stringify(claims)))}.sig`;
     const good = { iss: "https://accounts.google.com", aud: config.GOOGLE_CLIENT_ID, exp: 2_000, nonce: "n1", email: "Owner@Example.com", email_verified: true };
+    const token = (claims: typeof good) => `e30.${base64url(new TextEncoder().encode(JSON.stringify(claims)))}.sig`;
     expect(checkIdToken(config, token(good), "n1", 1_000)).toBe("owner@example.com");
     expect(checkIdToken(config, token({ ...good, iss: "accounts.google.com" }), "n1", 1_000)).toBe("owner@example.com");
     expect(() => checkIdToken(config, token({ ...good, aud: "other.apps.googleusercontent.com" }), "n1", 1_000)).toThrow();

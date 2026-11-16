@@ -13,23 +13,29 @@ import type { Env, Owner } from "./env";
 import { escapeHtml, page } from "./http";
 
 /** What each scope lets a client do, as the consent form says it. */
-const SCOPES: Record<string, { label: string; ticked: boolean }> = {
+const SCOPES = {
   "library:read": { label: "Read your library: the books, their text and where you are in each", ticked: true },
   "draft:read": { label: "Read your documents", ticked: false },
   sync: { label: "Keep this device’s documents and books in step with your others", ticked: true },
-};
+} satisfies Record<string, { label: string; ticked: boolean }>;
+
+type Scope = keyof typeof SCOPES;
+
 /** Scopes every MCP client is offered, whatever it asked for. */
-const OFFERED_TO_AGENTS = ["library:read", "draft:read"];
+const OFFERED_TO_AGENTS: Scope[] = ["library:read", "draft:read"];
 
 export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/google/callback`;
 
 export async function authorize(request: Request, env: Env, oauth: OAuthHelpers): Promise<Response> {
   try {
     if (request.method === "GET") return await showConsent(request, oauth);
+
     if (request.method === "POST") return await decide(request, env, oauth);
+
     return new Response(null, { status: 405, headers: { allow: "GET, POST" } });
   } catch (error) {
-    return explain(error);
+    if (error instanceof AuthorizationError || error instanceof CimdFetchError) return explain(error);
+    throw error;
   }
 }
 
@@ -37,6 +43,7 @@ async function showConsent(request: Request, oauth: OAuthHelpers): Promise<Respo
   const authRequest = await oauth.parseAuthRequest(request);
   const details = await oauth.describeConsent(authRequest);
   const consent = await oauth.beginConsent(authRequest);
+
   return page(`Allow ${details.clientName} to use Inkling?`, consentForm(details, consent.handle), 200, consent.headers);
 }
 
@@ -44,17 +51,22 @@ function consentForm(details: ConsentDescription, handle: string): string {
   const who = details.clientDomain
     ? `Published by <strong>${escapeHtml(details.clientDomain)}</strong>.`
     : "This app registered itself, so its name isn’t verified.";
+
   const local = details.redirectIsLoopback
     ? "<p><strong>This sends access to an app on this computer.</strong> Go on only if you just started signing in from it.</p>"
     : "";
-  const offered = details.scope.includes("sync") ? ["sync"] : OFFERED_TO_AGENTS;
+
+  const offered: Scope[] = details.scope.includes("sync") ? ["sync"] : OFFERED_TO_AGENTS;
+
   const boxes = offered
     .map((scope) => {
       const { label, ticked } = SCOPES[scope];
       const checked = ticked || (scope !== "draft:read" && details.scope.includes(scope)) ? " checked" : "";
+
       return `<label><input type="checkbox" name="scope" value="${scope}"${checked}> ${escapeHtml(label)}</label>`;
     })
     .join("\n");
+
   return `<p>${who} Access goes to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
 ${local}
 <form method="post">
@@ -68,23 +80,30 @@ ${local}
 async function decide(request: Request, env: Env, oauth: OAuthHelpers): Promise<Response> {
   const form = await request.formData();
   const handle = String(form.get("handle") ?? "");
+
   if (form.get("decision") !== "allow") {
     const denied = await oauth.denyConsent(request, handle);
+
     return new Response(null, { status: 302, headers: denied.headers });
   }
+
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     return page("Sign-in isn’t set up yet", "<p>The server has no Google client. Add it, then try again.</p>", 503);
   }
+
   const ticked = form.getAll("scope").map(String).filter((s) => s in SCOPES);
   const approved = await oauth.approveConsent(request, handle, { scope: ticked });
   // Staying signed in is the client's to ask for, not a box on the form.
   const scope = approved.request.scope;
   const google: GoogleTransaction = { verifier: random(), nonce: random() };
+
   const upstream = await oauth.beginUpstream(
     { ...approved.request, scope: [...new Set([...ticked, ...scope.filter((s) => s === "offline_access")])] },
     { headers: approved.headers, data: google },
   );
+
   upstream.headers.set("location", await authorizeUrl(env, callbackUrl(env), upstream.state, google.verifier, google.nonce));
+
   return new Response(null, { status: 302, headers: upstream.headers });
 }
 
@@ -100,13 +119,17 @@ export async function googleCallback(request: Request, env: Env, oauth: OAuthHel
     const resumed = await oauth.finishUpstream<GoogleTransaction>(request);
     const params = new URL(request.url).searchParams;
     const code = params.get("code");
+
     const refuse = () => {
       resumed.headers.set("location", authorizationErrorRedirect(resumed.request, "access_denied"));
+
       return new Response(null, { status: 302, headers: resumed.headers });
     };
+
     if (params.get("error") || !code) return refuse();
 
     const email = await emailFor(env, code, callbackUrl(env), resumed.data.verifier, resumed.data.nonce);
+
     if (!env.OWNER_EMAIL) {
       return page(
         "One more step",
@@ -116,9 +139,11 @@ secret <code>OWNER_EMAIL</code> to:</p><p><code>${escapeHtml(email)}</code></p><
         resumed.headers,
       );
     }
+
     if (email !== env.OWNER_EMAIL.trim().toLowerCase()) return refuse();
 
     const props: Owner = { sub: email };
+
     const { redirectTo } = await oauth.completeAuthorization({
       request: resumed.request,
       userId: "owner",
@@ -126,19 +151,21 @@ secret <code>OWNER_EMAIL</code> to:</p><p><code>${escapeHtml(email)}</code></p><
       scope: resumed.request.scope,
       props,
     });
+
     resumed.headers.set("location", redirectTo);
+
     return new Response(null, { status: 302, headers: resumed.headers });
   } catch (error) {
-    return explain(error);
+    if (error instanceof AuthorizationError || error instanceof CimdFetchError) return explain(error);
+    throw error;
   }
 }
 
 /** Errors the consent docs say to send back to the client, or to show here. */
-function explain(error: unknown): Response {
-  if (error instanceof AuthorizationError && error.redirectTo) return Response.redirect(error.redirectTo, 302);
-  if (error instanceof AuthorizationError) {
-    return page("That sign-in can’t go on", `<p>${escapeHtml(error.description)}</p><p>Start signing in again from the app.</p>`, 400);
-  }
+function explain(error: AuthorizationError | CimdFetchError): Response {
   if (error instanceof CimdFetchError) return page("That app couldn’t be checked", "<p>Its description couldn’t be fetched.</p>", 400);
-  throw error;
+
+  if (error.redirectTo) return Response.redirect(error.redirectTo, 302);
+
+  return page("That sign-in can’t go on", `<p>${escapeHtml(error.description)}</p><p>Start signing in again from the app.</p>`, 400);
 }
