@@ -481,6 +481,25 @@ impl Inkling {
                                 .test_support(),
                         ),
                     )
+                    // The iPhone's cog opens this sheet, so Account is its last row.
+                    .when(phone, |body| {
+                        body.child(
+                            div()
+                                .id("sheet-account")
+                                .h(self.row(px(32.)))
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .border_t_1()
+                                .border_color(c.hairline)
+                                .pt_2()
+                                .text_size(px(15.))
+                                .child(Icon::Account.draw(px(18.), c.ink))
+                                .child(div().flex_1().child("Account"))
+                                .on_click(cx.listener(|this, _, window, cx| this.open_account(window, cx)))
+                                .test_support(),
+                        )
+                    })
                     .test_support(),
             )
             .test_support()

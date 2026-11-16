@@ -7,7 +7,7 @@ import { authorize, googleCallback } from "./authorize";
 import type { Env, Owner } from "./env";
 import { Refused, json } from "./http";
 import { serveMcp } from "./mcp";
-import { poll, webhook } from "./readwise";
+import { poll } from "./readwise";
 import { serveSync } from "./sync";
 
 /** Everything a client can be granted. `offline_access` lets a client stay signed in. */
@@ -85,7 +85,6 @@ export default {
       }
       if (pathname === "/authorize") return await authorize(request, env, s.auth.getOAuthApi(env));
       if (pathname === "/google/callback") return await googleCallback(request, env, s.auth.getOAuthApi(env));
-      if (pathname === "/readwise/webhook" && request.method === "POST") return await webhook(request, env, ctx);
       if (pathname === "/") return new Response("Inkling's server. Connect to it from the app or an agent at /mcp.\n");
       return await s.auth.fetch(request, env, ctx);
     } catch (e) {

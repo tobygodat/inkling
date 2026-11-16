@@ -4,7 +4,6 @@ import { poll } from "../src/readwise";
 import { bearer, call, signIn } from "./signin";
 
 const TOKEN = "readwise-token";
-const SECRET = "webhook-secret-from-readwise";
 
 interface Doc {
   id: string;
@@ -43,11 +42,8 @@ function fakeReadwise(docs: Doc[]) {
 
 afterEach(() => vi.restoreAllMocks());
 
-const hook = (body: Record<string, unknown>) =>
-  call("/readwise/webhook", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-
 describe("Readwise", () => {
-  it("takes uploads from the webhook into the inbox, and a device settles them", async () => {
+  it("takes uploads into the inbox on the 30-minute poll, and a device settles them", async () => {
     const { token } = await signIn({ scope: "sync", tick: ["sync"], resource: "http://localhost/v1" });
     const later = new Date(Date.now() + 60_000).toISOString();
     const docs: Doc[] = [
@@ -58,17 +54,14 @@ describe("Readwise", () => {
 
     const wrong = await call("/v1/readwise", bearer(token!, { method: "PUT", body: JSON.stringify({ token: "nope" }) }));
     expect(wrong.status).toBe(400);
-    const linked = await call("/v1/readwise", bearer(token!, { method: "PUT", body: JSON.stringify({ token: TOKEN, webhook_secret: SECRET }) }));
-    expect(await linked.json()).toMatchObject({ connected: true, webhook: true, webhook_url: "http://localhost/readwise/webhook" });
+    const linked = await call("/v1/readwise", bearer(token!, { method: "PUT", body: JSON.stringify({ token: TOKEN }) }));
+    expect(await linked.json()).toMatchObject({ connected: true });
     // The token is kept sealed, never as it was typed.
     const stored = await env.DB.prepare("SELECT token FROM readwise").first<{ token: string }>();
     expect(stored!.token).not.toContain(TOKEN);
 
-    expect((await hook({ event_type: "reader.non_feed_document.created", id: "epub1", category: "epub", secret: "guess" })).status).toBe(401);
-    for (const id of ["epub1", "huge1"]) {
-      const doc = docs.find((d) => d.id === id)!;
-      expect((await hook({ event_type: "reader.non_feed_document.created", id, category: doc.category, secret: SECRET })).status).toBe(200);
-    }
+    expect((await call("/readwise/webhook", { method: "POST", body: "{}" })).status).not.toBe(200);
+    await poll(env);
     await vi.waitFor(async () => {
       const library = await (await call("/v1/library", bearer(token!))).json<{ inbox: { readwise_id: string; state: string }[] }>();
       expect(Object.fromEntries(library.inbox.map((i) => [i.readwise_id, i.state]))).toEqual({ epub1: "waiting", huge1: "too_large" });
@@ -80,7 +73,7 @@ describe("Readwise", () => {
     expect((await call("/v1/inbox/epub1/file", bearer(token!))).status).toBe(404);
   });
 
-  it("polls for what the webhook missed, passing over documents saved before the link", async () => {
+  it("passes over documents saved before the link", async () => {
     const before = new Date(Date.now() - 86_400_000).toISOString();
     const after = new Date(Date.now() + 120_000).toISOString();
     fakeReadwise([

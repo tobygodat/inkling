@@ -1,7 +1,8 @@
 # 0004. Integrations: an MCP server, Readwise, and a server of Inkling's own
 
-Status: Accepted, 2026-11-13. Revised the same day for Cloudflare in place of Railway, and on
-2026-11-14 for Sign in with Google in place of Apple.
+Status: Accepted, 2026-11-13. Revised the same day for Cloudflare in place of Railway, on
+2026-11-14 for Sign in with Google in place of Apple, and on 2026-11-15 for phase 3 (TOB-490): see
+"Phase 3, as built" at the end.
 
 ## Context
 
@@ -163,3 +164,31 @@ unticked, so an agent reads the draft only when the writer ticks it.
   writer, when `workers-oauth-provider` does the protocol.
 - **Readwise polled by the app.** No server, but only while the app is open, once per device, and
   the token would be on every device.
+
+## Phase 3, as built (2026-11-15, TOB-490)
+
+The app signs in and syncs on its own, and three parts of the decision above changed with it.
+
+- **Account, not Integrations.** The cog's menu (a last row of the Appearance sheet on iPhone)
+  opens Account: Sign in with Google while signed out; Readwise, Agents and Google once signed in.
+  The Mac signs in through the system browser and a one-time listener on 127.0.0.1, the iPhone
+  through `ASWebAuthenticationSession` coming back on `inkling://callback`. The refresh token is
+  kept in the Keychain only. `inkling-mcp sign-in`, `sync`, `readwise` and `sign-out` are gone;
+  `inkling-mcp --stdio` stays.
+- **Documents, not one draft.** Since TOB-484 the writer has many documents, so "the later save
+  wins" would lose text whenever two devices edit before syncing. The server keeps each document
+  with a version it counts up on every write it takes, and takes a write only on the version it was
+  made on. A device keeps, per document, the version and the hash of the text it last agreed on.
+  Changed on both sides, the other device's copy is kept as a second document with its own date
+  and this device's text keeps the id, so no saved text is replaced unseen; a delete is a write on
+  a version too, so an edit elsewhere wins over it. Versions are no longer kept on the server: the
+  conflict copy does that job. `read_draft` away from the Mac gives the document saved last, beside
+  `list_documents` and `read_document`.
+- **Readwise by the poll alone.** Adding a webhook in Readwise's settings was one more step than
+  the writer should take, so Connect asks only for the access token and the 30-minute Cron Trigger
+  is the one way uploads arrive. The device that syncs next parses each upload into its library.
+- **When it runs.** At launch, when the app comes to the front, 3 seconds after a change settles,
+  and every 5 minutes while open. A failed sync shows as an ink dot on the cog and a "Sync stopped"
+  row with Try again, until a sync succeeds; an ended sign-in signs the device out.
+- **Proof without the server.** Every headless run talks to `inkling_sync::Fake`, an in-memory
+  server with the Worker's rules and no Google, kept in `fake-server.json` in the data folder.

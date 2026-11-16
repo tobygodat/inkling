@@ -208,8 +208,9 @@ impl Inkling {
             Ok(library) => library.add(&prepared).map(|_| ()).map_err(|e| format!("The book couldn't be added ({e}).")),
             Err(e) => Err(e.clone()),
         });
-        if let Err(why) = added {
-            self.books.errors.push(why);
+        match added {
+            Ok(()) => self.sync_soon(cx),
+            Err(why) => self.books.errors.push(why),
         }
         cx.notify();
     }

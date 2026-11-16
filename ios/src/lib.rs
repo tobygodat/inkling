@@ -7,7 +7,7 @@ extern crate gpui_mobile;
 use futures_channel::oneshot;
 use gpui_kit::*;
 use inkling_core::{Build, Paths};
-use inkling_ui::{BookHost, FormFactor, Ground, Inkling};
+use inkling_ui::{AccountHost, BookHost, FormFactor, Ground, Inkling, WayBack};
 use std::ffi::{CStr, c_char, c_void};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -33,6 +33,7 @@ pub unsafe extern "C" fn inkling_ios_register(data_dir: *const c_char) {
             let app = cx.new(|cx| {
                 let mut inkling = Inkling::new(FormFactor::Phone, Paths { dir }, keys, Build::running(), window, cx);
                 inkling.set_book_host(book_host(), cx);
+                inkling.set_account_host(account_host());
                 inkling
             });
             // The safe areas and the status bar follow the look on screen.
@@ -59,6 +60,8 @@ unsafe extern "C" {
     /// the remembered folders, which stay open until the next call.
     fn inkling_host_book_folders() -> *mut c_char;
     fn free(ptr: *mut c_void);
+    /// Shows the system sign-in sheet at `url` and answers `inkling_ios_signed_in(token, ..)`.
+    fn inkling_host_sign_in(token: u64, url: *const c_char);
     /// Colours the controller's view behind the safe areas `0xRRGGBB`, with light status-bar text
     /// when `dark`.
     fn inkling_host_set_ground(rgb: u32, dark: bool);
@@ -110,6 +113,38 @@ pub unsafe extern "C" fn inkling_ios_picked(token: u64, paths: *const c_char) {
     if let Some(at) = picking.iter().position(|(t, _)| *t == token) {
         let (_, tx) = picking.remove(at);
         let _ = tx.send(chosen);
+    }
+}
+
+/// Sign-in sheets still open, by the token their answer carries.
+static SIGNING_IN: Mutex<Vec<(u64, oneshot::Sender<Option<String>>)>> = Mutex::new(Vec::new());
+
+/// Account's host on iPhone: the system sign-in sheet, coming back on `inkling://callback`.
+fn account_host() -> AccountHost {
+    AccountHost {
+        way_back: WayBack::Scheme("inkling://callback"),
+        open: Box::new(|url, cx| {
+            let (tx, rx) = oneshot::channel();
+            let token = NEXT_PICK.fetch_add(1, Ordering::Relaxed);
+            SIGNING_IN.lock().unwrap_or_else(|e| e.into_inner()).push((token, tx));
+            let url = std::ffi::CString::new(url).unwrap_or_default();
+            unsafe { inkling_host_sign_in(token, url.as_ptr()) };
+            cx.spawn(async move |_| rx.await.ok().flatten())
+        }),
+    }
+}
+
+/// The host's answer to a sign-in sheet: the address it came back to, or null when cancelled.
+///
+/// # Safety
+/// `url` is null or a NUL-terminated UTF-8 string that outlives the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inkling_ios_signed_in(token: u64, url: *const c_char) {
+    let came = (!url.is_null()).then(|| unsafe { CStr::from_ptr(url) }.to_string_lossy().into_owned());
+    let mut open = SIGNING_IN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(at) = open.iter().position(|(t, _)| *t == token) {
+        let (_, tx) = open.remove(at);
+        let _ = tx.send(came);
     }
 }
 

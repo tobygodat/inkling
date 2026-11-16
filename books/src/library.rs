@@ -176,6 +176,29 @@ impl Library {
         self.save()
     }
 
+    /// Records a book another device added, whose parsed file is already stored here. A book
+    /// already in the library is left as it is.
+    pub fn record(&mut self, entry: Entry) -> io::Result<()> {
+        if self.entry(&entry.id).is_some() {
+            return Ok(());
+        }
+        let at = self.entries.iter().position(|e| e.added <= entry.added).unwrap_or(self.entries.len());
+        self.entries.insert(at, entry);
+        self.save()
+    }
+
+    /// Takes a place read on another device, if it was read there after here. Returns whether it did.
+    pub fn take_position(&mut self, id: &BookId, position: Position, at: u64) -> io::Result<bool> {
+        let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(false) };
+        if at <= entry.position_at {
+            return Ok(false);
+        }
+        entry.position = position;
+        entry.position_at = at;
+        self.save()?;
+        Ok(true)
+    }
+
     fn save(&self) -> io::Result<()> {
         let index = Index { books: self.entries.clone() };
         write_atomic(&self.dir.join("library.json"), &serde_json::to_vec_pretty(&index).map_err(io::Error::other)?)
@@ -319,7 +342,7 @@ fn store(dir: &Path, book: &Book) -> io::Result<()> {
     write_atomic(&book_path(dir, &book.id), &serde_json::to_vec(book).map_err(io::Error::other)?)
 }
 
-pub(crate) fn book_path(dir: &Path, id: &BookId) -> PathBuf {
+pub fn book_path(dir: &Path, id: &BookId) -> PathBuf {
     dir.join("books").join(format!("{}.json", id.0))
 }
 

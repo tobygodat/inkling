@@ -42,6 +42,10 @@ ${body}
 }
 
 export const BOOK_ID = /^[0-9a-f]{64}$/;
+/** A device's document file name: the time it was made in milliseconds, or `draft`. */
+export const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** A picture a book's chapters show, as the device names it in `images/<book id>/`. */
+export const IMAGE_NAME = /^[0-9]+\.[a-z0-9]{1,5}$/;
 export const COVER_NAME = /^[0-9a-f]{64}\.(jpg|png|gif|webp)$/;
 /** KV's largest value. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;

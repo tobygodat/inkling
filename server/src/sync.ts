@@ -1,14 +1,15 @@
 // What the Mac and iPhone apps call with a token for the `/v1` resource and the `sync` scope.
 // Books follow the reader's model (tobygodat/ios-reader, crates/reader-core/src/sync.rs): a book's id is the hash
 // of its file and books are only added; a position carries when it changed, and the later wins.
-// Positions' `at` and drafts' `saved_at` are milliseconds since the Unix epoch.
+// A document carries a version the server counts up on every write it takes, and a write names the
+// version it was made on (`base`): a write on an older base is refused with what the server has, so
+// no save replaces one it hasn't seen. The device keeps both copies then (sync/src/documents.rs).
+// Positions' `at` and documents' `saved_at` are milliseconds since the Unix epoch.
 
 import { insufficientScope, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
 import type { Env, Owner } from "./env";
-import { BOOK_ID, COVER_NAME, MAX_FILE_BYTES, Refused, isWhole, json, readJson } from "./http";
+import { BOOK_ID, COVER_NAME, DOCUMENT_ID, IMAGE_NAME, MAX_FILE_BYTES, Refused, isWhole, json, readJson } from "./http";
 import { connectReadwise, disconnectReadwise, readwiseStatus } from "./readwise";
-
-const KEPT_DRAFTS = 20;
 
 export async function serveSync(request: Request, env: Env, ctx: OAuthResourceContext<Owner>): Promise<Response> {
   if (!ctx.auth.scope.includes("sync")) return insufficientScope(ctx.auth, ["sync"]);
@@ -26,6 +27,12 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
     if (method === "PUT") return putFile(request, env, key);
     if (method === "GET") return getFile(env, key);
   }
+  if ((m = at(/^\/v1\/books\/([^/]+)\/images\/([^/]+)$/))) {
+    if (!IMAGE_NAME.test(m[2])) throw new Refused(400, "That isn’t an image name.");
+    const key = `image/${bookId(m[1])}/${m[2]}`;
+    if (method === "PUT") return putFile(request, env, key);
+    if (method === "GET") return getFile(env, key);
+  }
   if ((m = at(/^\/v1\/books\/([^/]+)\/chapters\/(\d+)$/)) && method === "PUT") {
     return putChapter(request, env, bookId(m[1]), Number(m[2]));
   }
@@ -37,9 +44,11 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
     if (method === "PUT") return putFile(request, env, `cover/${m[1]}`);
     if (method === "GET") return getFile(env, `cover/${m[1]}`);
   }
-  if (pathname === "/v1/draft") {
-    if (method === "GET") return getDraft(env);
-    if (method === "PUT") return putDraft(request, env);
+  if (pathname === "/v1/documents" && method === "GET") return listDocuments(env);
+  if ((m = at(/^\/v1\/documents\/([^/]+)$/))) {
+    if (!DOCUMENT_ID.test(m[1])) throw new Refused(400, "That isn’t a document id.");
+    if (method === "GET") return getDocument(env, m[1]);
+    if (method === "PUT") return putDocument(request, env, m[1]);
   }
   if ((m = at(/^\/v1\/inbox\/([^/]+)\/file$/)) && method === "GET") return getFile(env, `inbox/${m[1]}`);
   if ((m = at(/^\/v1\/inbox\/([^/]+)$/)) && method === "POST") return settleInbox(request, env, m[1]);
@@ -57,12 +66,11 @@ function bookId(id: string): string {
 }
 
 async function library(env: Env): Promise<Response> {
-  const [books, draft, inbox] = await env.DB.batch([
+  const [books, inbox] = await env.DB.batch([
     env.DB.prepare("SELECT id, title, author, format, chapters, cover, added, chapter, fraction, position_at FROM books ORDER BY added DESC"),
-    env.DB.prepare("SELECT version, saved_at FROM drafts ORDER BY version DESC LIMIT 1"),
     env.DB.prepare("SELECT readwise_id, title, author, category, state, bytes, error, book_id, received_at FROM inbox ORDER BY received_at DESC"),
   ]);
-  return json({ books: books.results, draft: draft.results[0] ?? null, inbox: inbox.results });
+  return json({ books: books.results, inbox: inbox.results });
 }
 
 /** A file kept whole in KV: a parsed book, a cover, or a Readwise original. */
@@ -135,27 +143,56 @@ async function putPosition(request: Request, env: Env, id: string): Promise<Resp
   return json({ ok: true, kept: meta.changes === 1 });
 }
 
-async function getDraft(env: Env): Promise<Response> {
-  const draft = await env.DB.prepare("SELECT version, text, saved_at FROM drafts ORDER BY version DESC LIMIT 1").first();
-  return json(draft ?? { version: 0, text: "", saved_at: 0 });
+interface DocumentRow {
+  id: string;
+  text: string;
+  saved_at: number;
+  device: string;
+  version: number;
+  deleted: number;
 }
 
-/** The later save wins. Older versions are kept, up to 20, so a lost edit can be got back. */
-async function putDraft(request: Request, env: Env): Promise<Response> {
-  const d = await readJson<{ text?: unknown; saved_at?: unknown }>(request);
-  if (typeof d.text !== "string" || !isWhole(d.saved_at)) throw new Refused(400, "A draft needs its text and when it was saved.");
-  const newest = await env.DB.prepare("SELECT version, saved_at FROM drafts ORDER BY version DESC LIMIT 1").first<{
-    version: number;
-    saved_at: number;
-  }>();
-  if (newest && newest.saved_at >= d.saved_at) return json({ version: newest.version, kept: false });
-  const [inserted] = await env.DB.batch([
-    env.DB.prepare("INSERT INTO drafts (text, saved_at) VALUES (?, ?) RETURNING version").bind(d.text, d.saved_at),
-    env.DB.prepare(
-      `DELETE FROM drafts WHERE version NOT IN (SELECT version FROM drafts ORDER BY version DESC LIMIT ${KEPT_DRAFTS})`,
-    ),
-  ]);
-  return json({ version: (inserted.results[0] as { version: number }).version, kept: true });
+const shown = (d: DocumentRow) => ({ ...d, deleted: d.deleted === 1 });
+
+/** Every document, deleted ones too, without their text. */
+async function listDocuments(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare("SELECT id, version, saved_at, device, deleted FROM documents ORDER BY id").all<DocumentRow>();
+  return json(results.map(shown));
+}
+
+async function getDocument(env: Env, id: string): Promise<Response> {
+  const doc = await env.DB.prepare("SELECT id, text, saved_at, device, version, deleted FROM documents WHERE id = ?").bind(id).first<DocumentRow>();
+  return doc ? json(shown(doc)) : json({ error: "Not found." }, 404);
+}
+
+/**
+ * Takes a write made on `base`, the version the device last had: 0 for a document the server
+ * hasn't seen. Any other base is refused with 409 and what the server has. A delete keeps the
+ * last text.
+ */
+async function putDocument(request: Request, env: Env, id: string): Promise<Response> {
+  const d = await readJson<{ text?: unknown; saved_at?: unknown; device?: unknown; base?: unknown; deleted?: unknown }>(request);
+  if (typeof d.text !== "string" || !isWhole(d.saved_at) || typeof d.device !== "string" || !isWhole(d.base)) {
+    throw new Refused(400, "A document needs its text, when it was saved, the device and the version it was made on.");
+  }
+  const deleted = d.deleted === true ? 1 : 0;
+  // One statement, so two devices writing at once can't both take the same base.
+  const written =
+    d.base === 0
+      ? await env.DB.prepare(
+          "INSERT INTO documents (id, text, saved_at, device, version, deleted) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(id) DO NOTHING RETURNING version",
+        )
+          .bind(id, d.text, d.saved_at, d.device, deleted)
+          .first<{ version: number }>()
+      : await env.DB.prepare(
+          `UPDATE documents SET text = CASE WHEN ? = 1 THEN text ELSE ? END, saved_at = ?, device = ?, version = version + 1, deleted = ?
+           WHERE id = ? AND version = ? RETURNING version`,
+        )
+          .bind(deleted, d.text, d.saved_at, d.device, deleted, id, d.base)
+          .first<{ version: number }>();
+  if (written) return json({ version: written.version });
+  const there = await env.DB.prepare("SELECT id, text, saved_at, device, version, deleted FROM documents WHERE id = ?").bind(id).first<DocumentRow>();
+  return json(there ? shown(there) : { id, text: "", saved_at: 0, device: "", version: 0, deleted: false }, 409);
 }
 
 /** A device says how importing an inbox item went. Its file is no longer needed either way. */

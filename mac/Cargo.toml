@@ -14,5 +14,6 @@ snap = ["gpui-kit/test-support", "dep:serde_json"]
 gpui-kit = { workspace = true, features = ["gpui-fast"] }
 inkling-books.workspace = true
 inkling-core.workspace = true
+inkling-sync.workspace = true
 inkling-ui.workspace = true
 serde_json = { version = "1", optional = true }

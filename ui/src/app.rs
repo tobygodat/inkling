@@ -1,4 +1,5 @@
 pub(crate) use crate::chrome::Menu;
+use crate::account::Account;
 use crate::appearance::AppearancePanel;
 use crate::documents::{DocList, Docs};
 use crate::feedback::FeedbackScreen;
@@ -87,6 +88,8 @@ pub(crate) enum Screen {
     Reading(Reading),
     /// The writer's documents.
     Documents(DocList),
+    /// Signing in, and what sync does.
+    Account,
 }
 
 impl Screen {
@@ -158,6 +161,10 @@ pub struct Inkling {
     /// Counts scrolls and chapter turns, so only the last one's timer saves the reading place.
     pub(crate) saves: u64,
     pub(crate) focus: FocusHandle,
+    /// The sign-in and sync.
+    pub(crate) account: Account,
+    /// This view's window, for work that comes back from the background needing it.
+    pub(crate) window: AnyWindowHandle,
     _subs: Vec<Subscription>,
 }
 
@@ -212,7 +219,8 @@ impl Inkling {
             }
         });
         let books = Books::open(paths.dir.join("library"));
-        let inkling = Inkling {
+        let account = Account::new(&paths, form, keys.as_ref());
+        let mut inkling = Inkling {
             form,
             paths,
             version: Version { number: 1, source: settings.provider },
@@ -243,8 +251,12 @@ impl Inkling {
             faces,
             books,
             saves: 0,
+            account,
+            window: window.window_handle(),
             _subs: vec![sent, intercept, feedback_edited],
         };
+        let syncing = inkling.start_syncing(window, cx);
+        inkling._subs.push(syncing);
         inkling.theme().apply_to_kit(cx);
         inkling
     }
@@ -329,6 +341,7 @@ impl Inkling {
                     Ok(()) => Saved::Saved,
                     Err(e) => Saved::Failed(e.to_string()),
                 };
+                this.sync_soon(cx);
                 cx.notify();
             });
         });
@@ -387,7 +400,7 @@ impl Inkling {
             self.close_finding(cx);
         } else if matches!(self.screen, Screen::Reading(_)) {
             self.close_book(cx);
-        } else if matches!(self.screen, Screen::Library(None) | Screen::Documents(_)) {
+        } else if matches!(self.screen, Screen::Library(None) | Screen::Documents(_) | Screen::Account) {
             self.back_to_writing(window, cx);
         } else if self.wordings_open.is_some() {
             self.wordings_open = None;
@@ -632,7 +645,7 @@ impl Inkling {
     pub fn view(&self) -> View {
         match self.screen {
             Screen::Library(..) | Screen::Reading(_) => View::Reading,
-            Screen::Page | Screen::Keys(_) | Screen::Feedback(_) | Screen::Documents(_) => View::Writing,
+            Screen::Page | Screen::Keys(_) | Screen::Feedback(_) | Screen::Documents(_) | Screen::Account => View::Writing,
         }
     }
 
@@ -867,6 +880,7 @@ impl Render for Inkling {
             Screen::Reading(reading) => self.render_reading(reading, window, cx).into_any_element(),
             Screen::Feedback(_) => self.render_feedback(window, cx).into_any_element(),
             Screen::Documents(list) => self.render_documents(list, cx).into_any_element(),
+            Screen::Account => self.render_account(cx).into_any_element(),
             Screen::Page if self.form == FormFactor::Phone => self.render_phone(window, cx),
             Screen::Page => self.render_mac_page(window, cx),
         };

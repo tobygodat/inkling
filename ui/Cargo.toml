@@ -10,6 +10,7 @@ inkling-books.workspace = true
 inkling-core.workspace = true
 # Already in the tree through GPUI; reads an image's size from its header.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+inkling-sync.workspace = true
 ratex-layout = "=0.1.15"
 ratex-parser = "=0.1.15"
 ratex-svg = { version = "=0.1.15", features = ["embed-fonts"] }

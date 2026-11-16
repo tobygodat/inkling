@@ -82,6 +82,10 @@ fn main() {
         return snap::books::run(std::path::Path::new(&dir));
     }
     #[cfg(feature = "snap")]
+    if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-account").nth(1) {
+        return snap::account::run(std::path::Path::new(&dir));
+    }
+    #[cfg(feature = "snap")]
     if let Some(dir) = std::env::args().skip_while(|a| a != "--snap-a11y").nth(1) {
         return snap::a11y::run(std::path::Path::new(&dir));
     }

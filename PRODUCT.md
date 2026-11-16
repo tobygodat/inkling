@@ -11,10 +11,13 @@ own or the same one as the page, scrolled or in pages, with the place in each bo
 ## Positioning
 Not a chat window beside a document and not a subscription. The AI is bring-your-own-key: Claude,
 Gemini or ChatGPT. No account is needed. Keys live in the Keychain and writing goes only to the
-provider the writer picked. Signing in to Inkling's own server will be optional (ADR 0004): it turns
-on sync, Readwise and agents away from the Mac, and signed out nothing goes to it. An agent the
-writer connects on the Mac reads the library and the draft but never changes them. Books stay on the device: Find books only looks through folders
-on it, and nothing about a book is sent anywhere.
+provider the writer picked. Signing in to Inkling's own server with Google is optional (ADR 0004):
+it turns on sync, Readwise and agents away from the Mac. Signed in, each device sends Inkling's
+server, a Cloudflare Worker that only the writer's Google account can use, its documents, its books
+(their text, the parsed book, its pictures and the cover, never the original file) and where it is in each one,
+and takes back what the other devices sent. Signed out, nothing goes to it. AI keys and the
+feedback link never leave the Keychain. An agent the writer connects reads the library and the
+documents but never changes them. Find books only looks through folders on the device.
 
 ## Principles
 - The page comes first. Nothing shows that the writer didn't ask for.

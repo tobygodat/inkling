@@ -8,7 +8,7 @@ export interface Env extends GoogleConfig {
   FILES: KVNamespace;
   /** The Worker's address and the OAuth issuer, with no trailing slash. */
   PUBLIC_URL: string;
-  /** 32 random bytes in base64: the key for the Readwise token and webhook secret. */
+  /** 32 random bytes in base64: the key for the Readwise token. */
   SECRET_KEY: string;
   /** The one Google account that may sign in, by its email. Unset, sign-in only shows the email. */
   OWNER_EMAIL?: string;
