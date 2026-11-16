@@ -194,7 +194,8 @@ library has no Add and no Find books.
   are there, else at its words nearest to it after a new parse, else not at all, and it stays in
   the list. Quote writes the passage with its italics as a block quote with the author and title
   (`inkling_books::highlights::quote`) and puts it in the open document's page with
-  `inkling_core::place_block`, after the top-level block that holds the caret, or at the end while the writer hasn't put a
+  `inkling_core::place_block`, after the top-level block that holds the caret (closing a code
+  fence left open there), or at the end while the writer hasn't put a
   caret in it since it opened, as one undo step.
 - **Scroll and Paged.** The chapter column reports each child's bounds after layout
   (`on_children_prepainted`), with the line height of the blocks a page may break inside. In
