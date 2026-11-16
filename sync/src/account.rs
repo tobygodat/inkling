@@ -175,7 +175,7 @@ impl Loopback {
         let deadline = Instant::now() + limit;
         loop {
             if cancelled.load(Ordering::Relaxed) || Instant::now() > deadline {
-                return Err(Error::Local("The sign-in wasn't finished.".into()));
+                return Err(Error::Unfinished);
             }
             let stream = match self.listener.accept() {
                 Ok((stream, _)) => stream,

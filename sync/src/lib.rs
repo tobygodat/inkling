@@ -31,6 +31,8 @@ pub enum Error {
     Offline,
     /// Something on this device.
     Local(String),
+    /// The writer closed the sign-in, or it was never finished.
+    Unfinished,
 }
 
 impl fmt::Display for Error {
@@ -40,6 +42,7 @@ impl fmt::Display for Error {
             Error::Refused { message, .. } => write!(f, "{message}"),
             Error::Offline => write!(f, "Inkling's server couldn't be reached."),
             Error::Local(why) => write!(f, "{why}"),
+            Error::Unfinished => write!(f, "The sign-in wasn't finished."),
         }
     }
 }

@@ -666,7 +666,7 @@ shot
 
 begin account-signed-in
 tap sign-in 3
-for _ in $(seq 20); do grep -q "every list I keep\|Every list I keep" "$(fake_server)" && break; sleep 0.5; done
+for _ in $(seq 20); do grep -q "Every list I keep" "$(fake_server)" && break; sleep 0.5; done
 grep -q "Every list I keep" "$(fake_server)" || fail "signing in did not send the document up"
 grep -rq "Written on the Mac." "$(data_dir)/documents" || fail "the Mac's document did not come down"
 tap copy-address

@@ -313,13 +313,13 @@ impl Inkling {
             };
             let signed = async {
                 let (begun, loopback) = begin.await?;
-                let shown = this.update(cx, |this, cx| (this.account.host.open)(begun.url.clone(), cx)).map_err(|_| Error::Local(String::new()))?;
+                let shown = this.update(cx, |this, cx| (this.account.host.open)(begun.url.clone(), cx)).map_err(|_| Error::Unfinished)?;
                 let came_back = match loopback {
                     Some(loopback) => {
                         let stop = stop.clone();
                         cx.background_spawn(async move { loopback.wait(&stop, SIGN_IN_LIMIT) }).await?
                     }
-                    None => shown.await.ok_or_else(|| Error::Local(String::new()))?,
+                    None => shown.await.ok_or(Error::Unfinished)?,
                 };
                 let transport = transport.clone();
                 cx.background_spawn(async move { begun.finish(transport.as_ref(), &came_back) }).await
@@ -340,7 +340,7 @@ impl Inkling {
                 self.sync_now(cx);
             }
             // Cancelled, or the browser never came back: nothing to say.
-            Err(Error::Local(why)) if why.is_empty() || why.starts_with("The sign-in wasn't finished") => {}
+            Err(Error::Unfinished) => {}
             Err(e) => self.account.problem = Some(e.to_string().into()),
         }
         cx.notify();
