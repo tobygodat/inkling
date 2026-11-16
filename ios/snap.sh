@@ -1,7 +1,10 @@
 #!/bin/bash
-# Drives Inkling's main flow on the iPhone Simulator and saves each step to
-# docs/screenshots/ios/snap/. Exits non-zero when a step fails.
-# Usage: snap.sh <agent-device>, or AGENT_DEVICE=<agent-device> snap.sh
+# Drives Inkling's main flow on the iPhone Simulator and saves each step's screenshot to
+# target/snap/ios/. Exits non-zero when a step fails.
+# Usage: snap.sh <agent-device> [step…], or AGENT_DEVICE=<agent-device> snap.sh
+# A passing run copies into docs/screenshots/ios/snap/ the steps that have no screenshot there yet
+# and the steps named after <agent-device>: name the ones whose screen your change alters. Every
+# other committed screenshot stays as it is, so two PRs only meet on a screen both changed.
 # Get <agent-device> from the T3 device tools (device_open). It reinstalls the app, so every
 # run starts from an empty page, with the fake model and keys in memory.
 set -euo pipefail
@@ -12,7 +15,10 @@ ad="${1:-${AGENT_DEVICE:-}}"
 export INKLING_AGENT_DEVICE="$ad"
 ad="$(pwd)/device.sh"
 app=com.tobygodat.inkling
-shots="$(cd .. && pwd)/docs/screenshots/ios/snap"
+shots="$(cd .. && pwd)/target/snap/ios"
+kept="$(cd .. && pwd)/docs/screenshots/ios/snap"
+[ $# -gt 0 ] && shift
+changed=" $* "
 
 # Where to tap, in points on the iPhone 18 Pro (402x874). A layout change is one edit here.
 # Taps on the review's text depend on the line below; change both together.
@@ -101,14 +107,14 @@ point() {
   esac
 }
 
-step=0
+steps=""
 name=setup
-fail() { echo "FAIL step $step ($name): $*" >&2; exit 1; }
+fail() { echo "FAIL $name: $*" >&2; exit 1; }
 
-# Starts the next step. Its screenshot is NN-<name>.png.
+# Starts the next step. Its screenshot is <name>.png.
 begin() {
-  step=$((step + 1))
   name="$1"
+  steps="$steps $name"
 }
 
 # Taps `$1` and checks Inkling is still the foreground app.
@@ -120,8 +126,8 @@ tap() {
 }
 
 shot() {
-  "$ad" screenshot "$shots/$(printf %02d "$step")-$name.png" --pixel-density 3 >/dev/null
-  echo "ok $step $name"
+  "$ad" screenshot "$shots/$name.png" --pixel-density 3 >/dev/null
+  echo "ok $name"
 }
 
 # Scrolls the key screen to its link section, or back to the top.
@@ -402,7 +408,7 @@ begin live-maths
 open_draft "$maths"
 [ "$(draft)" = "$maths" ] || fail "opening the draft changed it"
 shot
-[ "$(sips -g pixelWidth "$shots/$(printf %02d "$step")-$name.png" | awk '/pixelWidth/ {print $2}')" = 1206 ] || fail "the screenshot is not at 3x"
+[ "$(sips -g pixelWidth "$shots/$name.png" | awk '/pixelWidth/ {print $2}')" = 1206 ] || fail "the screenshot is not at 3x"
 
 begin live-review
 open_draft "The light held and i dont know wich way teh river went"
@@ -729,7 +735,7 @@ expect_draft "$quoted"
 [ "$(book_state Walden | cut -d' ' -f1)" = 0 ] || fail "quoting left the book: $(book_state Walden)"
 shot
 tap show-writing 1.5
-"$ad" screenshot "$shots/$(printf %02d "$step")-$name-page.png" --pixel-density 3 >/dev/null
+"$ad" screenshot "$shots/$name-page.png" --pixel-density 3 >/dev/null
 
 # Find in a book, across its chapters, and in the library; then a book deleted and brought back.
 begin find-book
@@ -844,4 +850,13 @@ tap try-again 3
 grep -rq "Written again on the Mac." "$(data_dir)/documents" || fail "Try again did not sync"
 shot
 
-echo "all $step steps passed; screenshots in $shots"
+for word in $changed; do
+  case " $steps " in *" $word "*) ;; *) echo "no step named $word" >&2; exit 2 ;; esac
+done
+mkdir -p "$kept"
+for file in "$shots"/*.png; do
+  shot_name="$(basename "$file" .png)"
+  case "$changed" in *" $shot_name "* | *" ${shot_name%-page} "*) cp "$file" "$kept/" ;; esac
+  [ -e "$kept/$shot_name.png" ] || cp "$file" "$kept/"
+done
+echo "all $(echo "$steps" | wc -w | tr -d ' ') steps passed; screenshots in $shots"
