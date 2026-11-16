@@ -7,6 +7,7 @@
 //!   again without the reader adding the book again.
 //! - `images/<id>/<n>.<ext>`: the images the chapters show.
 //! - `covers/<id>.<ext>`: the cover image an EPUB names.
+//! - `highlights/<id>.json`: the passages the reader highlighted (`crate::highlights`).
 //!
 //! Every write goes to a temporary file first and is renamed into place, the parsed book last.
 
@@ -18,6 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::book::{Book, BookId, Format, PARSER, Position};
+use crate::highlights::{self, Highlight};
 use crate::import::{self, ImportError};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -197,6 +199,15 @@ impl Library {
         entry.position_at = at;
         self.save()?;
         Ok(true)
+    }
+
+    /// A book's highlights, in reading order.
+    pub fn highlights(&self, id: &BookId) -> Vec<Highlight> {
+        highlights::load(&self.dir, id)
+    }
+
+    pub fn set_highlights(&self, id: &BookId, all: &[Highlight]) -> io::Result<()> {
+        highlights::save(&self.dir, id, all)
     }
 
     fn save(&self) -> io::Result<()> {

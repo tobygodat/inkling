@@ -134,6 +134,25 @@ pub fn title(text: &str) -> &str {
     line.trim_start_matches('#').trim()
 }
 
+/// Where a block of Markdown goes into `text`, and the text to put there: after the line that
+/// holds the caret `at`, or at the end with no caret, set apart by a blank line on each side.
+/// The caret goes after the inserted text.
+pub fn place_block(text: &str, at: Option<usize>, block: &str) -> (usize, String) {
+    let at = match at {
+        Some(at) if at <= text.len() && text.is_char_boundary(at) => text[at..].find('\n').map_or(text.len(), |n| at + n),
+        _ => text.len(),
+    };
+    let (before, after) = text.split_at(at);
+    let lead = match before.len() - before.trim_end_matches('\n').len() {
+        _ if before.trim().is_empty() => "",
+        0 => "\n\n",
+        1 => "\n",
+        _ => "",
+    };
+    let trail = &"\n\n"[(after.len() - after.trim_start_matches('\n').len()).min(2)..];
+    (at, format!("{lead}{block}{trail}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +180,19 @@ mod tests {
         assert_eq!(title("The ferry"), "The ferry");
         assert_eq!(title("#\n\nBody"), "");
         assert_eq!(title(" \n "), "");
+    }
+
+    #[test]
+    fn a_block_goes_after_the_caret_s_line_set_apart_by_blank_lines() {
+        let put = |text: &str, at: Option<usize>| {
+            let (i, block) = place_block(text, at, "> Q");
+            format!("{}{block}|{}", &text[..i], &text[i..])
+        };
+        assert_eq!(put("One.\n\nTwo.", None), "One.\n\nTwo.\n\n> Q\n\n|");
+        assert_eq!(put("One.\n\nTwo.", Some(1)), "One.\n\n> Q|\n\nTwo.");
+        assert_eq!(put("One.\n\nTwo.\n", Some(5)), "One.\n\n> Q\n|\nTwo.\n");
+        assert_eq!(put("", Some(0)), "> Q\n\n|");
+        assert_eq!(put("One.\n", None), "One.\n\n> Q\n\n|");
     }
 
     #[test]

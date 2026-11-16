@@ -479,6 +479,8 @@ pub struct Tokens {
     pub removed_line: Rgb,
     pub link: Rgb,
     pub selection: Rgb,
+    /// A highlighted passage in a book.
+    pub highlight: Rgb,
     pub segment: Rgb,
 }
 
@@ -497,6 +499,7 @@ pub const LIGHT: Tokens = Tokens {
     removed_line: Rgb::new(0xCF222E),
     link: Rgb::new(0x0969DA),
     selection: Rgb::new(0xB6D4FE),
+    highlight: Rgb::new(0xDCE9FD),
     segment: Rgb::new(0xEEEFEB),
 };
 
@@ -515,6 +518,7 @@ pub const DARK: Tokens = Tokens {
     removed_line: Rgb::new(0xF85149),
     link: Rgb::new(0x58A6FF),
     selection: Rgb::new(0x264F78),
+    highlight: Rgb::new(0x1F3550),
     segment: Rgb::new(0x25282D),
 };
 
@@ -543,6 +547,7 @@ impl Tokens {
             hairline: p.text.mix(p.background, 0.87),
             link: p.accent,
             selection: p.accent.mix(p.background, 0.7),
+            highlight: p.accent.mix(p.background, 0.84),
             segment,
             ..changes
         }

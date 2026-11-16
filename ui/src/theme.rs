@@ -28,6 +28,7 @@ pub(crate) struct Colors {
     pub removed_line: Rgba,
     pub link: Rgba,
     pub selection: Rgba,
+    pub highlight: Rgba,
     pub segment: Rgba,
 }
 
@@ -49,6 +50,7 @@ impl From<Tokens> for Colors {
             removed_line: c(t.removed_line),
             link: c(t.link),
             selection: c(t.selection),
+            highlight: c(t.highlight),
             segment: c(t.segment),
         }
     }

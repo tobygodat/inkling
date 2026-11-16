@@ -12,6 +12,8 @@ Every icon is drawn in one colour, the theme's ink, so each file is used only as
 | `pen-line.svg` | Lucide 1.43.0, `pen-line` (writing) | ISC, `LICENSE-LUCIDE.txt` |
 | `link.svg` | Lucide 1.43.0, `link` (one look for reading and writing) | ISC, `LICENSE-LUCIDE.txt` |
 | `circle-user.svg` | Lucide 1.43.0, `circle-user` (Account) | ISC, `LICENSE-LUCIDE.txt` |
+| `highlighter.svg` | Lucide 1.43.0, `highlighter` (highlight a passage) | ISC, `LICENSE-LUCIDE.txt` |
+| `quote.svg` | Lucide 1.43.0, `quote` (quote a passage into the document) | ISC, `LICENSE-LUCIDE.txt` |
 | `claude.svg` | Simple Icons 16.37.0, `claude` | CC0 1.0, `LICENSE-SIMPLE-ICONS.md` |
 | `gemini.svg` | Simple Icons 16.37.0, `googlegemini` | CC0 1.0, `LICENSE-SIMPLE-ICONS.md` |
 

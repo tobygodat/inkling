@@ -62,5 +62,16 @@
       "additionalProperties": false
     },
     "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
+  },
+  {
+    "name": "list_highlights",
+    "title": "List highlights",
+    "description": "Lists the passages the writer highlighted while reading, in reading order: for one book, or with no book_id for every book. Each gives the book, the chapter (from 0), where the passage starts and ends in that chapter's Markdown as read_book gives it, in bytes, its words, and when it was made.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "book_id": { "type": "string", "description": "Only this book's highlights. The id list_books gives." } },
+      "additionalProperties": false
+    },
+    "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
   }
 ]
