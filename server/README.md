@@ -14,6 +14,7 @@ The Cloudflare Worker of ADR 0004. It runs on the free plan and handles four thi
 ```sh
 cd server
 bun install
+bun run lint    # oxlint with anti-slop (tools/oxlint/anti-slop)
 bun run check   # types
 bun run test    # vitest in workerd, with local D1 and KV
 ```
