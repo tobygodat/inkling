@@ -20,6 +20,7 @@ describe("signing in", () => {
     const hello = await (await rpc(signed.token!, "initialize", { protocolVersion: "2025-06-18", capabilities: {} })).json<{
       result: { protocolVersion: string };
     }>();
+
     expect(hello.result.protocolVersion).toBe("2025-06-18");
     expect((await tool(signed.token!, "list_books")).text).toBe("[]");
 
@@ -43,11 +44,13 @@ describe("signing in", () => {
     expect(tools.result.tools.map((t) => t.name)).toEqual(["list_books", "read_book", "search_library", "read_draft", "list_documents", "read_document"]);
     const unknown = await (await rpc(token!, "resources/list")).json<{ error: { code: number } }>();
     expect(unknown.error.code).toBe(-32601);
+
     const notification = await call("/mcp", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
     });
+
     expect(notification.status).toBe(202);
   });
 });

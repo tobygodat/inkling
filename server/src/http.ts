@@ -34,19 +34,24 @@ export function page(title: string, body: string, status = 200, headers?: Header
 <h1>${escapeHtml(title)}</h1>
 ${body}
 </html>`;
+
   const h = new Headers(headers);
   h.set("content-type", "text/html; charset=utf-8");
   h.set("x-frame-options", "DENY");
   h.set("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
+
   return new Response(html, { status, headers: h });
 }
 
 export const BOOK_ID = /^[0-9a-f]{64}$/;
+
 /** A device's document file name: the time it was made in milliseconds, or `draft`. */
 export const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 /** A picture a book's chapters show, as the device names it in `images/<book id>/`. */
 export const IMAGE_NAME = /^[0-9]+\.[a-z0-9]{1,5}$/;
 export const COVER_NAME = /^[0-9a-f]{64}\.(jpg|png|gif|webp)$/;
+
 /** KV's largest value. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 

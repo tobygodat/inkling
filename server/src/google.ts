@@ -33,6 +33,7 @@ export async function authorizeUrl(config: GoogleConfig, redirectUri: string, st
   url.searchParams.set("code_challenge", await challenge(verifier));
   url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("prompt", "select_account");
+
   return url.toString();
 }
 
@@ -54,21 +55,30 @@ export async function emailFor(config: GoogleConfig, code: string, redirectUri: 
       redirect_uri: redirectUri,
     }),
   });
+
   if (!response.ok) throw new Error(`Google refused the sign-in code (${response.status}).`);
   const { id_token } = (await response.json()) as { id_token?: string };
+
   return checkIdToken(config, id_token ?? "", nonce);
 }
 
 export function checkIdToken(config: GoogleConfig, idToken: string, nonce: string, now = Math.floor(Date.now() / 1000)): string {
   const payload = idToken.split(".")[1];
+
   if (!payload) throw new Error("Google sent no ID token.");
   const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as Record<string, unknown>;
+
   if (typeof claims.iss !== "string" || !ISSUERS.has(claims.iss)) throw new Error("The ID token isn’t from Google.");
+
   if (claims.aud !== config.GOOGLE_CLIENT_ID) throw new Error("The ID token is for another app.");
+
   if (typeof claims.exp !== "number" || claims.exp < now) throw new Error("The ID token has expired.");
+
   if (claims.nonce !== nonce) throw new Error("The ID token is from another sign-in.");
+
   if (claims.email_verified !== true || typeof claims.email !== "string" || !claims.email) {
     throw new Error("Google hasn’t verified that account’s email.");
   }
+
   return claims.email.toLowerCase();
 }
