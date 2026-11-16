@@ -665,9 +665,9 @@ const FAILING_LINK: &str = "https://hooks.invalid/inkling#k=bbbbbbbbbbbbbbbbbbbb
 /// Feedback, from a fresh setup to the next build's statuses and Restart.
 fn feedback(dir: &Path) {
     let paths = Paths::mac();
-    let draft = paths.load_draft();
     let keys = Arc::new(MemoryKeys::default());
     let mut s = Snap::open_with(dir, FormFactor::Mac, keys.clone(), Build::with_records(Some(BuildNumber(41)), []));
+    let draft = s.text();
     check(s.bounds("open-feedback").is_none(), "with no feedback link nothing offers feedback");
 
     s.save_link("not a link");
@@ -801,7 +801,7 @@ fn feedback(dir: &Path) {
     check(dev.bounds("restart").is_none(), "a development build never offers a restart");
     drop(dev);
     // The Appearance screenshots that follow show the snap's draft, not what this test typed.
-    paths.save_draft(&draft).expect("restore the draft");
+    seed(&paths, &draft);
 }
 
 const PAGE: &str = "# Ferry notes\n\n- The crossing takes **twenty-two** minutes\n- The fare is cheap\n\nEnergy is $E = mc^2$ on the water.\n\nThe caret starts in this last paragraph.";
