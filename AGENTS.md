@@ -57,7 +57,7 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
 - `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow and the live
-  page on the Simulator, with 52 checked steps. Any change under `ui/` or `ios/` reruns it.
+  page on the Simulator, with 66 checked steps. Any change under `ui/` or `ios/` reruns it.
   `ios/README.md` lists what is still driven by hand.
 - `ios/bench.sh <agent-device>` types 50 characters into a 5,000-word draft in the installed Debug
   build and prints the median and worst time from a typed character to its painted frame.
