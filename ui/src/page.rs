@@ -51,6 +51,11 @@ impl Page {
         self.0.read(cx).selection().head
     }
 
+    /// The caret, once the writer has put it somewhere or typed since the document opened.
+    pub fn placed_caret(&self, cx: &App) -> Option<usize> {
+        self.0.read(cx).caret()
+    }
+
     pub fn set_selection(&self, range: Range<usize>, cx: &mut App) {
         self.0.update(cx, |p, cx| p.set_selection(range, cx));
     }

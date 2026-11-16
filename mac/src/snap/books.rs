@@ -3,6 +3,7 @@
 //! a relaunch. The host's open panel and folders are stand-ins, so nothing reads the real Desktop.
 
 use super::*;
+use gpui_kit::test::ClickOptions;
 use inkling_books::Format;
 use inkling_core::{Face, Mode, PageMode, View};
 use inkling_ui::BookHost;
@@ -409,6 +410,8 @@ fn walden(dir: &Path, folder: &Path, picked: &Picked, fixtures: &Path) {
     let (back, now) = (position(&mut s), s.read(|v, _| v.book_loads()));
     check(back == place && now == loads, &format!("and Cmd-2 comes back to the book without reading it again ({place:?} → {back:?}, {loads} → {now} loads)"));
 
+    passages(&mut s);
+
     s.press("end");
     let link = s.update(|v, _, _| v.reading_mark(false)).filter(|p| p.y > px(56.) && p.y < px(760.)).unwrap_or_else(|| fail("the link to the next chapter is on screen"));
     s.with(|w, cx| w.click_at("reading", link, cx));
@@ -435,4 +438,97 @@ fn walden(dir: &Path, folder: &Path, picked: &Picked, fixtures: &Path) {
     }
     check(whole, "in pages the picture sits whole on a page");
     s.shot("books-19-walden-paged");
+    drop(s);
+
+    let mut s = open(dir, folder, picked);
+    s.click("cog");
+    s.click("menu-keep-reading");
+    settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
+    let kept = s.read(|v, _| v.reading_highlights()).map(|(h, _)| h.len());
+    check(kept == Some(2), &format!("after a relaunch the book still has its highlights ({kept:?})"));
+}
+
+fn highlights(s: &mut Snap) -> (Vec<inkling_books::Highlight>, usize) {
+    s.read(|v, _| v.reading_highlights()).unwrap_or_else(|| fail("the book is open"))
+}
+
+/// Drags across the chapter on screen from the start of `from` to the end of `to`.
+fn select(s: &mut Snap, from: &str, to: &str) {
+    let a = s.read(|v, _| v.reading_point(from, 0)).unwrap_or_else(|| fail(&format!("\"{from}\" is drawn")));
+    let b = s.read(|v, _| v.reading_point(to, to.len())).unwrap_or_else(|| fail(&format!("\"{to}\" is drawn")));
+    s.with(|w, cx| w.drag(a, b, cx));
+    s.frame();
+}
+
+/// Selecting, copying, highlighting, removing a highlight, the Highlights tab and quoting.
+fn passages(s: &mut Snap) {
+    let book = s.read(|v, _| v.reading().map(|(b, _)| b.id.clone())).unwrap_or_else(|| fail("Walden is open"));
+    select(s, "wished", "deliberately");
+    let selected = s.read(|v, _| v.reading_selection());
+    check(selected.as_deref() == Some("wished to live deliberately"), &format!("a drag selects the words under it ({selected:?})"));
+    let end = s.read(|v, _| v.reading_point("deliberately", 12)).unwrap_or_default();
+    let pill = s.bounds("pill-highlight").zip(s.bounds("pill-quote")).unwrap_or_else(|| fail("a selection shows the pill"));
+    check(pill.0.left() >= end.x && pill.0.left() < end.x + px(40.) && (pill.0.center().y - end.y).abs() < px(20.) && pill.0.right() <= pill.1.left(), "beside its end: Highlight, then Quote");
+    s.shot("books-20-selected");
+    s.press("cmd-c");
+    let copied = s.with(|_, cx| cx.read_from_clipboard()).and_then(|c| c.text());
+    check(copied.as_deref() == Some("wished to live deliberately"), "Cmd-C copies it");
+
+    s.click("pill-highlight");
+    let (all, drawn) = highlights(s);
+    check(all.len() == 1 && all[0].words == "wished to live deliberately" && all[0].chapter == 0 && drawn == 1, "Highlight keeps the passage and tints it");
+    let file = Paths::mac().dir.join("library/highlights").join(format!("{}.json", book.0));
+    let stored = std::fs::read_to_string(&file).unwrap_or_default();
+    check(stored.contains("\"words\": \"wished to live deliberately\"") && stored.contains("\"made\""), "in the book's own highlights file, apart from its text");
+    check(s.read(|v, _| v.highlighter_chosen()), "and shows the highlighter as chosen");
+    let elsewhere = s.read(|v, _| v.reading_point("essential", 2)).unwrap_or_default();
+    s.with(|w, cx| w.click_at("reading", elsewhere, cx));
+    s.frame();
+    check(s.read(|v, _| v.reading_selection()).is_none() && s.bounds("pill-highlight").is_none(), "a click elsewhere clears the selection and its pill");
+    s.shot("books-21-highlighted");
+
+    let live = s.read(|v, _| v.reading_point("to live", 4)).unwrap_or_default();
+    s.with(|w, cx| w.click_with_options("reading", ClickOptions::new().with_offset(live).with_count(2), cx));
+    s.frame();
+    check(s.read(|v, _| v.reading_selection()).as_deref() == Some("live"), "a double click selects a word");
+    check(s.read(|v, _| v.highlighter_chosen()), "inside the highlight the highlighter shows as chosen");
+    s.click("pill-highlight");
+    check(highlights(s) == (vec![], 0), "and pressing it again removes the highlight");
+    check(std::fs::read_to_string(&file).is_ok_and(|f| !f.contains("deliberately")), "from the file too");
+
+    select(s, "the essential", "of life");
+    s.click("pill-highlight");
+    select(s, "I went", "deliberately");
+    s.click("pill-highlight");
+    let (all, drawn) = highlights(s);
+    check(all.len() == 2 && drawn == 2 && all[0].words == "I went to the woods because I wished to live deliberately" && all[1].words == "the essential facts of life", &format!("highlights are kept in reading order ({:?}, {drawn} drawn)", all.iter().map(|h| &h.words).collect::<Vec<_>>()));
+    s.press("escape");
+    s.press("end");
+    s.press("space");
+    check(position(s).map(|at| at.chapter) == Some(1), "on to the next chapter");
+    s.click("contents");
+    s.click("contents-highlights");
+    check(s.bounds(("highlight", 0usize)).is_some() && s.bounds(("highlight", 1usize)).is_some() && s.bounds(("chapter", 0usize)).is_none(), "Contents has a Highlights tab listing them");
+    s.shot("books-22-highlights-tab");
+    s.click(("highlight", 1usize));
+    check(position(s).map(|at| at.chapter) == Some(0) && s.bounds("contents-list").is_none(), "choosing one goes to it");
+    check(highlights(s).1 == 2, "where both are drawn");
+    s.click("contents");
+    s.click("contents-chapters");
+    check(s.bounds(("chapter", 0usize)).is_some(), "and Chapters lists the chapters again");
+    s.click("contents");
+
+    select(s, "I went", "deliberately,");
+    s.click("pill-quote");
+    let quoted = format!("{DRAFT}\n\n> I went to the woods because I wished to live *deliberately*,\n>\n> — Henry David Thoreau, *Walden*\n\n");
+    check(s.text() == quoted, &format!("Quote puts it at the end of the document, as a block quote that keeps its italics, under its book ({:?})", s.text()));
+    check(s.read(|v, _| v.reading().is_some()), "and the book stays on screen");
+    s.press("cmd-1");
+    // With the caret on the line under it, the quote is the caret's block and shows its source.
+    s.select(0..0);
+    s.shot("books-23-quoted");
+    s.press("cmd-z");
+    check(s.text() == DRAFT, "one Cmd-Z takes the quote out again");
+    s.press("cmd-2");
+    check(s.read(|v, _| v.reading().is_some()), "and Cmd-2 goes back to the book");
 }

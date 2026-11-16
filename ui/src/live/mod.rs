@@ -93,6 +93,8 @@ pub struct LiveEditor {
     marked: Option<Range<usize>>,
     goal_x: Option<Pixels>,
     reveal: bool,
+    /// The writer has put the caret somewhere or typed since the page opened.
+    pub(crate) placed: bool,
     focus: FocusHandle,
     scroll: ScrollHandle,
     frame: Rc<RefCell<Frame>>,
@@ -144,6 +146,7 @@ impl LiveEditor {
             marked: None,
             goal_x: None,
             reveal: true,
+            placed: false,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             frame: Rc::default(),
@@ -186,6 +189,11 @@ impl LiveEditor {
         self.draft.selection()
     }
 
+    /// The caret, once the writer has put it somewhere or typed since the page opened.
+    pub fn caret(&self) -> Option<usize> {
+        self.placed.then_some(self.draft.selection().head)
+    }
+
     pub fn options(&self) -> Options {
         self.options
     }
@@ -223,6 +231,7 @@ impl LiveEditor {
     pub fn set_selection(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.draft.seal();
         self.draft.set_selection(range.start, range.end);
+        self.placed = true;
         self.moved(cx);
     }
 
@@ -240,6 +249,7 @@ impl LiveEditor {
     }
 
     fn source_changed(&mut self, cx: &mut Context<Self>) {
+        self.placed = true;
         cx.emit(Edited);
         self.changed(cx);
     }

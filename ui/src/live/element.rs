@@ -218,6 +218,7 @@ impl LiveEditor {
             return;
         }
         self.draft.seal();
+        self.placed = true;
         if e.click_count == 1 {
             self.clicked = Some((at, e.position, Instant::now()));
         }

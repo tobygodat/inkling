@@ -1,4 +1,4 @@
-use inkling_books::{Book, BookId, Entry, Library};
+use inkling_books::{Book, BookId, Entry, Highlight, Library};
 use inkling_core::store::Paths;
 use inkling_core::{Document, Documents, Settings};
 use std::fs;
@@ -11,6 +11,8 @@ pub trait Store {
     /// Newest first, with each book's reading position.
     fn books(&self) -> io::Result<Vec<Entry>>;
     fn book(&self, id: &BookId) -> io::Result<Book>;
+    /// A book's highlights, in reading order.
+    fn highlights(&self, id: &BookId) -> io::Result<Vec<Highlight>>;
     /// The writer's documents, the one changed last first.
     fn documents(&self) -> io::Result<Vec<Document>>;
     fn document(&self, id: &str) -> io::Result<String>;
@@ -77,6 +79,10 @@ impl Store for Folder {
             return Err(io::Error::new(io::ErrorKind::NotFound, format!("No book in the library has the id {}.", id.0)));
         }
         library.load(id)
+    }
+
+    fn highlights(&self, id: &BookId) -> io::Result<Vec<Highlight>> {
+        Ok(self.library()?.highlights(id))
     }
 
     fn documents(&self) -> io::Result<Vec<Document>> {

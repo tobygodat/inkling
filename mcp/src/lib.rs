@@ -154,7 +154,7 @@ mod tests {
         let listed = server.handle(&json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" })).unwrap();
         let names: Vec<&str> =
             listed["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_books", "read_book", "search_library", "read_draft", "list_documents", "read_document"]);
+        assert_eq!(names, ["list_books", "read_book", "search_library", "read_draft", "list_documents", "read_document", "list_highlights"]);
         let missing = server.handle(&json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": { "name": "delete_everything" } })).unwrap();
         assert_eq!(missing["error"]["code"], INVALID_PARAMS);
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn the_tools_read_the_library_and_the_draft_from_the_data_folder() {
-        let (_dir, server) = library();
+        let (dir, server) = library();
         let id = "ab".repeat(32);
 
         let books: Value = serde_json::from_str(text(&call(&server, "list_books", json!({})))).unwrap();
@@ -188,6 +188,18 @@ mod tests {
         let hits: Value = serde_json::from_str(text(&call(&server, "search_library", json!({ "query": "THE SEA" })))).unwrap();
         assert_eq!(hits.as_array().unwrap().len(), 1);
         assert_eq!(hits[0]["chapter"], 1);
+
+        let library = Library::open(dir.path().join("library")).unwrap();
+        let later = inkling_books::Highlight { chapter: 1, start: 26, end: 51, words: "indistinguishable".into(), made: 1_700_000_000_000 };
+        let earlier = inkling_books::Highlight { chapter: 0, start: 7, end: 14, words: "The sun".into(), made: 1_700_000_100_000 };
+        library.set_highlights(&BookId(id.clone()), &[later, earlier]).unwrap();
+        for arguments in [json!({}), json!({ "book_id": id })] {
+            let listed: Value = serde_json::from_str(text(&call(&server, "list_highlights", arguments))).unwrap();
+            let words: Vec<&str> = listed.as_array().unwrap().iter().map(|h| h["words"].as_str().unwrap()).collect();
+            assert_eq!(words, ["The sun", "indistinguishable"], "in reading order");
+            assert_eq!((listed[1]["book_id"].as_str(), listed[1]["chapter"].as_u64(), listed[1]["start"].as_u64()), (Some(id.as_str()), Some(1), Some(26)));
+        }
+        assert_eq!(call(&server, "list_highlights", json!({ "book_id": "nope" }))["isError"], true);
 
         // Before the app has moved draft.md into documents/, the draft is draft.md.
         assert_eq!(text(&call(&server, "read_draft", json!({}))), "# A draft\n\nIt begins.");

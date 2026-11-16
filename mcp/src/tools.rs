@@ -28,6 +28,7 @@ pub fn call(store: &impl Store, name: &str, arguments: &Value) -> Option<Value> 
         "read_draft" => read_draft(store),
         "list_documents" => list_documents(store),
         "read_document" => read_document(store, arguments),
+        "list_highlights" => list_highlights(store, arguments),
         _ => return None,
     };
     Some(match result {
@@ -100,6 +101,32 @@ fn read_document(store: &impl Store, arguments: &Value) -> Result<String, String
     let id = arguments.get("document_id").and_then(Value::as_str).ok_or("document_id is required.")?;
     let text = store.document(id).map_err(|e| format!("That document couldn't be read: {e}"))?;
     Ok(if text.trim().is_empty() { "The document is empty.".to_string() } else { text })
+}
+
+fn list_highlights(store: &impl Store, arguments: &Value) -> Result<String, String> {
+    let entries = store.books().map_err(|e| format!("The library couldn't be read ({e})."))?;
+    let only = arguments.get("book_id").and_then(Value::as_str);
+    if let Some(id) = only
+        && !entries.iter().any(|e| e.id.0 == id)
+    {
+        return Err(format!("No book in the library has the id {id}."));
+    }
+    let mut out = vec![];
+    for entry in entries.iter().filter(|e| only.is_none_or(|id| e.id.0 == id)) {
+        let highlights = store.highlights(&entry.id).map_err(|e| format!("The highlights of {} couldn't be read ({e}).", entry.title))?;
+        out.extend(highlights.iter().map(|h| {
+            json!({
+                "book_id": entry.id.0,
+                "book": entry.title,
+                "chapter": h.chapter,
+                "start": h.start,
+                "end": h.end,
+                "words": h.words,
+                "made": chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + std::time::Duration::from_millis(h.made)).to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+            })
+        }));
+    }
+    Ok(serde_json::to_string_pretty(&out).expect("JSON values serialise"))
 }
 
 fn search_library(store: &impl Store, arguments: &Value) -> Result<String, String> {

@@ -392,6 +392,10 @@ impl Inkling {
             self.close_feedback(window, cx);
         } else if self.screen.keys().is_some() {
             self.close_keys(window, cx);
+        } else if let Screen::Reading(r) = &mut self.screen
+            && r.sel.is_some()
+        {
+            r.deselect();
         } else if matches!(&self.screen, Screen::Reading(r) if r.note.is_some()) {
             self.close_note(cx);
         } else if matches!(&self.screen, Screen::Reading(r) if r.contents) {

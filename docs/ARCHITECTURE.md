@@ -12,14 +12,15 @@ app.
   dependency. It parses an EPUB (chapters from the navigation document, the cover it names) or a
   PDF with a text layer (pages in sections of ten, running headers and footers dropped) into one
   `Book` whose chapters are Markdown (ADR 0006). `Library` keeps `library.json`, each parsed book
-  as `books/<sha-256>.json`, the file it came from in `originals/`, its images in `images/<id>/`
-  and covers in `covers/`, writing each file atomically, with each book's reading position.
+  as `books/<sha-256>.json`, the file it came from in `originals/`, its images in `images/<id>/`,
+  covers in `covers/` and highlights in `highlights/<id>.json`, writing each file atomically, with each book's reading position.
   `scan` finds books in folders that the library doesn't have yet. The Library and Reading
   screens in `ui/` use it.
 - `mcp/` is `inkling-mcp`, the MCP server of ADR 0004. It has no UI dependency. `Server` answers
-  one JSON-RPC message at a time, whatever carries it. Its six tools (`list_books`, `read_book`,
-  `search_library`, `read_draft`, `list_documents`, `read_document`) only read, through a `Store`,
-  and are defined once in `mcp/tools.json`, which the Worker serves too. `read_draft` is the
+  one JSON-RPC message at a time, whatever carries it. Its seven tools (`list_books`, `read_book`,
+  `search_library`, `read_draft`, `list_documents`, `read_document`, `list_highlights`) only read,
+  through a `Store`, and are defined once in `mcp/tools.json`, which the Worker serves too, all but
+  `list_highlights` until highlights sync. `read_draft` is the
   document open last. `Folder` is the store over the data folder, read afresh on every call so a
   book the app just added shows at once. The binary, `inkling-mcp --stdio`, is what Claude Desktop
   and Claude Code start on the Mac. It writes nothing in the data folder.
@@ -185,6 +186,18 @@ library has no Add and no Find books.
   chapter and Next at the end, a Contents list and a progress line (the chapter and how far
   through the book). Leaving a book for the page or the library keeps it laid out in
   `Books::parked`, so going back to it reads nothing from disk.
+- **Highlights and quotes** (`ui/src/passage.rs`). A selection is a range of the chapter's text as
+  drawn: every block's text in turn, a newline between, which `chapter.rs` maps back byte by byte
+  to the chapter's Markdown. A highlight (`inkling_books::Highlight`) keeps the chapter, where the
+  passage starts and ends in the Markdown, its words and when it was made, in the book's own file
+  apart from its text, so sync can send it as it is. It is drawn where it was made while its words
+  are there, else at its words nearest to it after a new parse, else not at all, and it stays in
+  the list. Quote writes the passage with its italics as a block quote with the author and title
+  (`inkling_books::highlights::quote`) and puts it in the open document's page with
+  `inkling_core::place_block`, after the top-level block that holds the caret (closing a code
+  fence left open there; where the inserted quote wouldn't read as a block quote of its own, before
+  that block, else at the start, else at the end), or at the end while the writer hasn't put a
+  caret in it since it opened, as one undo step.
 - **Scroll and Paged.** The chapter column reports each child's bounds after layout
   (`on_children_prepainted`), with the line height of the blocks a page may break inside. In
   Scroll the column scrolls. In Paged, `paginate` cuts the chapter into pages the height of the

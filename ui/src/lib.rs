@@ -13,6 +13,7 @@ mod keys;
 mod library;
 pub mod live;
 mod page;
+mod passage;
 mod picker;
 mod chapter;
 mod reading;
