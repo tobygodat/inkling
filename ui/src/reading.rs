@@ -77,6 +77,8 @@ pub(crate) struct Reading {
     pub(crate) painted: Rc<RefCell<HashMap<usize, (TextLayout, Text)>>>,
     /// A byte offset to show once the chapter is laid out: where a link inside the book goes.
     seek: Option<usize>,
+    /// A block and a byte of its text to show once the chapter is laid out: Find's current match.
+    reveal: Option<(usize, usize)>,
     pub scroll: ScrollHandle,
     /// How far down the chapter the view's top is, from 0 to 1. See the module comment.
     anchor: f32,
@@ -122,6 +124,7 @@ impl Reading {
             drawn: Rc::default(),
             painted: Rc::default(),
             seek: None,
+            reveal: None,
             scroll: ScrollHandle::new(),
             anchor,
             pending: true,
@@ -168,6 +171,15 @@ impl Reading {
             let (w, h) = image::ImageReader::open(self.dir.join(src)).ok()?.with_guessed_format().ok()?.into_dimensions().ok()?;
             (w > 0 && h > 0).then(|| size(w as f32, h as f32))
         })
+    }
+
+    /// The block at the top of the view, for Find to start from.
+    pub fn block_on_screen(&self, pages: PageMode) -> usize {
+        let layout = self.layout.borrow();
+        let top = layout.height * self.anchor_now(pages);
+        let first = usize::from(self.chapter > 0);
+        let piece = layout.pieces.iter().rposition(|p| p.top <= top + px(0.5)).unwrap_or(0);
+        piece.saturating_sub(first).min(self.laid.blocks.len().saturating_sub(1))
     }
 
     fn chapter_title(&self, at: usize) -> String {
@@ -267,6 +279,7 @@ impl Inkling {
         r.note = None;
         r.seek = None;
         r.deselect();
+        r.reveal = None;
         *r.layout.borrow_mut() = Layout::default();
         r.height = px(0.);
         r.page = 0;
@@ -284,6 +297,18 @@ impl Inkling {
         if let Screen::Reading(r) = &mut self.screen {
             r.seek = Some(offset);
         }
+    }
+
+    /// Find's current match: its chapter, scrolled or turned to the line that holds it.
+    pub(crate) fn reveal_in_book(&mut self, chapter: usize, block: usize, at: usize, cx: &mut Context<Self>) {
+        let Screen::Reading(r) = &mut self.screen else { return };
+        if r.chapter != chapter {
+            self.go_to_chapter(chapter, 0., cx);
+        }
+        if let Screen::Reading(r) = &mut self.screen {
+            r.reveal = Some((block, at));
+        }
+        cx.notify();
     }
 
     /// A tap on a book's text: a footnote marker shows its note beside it, a link inside the book
@@ -568,6 +593,25 @@ impl Inkling {
             r.anchor = (top / layout.height).clamp(0., 1.);
             r.pending = true;
         }
+        let mut revealed = false;
+        if let Some((block, at)) = r.reveal.take() {
+            match layout.pieces.get(block + usize::from(r.chapter > 0)) {
+                Some(piece) => {
+                    let line = r.drawn.borrow().get(&block).and_then(|(text, _)| Some(text.position_for_index(at)?.y - text.position_for_index(0)?.y));
+                    let y = piece.top + line.unwrap_or_default();
+                    // Scrolled, the match sits a third of the way down, with what leads to it above.
+                    let y = if pages == PageMode::Scroll { (y - page_h / 3.).max(px(0.)) } else { y };
+                    r.anchor = (y / layout.height).clamp(0., 1.);
+                    r.pending = true;
+                    revealed = true;
+                }
+                None => r.reveal = Some((block, at)),
+            }
+        }
+        if revealed {
+            self.after_move(cx);
+        }
+        let Screen::Reading(r) = &mut self.screen else { return };
         if !r.pending {
             return;
         }
@@ -627,7 +671,8 @@ impl Inkling {
                     .when(r.contents, |b| b.bg(c.segment))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_contents(cx)))
                     .test_support(),
-            );
+            )
+            .children(self.render_find_button(cx));
         let page_note = match pages {
             PageMode::Paged => {
                 let count = r.pages(page_h).len();
@@ -797,6 +842,8 @@ impl Inkling {
 
     fn render_chapter(&self, r: &Reading, t: &Theme, page_h: Pixels, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
         let (c, body): (Colors, Body) = (t.c, t.body);
+        let found = self.finder.as_ref().map(|f| f.in_chapter(r.chapter)).unwrap_or_default();
+        let found_in = |i: usize| -> Vec<(std::ops::Range<usize>, bool)> { found.iter().filter(|(b, ..)| *b == i).map(|(_, range, on)| (range.clone(), *on)).collect() };
         let size = body.size;
         let line = size * body.line;
         let gap = size * 0.8;
@@ -827,7 +874,7 @@ impl Inkling {
                         .text_size(size * 1.7)
                         .line_height(relative(1.2))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(self.reading_text(r, i, &block.text, &c, cx))
+                        .child(self.reading_text(r, i, &block.text, &found_in(i), &c, cx))
                         .test_support()
                         .into_any_element(),
                     Some(size * 1.7 * 1.2),
@@ -835,11 +882,11 @@ impl Inkling {
                 Kind::Heading(level) => {
                     let size = size * heading_scale(*level);
                     (
-                        div().text_size(size).line_height(relative(1.3)).font_weight(FontWeight::SEMIBOLD).child(self.reading_text(r, i, &block.text, &c, cx)).into_any_element(),
+                        div().text_size(size).line_height(relative(1.3)).font_weight(FontWeight::SEMIBOLD).child(self.reading_text(r, i, &block.text, &found_in(i), &c, cx)).into_any_element(),
                         Some(size * 1.3),
                     )
                 }
-                Kind::Paragraph => (self.reading_text(r, i, &block.text, &c, cx).into_any_element(), Some(line)),
+                Kind::Paragraph => (self.reading_text(r, i, &block.text, &found_in(i), &c, cx).into_any_element(), Some(line)),
                 Kind::Image { src, alt, caption } => (self.reading_image(r, i, src, alt, caption, &c, page_h * 0.6, width), None),
                 Kind::Rule => (div().w_full().flex().justify_center().text_color(c.muted).child("*   *   *").into_any_element(), None),
             };
@@ -923,8 +970,12 @@ impl Inkling {
     }
 
     /// A block's text, set as the book set it. A tap on a footnote marker or a link acts on it.
-    fn reading_text(&self, r: &Reading, i: usize, text: &Text, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let styled = styled(text, c, r.tints(i, c));
+    fn reading_text(&self, r: &Reading, i: usize, text: &Text, found: &[(std::ops::Range<usize>, bool)], c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        // Find's matches over the highlights and the selection: the current one in Selection.
+        let selection: Hsla = c.selection.into();
+        let mut tints = r.tints(i, c);
+        tints.extend(found.iter().map(|(range, current)| (range.clone(), if *current { selection } else { Hsla { a: selection.a * 0.4, ..selection } })));
+        let styled = styled(text, c, tints);
         let layout = styled.layout().clone();
         r.drawn.borrow_mut().insert(i, (layout.clone(), text.clone()));
         let marks = text.clone();

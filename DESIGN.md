@@ -100,7 +100,21 @@ from `inkling_core::Appearance::tokens`. Light is the default.
 - **Library.** The title, Find books and Add at the top, then the books as 150 pt tiles, newest
   first: the cover or the title in the body face on a Segment tile, a progress line once started,
   then the title and the author or format and how far through. Find books lists what it found with
-  a tick each and one Add button.
+  a tick each and one Add button. On the Mac a click chooses a tile, on Segment, the arrows move
+  it, and a double click or Enter opens it; Delete deletes the chosen book and Cmd-Z brings it
+  back. On iPhone a tap opens a tile, and pressing and holding it shows Delete in a Surface
+  popover over it; an Undo button sits at the bottom until the next action. A deleted book takes
+  everything kept under it (its text, cover, original file and highlights), and Undo brings all
+  of it back, at its place.
+- **Find.** Cmd-F opens one field in the top bar, after the corner, on the page, in a book, in the
+  library and in the document list; on iPhone the magnifier at the top right opens it across the
+  top, with Done beside it, and the keyboard's Search key goes to the next match. On the page and in
+  a book every match is tinted (Selection at 40%) and the current one is in Selection, and the
+  field ends with the count in muted ink ("2 / 9"). Return goes to the next match and Shift-Return
+  to the one before, round from the last to the first. In a book Find covers every chapter and
+  turns to the chapter of the match. Escape or Done closes it, leaving the caret, or the reader's
+  place, on the current match. In the library the field filters the books by title and author,
+  and in the document list by title. Matching ignores case. Leaving the screen closes it.
 - **Reading.** "‹ Library", the book's title and Contents at the top, one chapter in reading's
   column, face, size and line spacing, and the chapter, how far through the book and, in pages, the
   page, in muted ink at the bottom. Scroll, or Paged: a page fills the area between the bars and
@@ -133,7 +147,9 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   library before any reading since launch). Keep reading in the cog's menu always opens the last book.
   Cmd-1 and Cmd-2 do the same; each half has a tooltip and a label, "Writing" and "Reading".
 - **Feedback button.** 40 pt round, an ink outline and the message icon. Shown once a feedback link
-  is saved.
+  is saved. On iPhone it is the message icon alone, a 44 pt target in the header row before the
+  provider, which leaves room for Find's magnifier; the provider's name truncates when the row is
+  still too narrow.
 - **Appearance panel.** Beside the page, the library or a book, editing that view's look. Header
   ("Appearance" and Done, after the corner, whose toggle names the view), "Same look for reading and writing" with the link
   icon and a switch, Light / Dark / Custom, the paper tones as "Aa" swatches in their own colours,
@@ -144,7 +160,7 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   Custom, which adds a wheel (angle is hue, distance from the centre is strength), a lightness
   slider and a hex field.
 - **Icons.** One colour, the ink. Lucide for the cog, message, artboard, robot, book, pen, link,
-  highlighter and quote; Simple Icons for
+  highlighter, quote and search; Simple Icons for
   Claude and Gemini. ChatGPT shows the robot. Sources are in `ui/icons/SOURCES.md`.
 
 - Inline buttons are 28 pt on Mac. No control on iPhone is under 44 pt.

@@ -2,6 +2,7 @@
 //! launch keeps its page, so its undo history and its review stay with it while another is open.
 
 use crate::app::{Inkling, Saved, Screen, Version, ghost_button, primary_button};
+use crate::find::Place;
 use crate::library::outlined_button;
 use crate::page::Page;
 use crate::theme::Theme;
@@ -9,6 +10,7 @@ use crate::FormFactor;
 use chrono::{DateTime, Datelike, Local};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use inkling_core::find::contains;
 use inkling_core::{Document, Documents, Revision};
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime};
@@ -262,7 +264,7 @@ impl Inkling {
             self.switch_to(next, window, cx);
         }
         let parked = self.docs.parked.remove(&entry.id);
-        self.refresh_list(None);
+        self.refresh_list(None, cx);
         if let Screen::Documents(list) = &mut self.screen {
             list.removed = Some(Removed { id: entry.id, text, changed: entry.changed, parked });
             list.chosen = (!list.entries.is_empty()).then(|| at.min(list.entries.len() - 1));
@@ -289,16 +291,30 @@ impl Inkling {
             self.docs.parked.insert(removed.id.clone(), parked);
         }
         self.sync_soon(cx);
-        self.refresh_list(Some(&removed.id));
+        self.refresh_list(Some(&removed.id), cx);
         cx.notify();
+    }
+
+    /// Find typed on the list, or closed: the rows follow, the chosen one kept while it shows.
+    pub(crate) fn filter_documents(&mut self, cx: &App) {
+        let Screen::Documents(list) = &self.screen else { return };
+        let chosen = list.chosen.and_then(|at| list.entries.get(at)).map(|d| d.id.clone());
+        self.refresh_list(None, cx);
+        if let Screen::Documents(list) = &mut self.screen {
+            list.chosen = chosen.and_then(|id| list.entries.iter().position(|d| d.id == id)).or((!list.entries.is_empty()).then_some(0));
+        }
     }
 
     pub fn can_undo_remove(&self) -> bool {
         matches!(&self.screen, Screen::Documents(DocList { removed: Some(_), .. }))
     }
 
-    fn refresh_list(&mut self, choose: Option<&str>) {
-        let entries = self.docs.store.list();
+    /// Reads the list again, filtered by title while Find is open on it.
+    fn refresh_list(&mut self, choose: Option<&str>, cx: &App) {
+        let mut entries = self.docs.store.list();
+        if let Some(query) = self.row_filter(Place::Documents, cx) {
+            entries.retain(|d| contains(shown_title(&d.title), &query));
+        }
         if let Screen::Documents(list) = &mut self.screen {
             if let Some(id) = choose {
                 list.chosen = entries.iter().position(|d| d.id == id);
@@ -387,11 +403,13 @@ impl Inkling {
             .justify_end()
             .pl(self.corner_width())
             .pr(if phone { px(8.) } else { m.gutter })
+            .gap_1()
             .child(
                 primary_button(&c, "new-document", "New", m)
                     .on_click(cx.listener(|this, _, window, cx| this.new_document(window, cx)))
                     .test_support(),
-            );
+            )
+            .children(self.render_find_button(cx));
         let now = Local::now();
         let rows = list.entries.iter().enumerate().map(|(at, d)| {
             let chosen = list.chosen == Some(at);

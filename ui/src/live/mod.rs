@@ -101,6 +101,8 @@ pub struct LiveEditor {
     /// Blocks whose kit text didn't match their `SourceMap`, drawn as source instead.
     mismatches: Vec<String>,
     blink: Blink,
+    /// Find's matches, tinted behind the text.
+    found: Vec<Range<usize>>,
 }
 
 /// How long the caret stays on, and then off, while it blinks.
@@ -152,6 +154,7 @@ impl LiveEditor {
             frame: Rc::default(),
             mismatches: vec![],
             blink: Blink::default(),
+            found: vec![],
         };
         editor.extensions = Arc::new(editor.build_extensions());
         editor.rebuild();
@@ -233,6 +236,15 @@ impl LiveEditor {
         self.draft.set_selection(range.start, range.end);
         self.placed = true;
         self.moved(cx);
+    }
+
+    /// Find's matches, tinted, and the current one, which becomes the selection and is scrolled to.
+    pub fn set_found(&mut self, found: Vec<Range<usize>>, current: Option<Range<usize>>, cx: &mut Context<Self>) {
+        self.found = found;
+        match current {
+            Some(range) => self.set_selection(range, cx),
+            None => cx.notify(),
+        }
     }
 
     /// Replaces `range` of the source with `text`, as one undo step.

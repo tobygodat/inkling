@@ -12,6 +12,14 @@ fn titles(s: &mut Snap) -> Vec<String> {
     s.read(|v, _| v.document_list().map(|(list, _)| list.iter().map(|d| d.title.clone()).collect()).unwrap_or_default())
 }
 
+pub(super) fn count(s: &mut Snap) -> Option<(usize, usize)> {
+    s.read(|v, _| v.find_count())
+}
+
+pub(super) fn finding(s: &mut Snap) -> bool {
+    s.read(|v, _| v.finding())
+}
+
 fn chosen(s: &mut Snap) -> Option<usize> {
     s.read(|v, _| v.document_list().and_then(|(_, chosen)| chosen))
 }
@@ -43,6 +51,22 @@ pub fn run(dir: &Path) {
     check(docs.read("draft").ok() == Some(first.clone()), "an edit autosaves into the document's own file");
     s.shot("documents-01-page");
 
+    // Find on the page.
+    s.press("cmd-f");
+    let field = s.bounds("find-field").unwrap_or_else(|| fail("Cmd-F opens Find's field"));
+    let toggle = s.bounds("views").unwrap_or_else(|| fail("the toggle is laid out"));
+    check(field.left() > toggle.right() && field.top() < toggle.bottom(), "the field sits in the top bar, after the corner");
+    s.input("KEEP");
+    let keeps: Vec<_> = first.match_indices("keep").map(|(at, w)| at..at + w.len()).collect();
+    check(count(&mut s) == Some((1, 2)) && s.selected() == keeps[0], "every match is found, ignoring case, the first in Selection: 1 / 2");
+    s.shot("documents-07-find-page");
+    s.press("enter");
+    check(count(&mut s) == Some((2, 2)) && s.selected() == keeps[1], "Return goes to the next match");
+    s.press("shift-enter");
+    check(count(&mut s) == Some((1, 2)) && s.selected() == keeps[0], "Shift-Return to the one before");
+    s.press("escape");
+    check(!finding(&mut s) && s.page_focused() && s.selected() == keeps[0], "Escape closes the field and leaves the caret on the current match");
+
     s.press("cmd-n");
     let letter = open_id(&mut s);
     check(letter != "draft" && s.text().is_empty() && s.page_focused(), "Cmd-N opens an empty page with the caret in it");
@@ -58,6 +82,12 @@ pub fn run(dir: &Path) {
     check(titles(&mut s) == ["Letter to the board", "On keeping accounts"], "the list shows the titles, newest first");
     check(chosen(&mut s) == Some(0), "the open document is on Segment");
     s.shot("documents-02-list");
+    s.press("cmd-f");
+    s.input("letter");
+    check(titles(&mut s) == ["Letter to the board"], "Find on the list filters the documents by title");
+    s.shot("documents-08-find-list");
+    s.press("escape");
+    check(!finding(&mut s) && titles(&mut s).len() == 2 && chosen(&mut s) == Some(0), "Escape shows every document again");
 
     s.press("down");
     s.press("enter");
@@ -107,6 +137,13 @@ pub fn run(dir: &Path) {
     let mut phone = Snap::open_as(dir, FormFactor::Phone);
     phone.click("open-documents");
     check(titles(&mut phone).len() == 2, "‹ Documents opens the list on iPhone");
+    phone.click("open-find");
+    check(finding(&mut phone) && phone.bounds("find-done").is_some(), "on iPhone the magnifier opens Find, with Done beside it");
+    phone.input("ACCOUNTS");
+    check(titles(&mut phone) == ["On keeping accounts"], "and filters the list");
+    phone.shot("documents-09-iphone-find");
+    phone.click("find-done");
+    check(!finding(&mut phone) && titles(&mut phone).len() == 2, "Done closes it");
     phone.update(|v, w, cx| v.remove_document(1, w, cx));
     check(titles(&mut phone).len() == 1 && phone.bounds("undo-remove").is_some(), "a removed row leaves an Undo button at the bottom");
     phone.shot("documents-06-iphone-undo");

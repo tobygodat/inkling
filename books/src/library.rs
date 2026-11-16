@@ -168,6 +168,73 @@ impl Library {
         self.save()
     }
 
+    /// Takes the book out of the library: its entry, and every file kept under its id (the parsed
+    /// book, the original, the cover, the images and anything else stored by id) move to
+    /// `.removed/<id>/` until [`Library::restore`] puts them back or [`Library::forget`] deletes them.
+    pub fn remove(&mut self, id: &BookId) -> io::Result<Removed> {
+        let Some(at) = self.entries.iter().position(|e| &e.id == id) else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "the book isn't in the library"));
+        };
+        let aside = self.aside(id);
+        let _ = fs::remove_dir_all(&aside);
+        for (from, to) in self.stored_under(id, &self.dir, &aside)? {
+            fs::create_dir_all(to.parent().unwrap_or(&aside))?;
+            fs::rename(from, to)?;
+        }
+        let entry = self.entries.remove(at);
+        self.save()?;
+        Ok(Removed { entry, at })
+    }
+
+    /// Puts a removed book back where it was, with everything it had.
+    pub fn restore(&mut self, removed: Removed) -> io::Result<()> {
+        let aside = self.aside(&removed.entry.id);
+        if aside.is_dir() {
+            for (from, to) in self.stored_under(&removed.entry.id, &aside, &self.dir)? {
+                fs::create_dir_all(to.parent().unwrap_or(&self.dir))?;
+                fs::rename(from, to)?;
+            }
+            let _ = fs::remove_dir_all(&aside);
+        }
+        let at = removed.at.min(self.entries.len());
+        self.entries.insert(at, removed.entry);
+        self.save()
+    }
+
+    /// Deletes what a removed book left aside, once it can no longer come back.
+    pub fn forget(&self, removed: Removed) {
+        let _ = fs::remove_dir_all(self.aside(&removed.entry.id));
+    }
+
+    /// Deletes what books removed before the last quit left aside: they can no longer come back.
+    /// Only the app calls it, at launch, so a reader opening the library meanwhile never does.
+    pub fn forget_removed(&self) {
+        let _ = fs::remove_dir_all(self.dir.join(REMOVED));
+    }
+
+    fn aside(&self, id: &BookId) -> PathBuf {
+        self.dir.join(REMOVED).join(&id.0)
+    }
+
+    /// Each file or folder in a folder of `from` named for the book, paired with the same place
+    /// under `to`.
+    fn stored_under(&self, id: &BookId, from: &Path, to: &Path) -> io::Result<Vec<(PathBuf, PathBuf)>> {
+        let mut found = vec![];
+        for folder in fs::read_dir(from)?.flatten() {
+            let name = folder.file_name();
+            if name == REMOVED || !folder.path().is_dir() {
+                continue;
+            }
+            for item in fs::read_dir(folder.path())?.flatten() {
+                let path = item.path();
+                if path.file_stem().is_some_and(|stem| stem == id.0.as_str()) {
+                    found.push((path, to.join(&name).join(item.file_name())));
+                }
+            }
+        }
+        Ok(found)
+    }
+
     pub fn set_position(&mut self, id: &BookId, position: Position) -> io::Result<()> {
         let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(()) };
         if entry.position == position {
@@ -214,6 +281,17 @@ impl Library {
         let index = Index { books: self.entries.clone() };
         write_atomic(&self.dir.join("library.json"), &serde_json::to_vec_pretty(&index).map_err(io::Error::other)?)
     }
+}
+
+/// Where a removed book's files wait for an undo.
+const REMOVED: &str = ".removed";
+
+/// A book taken out of the library, which can still come back.
+#[derive(Debug)]
+pub struct Removed {
+    pub entry: Entry,
+    /// Its place in the list.
+    at: usize,
 }
 
 /// What an import leaves for the library to record: the book is already on disk.
@@ -473,6 +551,48 @@ mod tests {
         assert_eq!((book.parser, book.chapters.len()), (PARSER, 3));
         assert!(upgrade.as_ref().is_some_and(|u| u.before.as_ref().is_some_and(|b| b.len() == 2)));
         assert_eq!(load(&data, &id).unwrap(), book, "and stores what it read");
+    }
+
+    #[test]
+    fn a_removed_book_takes_everything_under_its_id_and_comes_back_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("small.epub");
+        fs::write(&file, crate::epub::tests::sample()).unwrap();
+        let mut lib = Library::open(dir.path().join("data")).unwrap();
+        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![] };
+        lib.insert(&other).unwrap();
+        let id = lib.add(&prepare(lib.dir(), &file).unwrap()).unwrap().id.clone();
+        lib.set_position(&id, Position { chapter: 1, fraction: 0.5 }).unwrap();
+        // Whatever else is kept by the book's id, such as its highlights, goes and comes back too.
+        fs::create_dir_all(lib.dir().join("highlights")).unwrap();
+        fs::write(lib.dir().join("highlights").join(format!("{}.json", id.0)), "[]").unwrap();
+        fs::create_dir_all(lib.dir().join("covers")).unwrap();
+        fs::write(lib.dir().join("covers").join(format!("{}.jpg", id.0)), "jpeg").unwrap();
+        let files = |lib: &Library| -> Vec<PathBuf> {
+            let mut all = vec![];
+            for folder in fs::read_dir(lib.dir()).unwrap().flatten().filter(|f| f.path().is_dir() && f.file_name() != REMOVED) {
+                all.extend(fs::read_dir(folder.path()).unwrap().flatten().map(|f| f.path()).filter(|p| p.to_string_lossy().contains(&id.0)));
+            }
+            all.sort();
+            all
+        };
+        let before = files(&lib);
+        assert!(before.len() >= 4, "the book, its original, its cover and its highlights: {before:?}");
+        let entries = lib.entries().to_vec();
+
+        let removed = lib.remove(&id).unwrap();
+        assert!(files(&lib).is_empty());
+        assert_eq!(Library::open(lib.dir()).unwrap().entries().iter().map(|e| &e.id).collect::<Vec<_>>(), [&other.id]);
+        assert!(lib.load(&other.id).is_ok(), "the other book is untouched");
+
+        lib.restore(removed).unwrap();
+        assert_eq!(files(&lib), before);
+        assert_eq!(Library::open(lib.dir()).unwrap().entries(), entries, "back in its place, where the reader left it");
+
+        let removed = lib.remove(&id).unwrap();
+        lib.forget(removed);
+        lib.forget_removed();
+        assert!(files(&lib).is_empty() && !lib.dir().join(REMOVED).exists());
     }
 
     #[test]

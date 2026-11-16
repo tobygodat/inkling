@@ -20,34 +20,41 @@ impl LiveEditor {
             .with_dark(dark)
     }
 
-    /// Selection backgrounds per leaf key, in each leaf's drawn bytes.
-    fn decorations(&self, leaves: &HashMap<u64, LeafRef>) -> HashMap<u64, Vec<(Range<usize>, Hsla)>> {
+    /// Find's tints, then the selection over them, per leaf key, in each leaf's drawn bytes.
+    fn decorations(&self, leaves: &HashMap<u64, LeafRef>, selection: bool) -> HashMap<u64, Vec<(Range<usize>, Hsla)>> {
+        let mut tint: Hsla = self.theme.c.selection.into();
+        tint.a *= 0.4;
         let sel = self.draft.selection().range();
-        let mut out = HashMap::new();
-        if sel.is_empty() {
+        let mut ranges: Vec<(Range<usize>, Hsla)> = self.found.iter().map(|r| (r.clone(), tint)).collect();
+        if selection && !sel.is_empty() {
+            ranges.push((sel, self.theme.c.selection.into()));
+        }
+        let mut out: HashMap<u64, Vec<(Range<usize>, Hsla)>> = HashMap::new();
+        if ranges.is_empty() {
             return out;
         }
-        let color: Hsla = self.theme.c.selection.into();
         for (&key, &r) in leaves {
             let Some(view) = self.leaf_for(r) else { continue };
-            let range = match view.leaf {
-                Some(leaf) => {
-                    let lr = leaf.source_range();
-                    if sel.end <= lr.start || sel.start >= lr.end {
-                        continue;
+            for (range, color) in &ranges {
+                let drawn = match view.leaf {
+                    Some(leaf) => {
+                        let lr = leaf.source_range();
+                        if range.end <= lr.start || range.start >= lr.end {
+                            continue;
+                        }
+                        leaf.to_drawn(range.start.max(lr.start))..leaf.to_drawn(range.end.min(lr.end))
                     }
-                    leaf.to_drawn(sel.start.max(lr.start))..leaf.to_drawn(sel.end.min(lr.end))
-                }
-                None => {
-                    let (s, e) = (sel.start.max(view.start), sel.end.min(view.start + view.len));
-                    if s >= e {
-                        continue;
+                    None => {
+                        let (s, e) = (range.start.max(view.start), range.end.min(view.start + view.len));
+                        if s >= e {
+                            continue;
+                        }
+                        s - view.start..e - view.start
                     }
-                    s - view.start..e - view.start
+                };
+                if !drawn.is_empty() {
+                    out.entry(key).or_default().push((drawn, *color));
                 }
-            };
-            if !range.is_empty() {
-                out.insert(key, vec![(range, color)]);
             }
         }
         out
@@ -134,7 +141,7 @@ impl Render for LiveEditor {
             .map(|(ix, (id, node))| node.render_with_id(id.clone(), FlowPosition::at(&flat, ix, ix + 1 == flat.len()), &rcx, window, cx))
             .collect();
         let system_selection = self.form.system_selection() && self.focus.is_focused(window);
-        let decorations = if system_selection { HashMap::new() } else { self.decorations(&leaves) };
+        let decorations = self.decorations(&leaves, !system_selection);
         {
             let mut frame = self.frame.borrow_mut();
             frame.revision = self.revision;

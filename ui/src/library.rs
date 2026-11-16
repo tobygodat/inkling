@@ -2,13 +2,16 @@
 //! library lives in `<data>/library/`. Parsing, the folder search and loading a book run on the
 //! background executor; only `Library`'s small index is written on the UI thread.
 
+use crate::FormFactor;
 use crate::app::{Inkling, Screen, ghost_button, primary_button};
+use crate::find::Place;
 use crate::reading::Reading;
 use crate::theme::Colors;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use inkling_books::scan::{self, Found};
-use inkling_books::{Position, BookId, Entry, Format, Library, Prepared};
+use inkling_books::{Position, BookId, Entry, Format, Library, Prepared, Removed};
+use inkling_core::find::contains;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -48,12 +51,21 @@ pub(crate) struct Books {
     pub parked: Option<Reading>,
     /// How many times a book has been read from disk to open it.
     pub loads: usize,
+    /// The Mac's chosen tile, which Delete and Enter act on.
+    pub chosen: Option<BookId>,
+    /// iPhone: the tile held down, showing Delete.
+    pub held: Option<BookId>,
+    /// The book deleted last, until the next action: Cmd-Z or Undo brings it back.
+    pub removed: Option<Removed>,
 }
 
 impl Books {
     pub fn open(dir: PathBuf) -> Self {
         let library = Library::open(dir).map_err(|e| format!("The library couldn't be opened ({e})."));
-        Books { library, host: None, adding: 0, errors: vec![], opening: None, left_in_book: false, parked: None, loads: 0 }
+        if let Ok(library) = &library {
+            library.forget_removed();
+        }
+        Books { library, host: None, adding: 0, errors: vec![], opening: None, left_in_book: false, parked: None, loads: 0, chosen: None, held: None, removed: None }
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -177,6 +189,9 @@ impl Inkling {
 
     /// Parses and stores each file on the background executor, then records it in the index.
     pub fn import(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if !paths.is_empty() {
+            self.forget_removed_book();
+        }
         let Ok(library) = &self.books.library else { return };
         if paths.is_empty() {
             return;
@@ -335,6 +350,139 @@ impl Inkling {
         .detach();
     }
 
+    /// The books the shelf shows: all of them, or those whose title or author Find's query is in.
+    pub fn shown_books(&self, cx: &App) -> Vec<&Entry> {
+        let query = self.row_filter(Place::Library, cx);
+        self.books
+            .entries()
+            .iter()
+            .filter(|e| query.as_deref().is_none_or(|q| contains(&e.title, q) || e.author.as_deref().is_some_and(|a| contains(a, q))))
+            .collect()
+    }
+
+    /// The Mac's chosen tile.
+    pub fn chosen_book(&self) -> Option<&BookId> {
+        self.books.chosen.as_ref()
+    }
+
+    pub fn choose_book(&mut self, id: BookId, cx: &mut Context<Self>) {
+        self.books.chosen = Some(id);
+        cx.notify();
+    }
+
+    /// A tap on a tile: on the Mac it is chosen, and a double click opens it; on iPhone it opens,
+    /// unless it is the one held down, whose Delete is showing.
+    fn tile_clicked(&mut self, id: BookId, event: &ClickEvent, cx: &mut Context<Self>) {
+        match self.form {
+            FormFactor::Mac if event.click_count() > 1 => self.open_book(id, cx),
+            FormFactor::Mac => self.choose_book(id, cx),
+            FormFactor::Phone if self.books.held.is_some() => {
+                if self.books.held.as_ref() != Some(&id) {
+                    self.books.held = None;
+                }
+                cx.notify();
+            }
+            FormFactor::Phone => self.open_book(id, cx),
+        }
+    }
+
+    /// iPhone: pressing and holding a tile shows its Delete.
+    pub fn hold_book(&mut self, id: BookId, cx: &mut Context<Self>) {
+        self.books.held = Some(id);
+        cx.notify();
+    }
+
+    /// Delete on the Mac, or Delete under a held tile on iPhone. The book can come back until the
+    /// next action.
+    pub fn remove_book(&mut self, id: BookId, cx: &mut Context<Self>) {
+        self.forget_removed_book();
+        self.books.held = None;
+        let shown: Vec<BookId> = self.shown_books(cx).iter().map(|e| e.id.clone()).collect();
+        let Ok(library) = &mut self.books.library else { return };
+        match library.remove(&id) {
+            Ok(removed) => {
+                self.books.removed = Some(removed);
+                if self.books.parked.as_ref().is_some_and(|r| r.book.id == id) {
+                    self.books.parked = None;
+                    self.books.left_in_book = false;
+                }
+                if self.books.chosen.as_ref() == Some(&id) {
+                    let at = shown.iter().position(|b| *b == id).unwrap_or(0);
+                    let rest: Vec<&BookId> = shown.iter().filter(|b| **b != id).collect();
+                    self.books.chosen = rest.get(at.min(rest.len().saturating_sub(1))).map(|b| (*b).clone());
+                }
+            }
+            Err(e) => self.books.errors = vec![format!("The book couldn't be deleted ({e}).")],
+        }
+        cx.notify();
+    }
+
+    /// Cmd-Z on the library, or Undo on iPhone: the book deleted last comes back, with its cover,
+    /// its file and its place.
+    pub fn undo_remove_book(&mut self, cx: &mut Context<Self>) {
+        let Some(removed) = self.books.removed.take() else { return };
+        let id = removed.entry.id.clone();
+        let Ok(library) = &mut self.books.library else { return };
+        match library.restore(removed) {
+            Ok(()) => self.books.chosen = Some(id),
+            Err(e) => self.books.errors = vec![format!("The book couldn't be brought back ({e}).")],
+        }
+        cx.notify();
+    }
+
+    pub fn can_undo_remove_book(&self) -> bool {
+        self.books.removed.is_some()
+    }
+
+    /// The deleted book can no longer come back: what it left aside goes.
+    pub(crate) fn forget_removed_book(&mut self) {
+        if let (Some(removed), Ok(library)) = (self.books.removed.take(), &self.books.library) {
+            library.forget(removed);
+        }
+    }
+
+    /// Undo lasts until the next action: leaving the library ends it.
+    pub(crate) fn removal_follows_screen(&mut self) {
+        if !matches!(self.screen, Screen::Library(None)) {
+            self.forget_removed_book();
+            self.books.held = None;
+        }
+    }
+
+    /// The keys the library owns on the Mac: the arrows choose a tile, Enter opens it, Delete
+    /// deletes it and Cmd-Z brings it back.
+    pub(crate) fn library_key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !matches!(self.screen, Screen::Library(None)) || self.typing_hex(window, cx) {
+            return false;
+        }
+        let m = key.modifiers;
+        let shown: Vec<BookId> = self.shown_books(cx).iter().map(|e| e.id.clone()).collect();
+        let at = self.books.chosen.as_ref().and_then(|id| shown.iter().position(|b| b == id));
+        let step = |forward: bool| match (at, shown.len()) {
+            (_, 0) => None,
+            (None, _) => Some(0),
+            (Some(at), n) if forward => Some((at + 1).min(n - 1)),
+            (Some(at), _) => Some(at.saturating_sub(1)),
+        };
+        match key.key.as_str() {
+            "z" if m.platform && !m.shift => self.undo_remove_book(cx),
+            _ if m.modified() => return false,
+            "left" | "up" => self.books.chosen = step(false).map(|i| shown[i].clone()),
+            "right" | "down" => self.books.chosen = step(true).map(|i| shown[i].clone()),
+            "enter" => match at {
+                Some(at) => self.open_book(shown[at].clone(), cx),
+                None => return false,
+            },
+            "backspace" | "delete" => match at {
+                Some(at) => self.remove_book(shown[at].clone(), cx),
+                None => return false,
+            },
+            _ => return false,
+        }
+        cx.notify();
+        true
+    }
+
     pub(crate) fn render_library(&self, finding: Option<&Finding>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let m = self.metrics();
         let side = if self.form == crate::FormFactor::Phone { m.gutter } else { m.gutter.max(px(56.)) };
@@ -343,7 +491,28 @@ impl Inkling {
             Some(finding) => content.child(self.render_finding(finding, cx)),
             None => content.child(self.render_shelf_header(cx)).children(self.render_library_status()).child(self.render_shelf(cx)),
         };
-        div().id("library").size_full().flex().flex_col().items_center().overflow_y_scroll().child(content).test_support()
+        let phone = self.form == FormFactor::Phone;
+        let c = self.theme().c;
+        let undo = (phone && finding.is_none() && self.books.removed.is_some()).then(|| {
+            div().w_full().px(m.gutter).pb_2().child(
+                outlined_button(&c, "undo-remove-book", "Undo")
+                    .w_full()
+                    .h(m.control)
+                    .justify_center()
+                    .text_size(px(15.))
+                    .on_click(cx.listener(|this, _, _, cx| this.undo_remove_book(cx)))
+                    .test_support(),
+            )
+        });
+        let find = finding.is_none().then(|| self.render_find_button(cx)).flatten().map(|button| div().absolute().top_0().right(px(4.)).child(button));
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(div().id("library").flex_1().min_h_0().w_full().flex().flex_col().items_center().overflow_y_scroll().child(content).test_support())
+            .children(undo)
+            .children(find)
     }
 
     fn render_title(&self, title: &'static str) -> Div {
@@ -404,8 +573,8 @@ impl Inkling {
     fn render_shelf(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme();
         let c = t.c;
-        let entries = self.books.entries();
-        if entries.is_empty() {
+        let entries = self.shown_books(cx);
+        if entries.is_empty() && self.books.entries().is_empty() {
             let hint = if self.books.host.is_some() { "Add an EPUB or a PDF, or find the books already in your folders." } else { "" };
             return div()
                 .id("library-empty")
@@ -423,21 +592,87 @@ impl Inkling {
             Ok(library) => entries.iter().map(|e| library.cover_path(e)).collect(),
             Err(_) => vec![None; entries.len()],
         };
+        let phone = self.form == FormFactor::Phone;
         div()
             .id("shelf")
             .flex()
             .flex_wrap()
             .gap_x(px(32.))
             .gap_y(px(36.))
-            .children(entries.iter().zip(covers).enumerate().map(|(at, (entry, cover))| {
+            .children(entries.into_iter().zip(covers).enumerate().map(|(at, (entry, cover))| {
                 let id = entry.id.clone();
+                let chosen = !phone && self.books.chosen.as_ref() == Some(&entry.id);
+                let held = phone && self.books.held.as_ref() == Some(&entry.id);
                 self.render_tile(entry, cover, &c)
                     .id(("book", at))
-                    .on_click(cx.listener(move |this, _, _, cx| this.open_book(id.clone(), cx)))
+                    .relative()
+                    .p(px(6.))
+                    .m(px(-6.))
+                    .rounded(px(8.))
+                    .when(chosen, |tile| tile.bg(c.segment))
+                    .when(phone, |tile| tile.child(self.render_hold(entry.id.clone(), cx)))
+                    .when(held, |tile| tile.child(self.render_held(entry.id.clone(), cx)))
+                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| this.tile_clicked(id.clone(), event, cx)))
                     .test_support()
             }))
             .test_support()
             .into_any_element()
+    }
+
+    /// iPhone: catches a press held on the tile.
+    fn render_hold(&self, id: BookId, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let view = cx.entity().downgrade();
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                window.on_mouse_event(move |event: &LongPressEvent, phase, window, cx| {
+                    if phase.bubble() && event.phase == TouchPhase::Started && bounds.contains(&event.start_position) {
+                        let _ = view.update(cx, |this, cx| this.hold_book(id.clone(), cx));
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    }
+
+    /// iPhone: Delete, over the held tile.
+    fn render_held(&self, id: BookId, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = self.theme().c;
+        div()
+            .absolute()
+            .left(px(12.))
+            .right(px(12.))
+            .top(px(48.))
+            .p(px(4.))
+            .bg(c.surface)
+            .border_1()
+            .border_color(c.hairline)
+            .rounded(px(10.))
+            .shadow_md()
+            .occlude()
+            .child(
+                div()
+                    .id("delete-book")
+                    .h(self.metrics().control)
+                    .px(px(12.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.))
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(c.ink)
+                    .child("Delete")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.remove_book(id.clone(), cx);
+                    }))
+                    .test_support(),
+            )
     }
 
     /// A book: its cover, or its title on a plain tile, with a progress line once it is started.

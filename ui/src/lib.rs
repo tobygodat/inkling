@@ -7,6 +7,7 @@ mod appearance;
 mod chrome;
 mod documents;
 mod feedback;
+mod find;
 mod icons;
 mod inline;
 mod keys;
@@ -25,6 +26,7 @@ pub use app::{Ground, Inkling, OpenKeys, Saved, ShowReading, ShowWriting};
 pub use chrome::Menu;
 pub use documents::NewDocument;
 pub use feedback::Restart;
+pub use find::OpenFind;
 pub use icons::Assets;
 pub use library::BookHost;
 pub use page::Page;
@@ -105,6 +107,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-1", ShowWriting, None),
         KeyBinding::new("cmd-2", ShowReading, None),
         KeyBinding::new("cmd-n", documents::NewDocument, None),
+        KeyBinding::new("cmd-f", find::OpenFind, None),
     ]);
     live::bind_keys(cx);
 }

@@ -9,6 +9,7 @@ pub mod documents;
 pub mod draft;
 pub mod ask;
 pub mod feedback;
+pub mod find;
 #[cfg(test)]
 mod mock;
 pub mod providers;
