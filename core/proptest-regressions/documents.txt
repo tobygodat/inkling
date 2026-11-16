@@ -7,3 +7,4 @@
 cc 03342e6c24de7bdd6e90fa8c228fb1682d95eb2c32ad30cebfd8ae7fb7a79947 # shrinks to blocks = ["Soft\nbreak."], caret = Some(0)
 cc f116fb3c7be723fd5cf90d6db3ce849801a754766fe947983ff067ffa95ab846 # shrinks to blocks = ["```rust\nopen"], caret = None
 cc 1d540fcb0b0c35d270618fb4831ed14814e9c82618d08c4c18cacb310b56b135 # shrinks to blocks = ["```rust\nlet x = 1;\n    ```"], caret = None
+cc cce7c164a6a7f3e6bc8e32f604b5d08a0edfe612707b35de632f0a9435981984 # shrinks to blocks = ["> Q", "```rust\nlet x = 1;\n    ```"], caret = None
