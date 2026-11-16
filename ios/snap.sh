@@ -69,8 +69,8 @@ point() {
     sheet-done) echo "363 402" ;;
     sync) echo "353 458" ;;
     tone-sepia) echo "127 582" ;;
-    pages-scroll) echo "110 495" ;;
-    pages-paged) echo "290 495" ;;
+    pages-scroll) echo "110 450" ;;
+    pages-paged) echo "290 450" ;;
     # The documents: "‹ Documents" after the corner, then the list's New and rows, newest first.
     open-documents) echo "200 84" ;;
     new-document) echo "366 84" ;;
