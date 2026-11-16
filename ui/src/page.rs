@@ -60,6 +60,11 @@ impl Page {
         self.0.update(cx, |p, cx| p.set_selection(range, cx));
     }
 
+    /// Find's matches, tinted, and the current one, selected and scrolled to.
+    pub(crate) fn set_found(&self, found: Vec<Range<usize>>, current: Option<Range<usize>>, cx: &mut App) {
+        self.0.update(cx, |p, cx| p.set_found(found, current, cx));
+    }
+
     /// Replaces `range` of the source with `text`, as one undo step.
     pub fn replace(&self, range: Range<usize>, text: &str, cx: &mut App) {
         self.0.update(cx, |p, cx| p.replace(range, text, cx));

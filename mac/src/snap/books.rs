@@ -32,6 +32,12 @@ fn entries(s: &mut Snap) -> Vec<inkling_books::Entry> {
     s.read(|v, _| v.library_entries().to_vec())
 }
 
+/// A click chooses a tile and Enter opens it.
+fn open_tile(s: &mut Snap, at: usize) {
+    s.click(("book", at));
+    s.press("enter");
+}
+
 fn position(s: &mut Snap) -> Option<inkling_books::Position> {
     s.read(|v, _| v.reading().map(|(_, at)| at))
 }
@@ -143,7 +149,7 @@ pub fn run(dir: &Path) {
     );
     s.click("appearance-done");
 
-    s.click(("book", 1usize));
+    open_tile(&mut s, 1);
     settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
     let target = s.read(|v, _| {
         let (book, _) = v.reading().unwrap_or_else(|| fail("a click opens the book"));
@@ -330,7 +336,7 @@ pub fn run(dir: &Path) {
     settle_work(&mut s, |s| s.read(|v, _| v.library_open()));
     check(s.read(|v, _| v.library_open() && v.reading().is_none()), "left in the library, Read goes back to the library, not the book");
     check(entries(&mut s)[1].position == kept, "and the book keeps its place");
-    s.click(("book", 1usize));
+    open_tile(&mut s, 1);
     settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
     s.click("show-writing");
     s.click("show-reading");
@@ -369,6 +375,7 @@ pub fn run(dir: &Path) {
     s.click("appearance-done");
     drop(s);
     walden(dir, &folder, &picked, &fixtures);
+    find_and_delete(dir, &folder, &picked);
 }
 
 /// A book with italics, a picture with its caption and a footnote (`books/examples/walden.rs`).
@@ -380,7 +387,7 @@ fn walden(dir: &Path, folder: &Path, picked: &Picked, fixtures: &Path) {
     s.click("add-book");
     settle_work(&mut s, |s| s.read(|v, _| v.adding() == 0));
     check(entries(&mut s)[0].title == "Walden", "Add puts Walden in the library");
-    s.click(("book", 0usize));
+    open_tile(&mut s, 0);
     settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
     s.frame();
     let text = s.read(|v, _| v.reading().map(|(b, _)| b.chapters[0].text.clone())).unwrap_or_default();
@@ -531,4 +538,106 @@ fn passages(s: &mut Snap) {
     check(s.text() == DRAFT, "one Cmd-Z takes the quote out again");
     s.press("cmd-2");
     check(s.read(|v, _| v.reading().is_some()), "and Cmd-2 goes back to the book");
+}
+
+fn shown(s: &mut Snap) -> Vec<String> {
+    s.read(|v, cx| v.shown_books(cx).iter().map(|e| e.title.clone()).collect())
+}
+
+/// Find in a book and in the library, and a book deleted and brought back, on the Mac and iPhone.
+fn find_and_delete(dir: &Path, folder: &Path, picked: &Picked) {
+    use super::documents::{count, finding};
+    let mut s = open(dir, folder, picked);
+    s.click("show-reading");
+    settle_work(&mut s, |s| s.read(|v, _| v.library_open()));
+    let all = shown(&mut s);
+    check(all.len() == 3, "three books on the shelf");
+
+    s.press("cmd-f");
+    s.input("PRIDE");
+    check(shown(&mut s) == ["Pride and Prejudice"], "Find on the library filters the books by title, ignoring case");
+    s.shot("books-24-find-library");
+    s.press("escape");
+    s.press("cmd-f");
+    s.input("thoreau");
+    check(shown(&mut s) == ["Walden"], "and by author");
+    s.press("escape");
+    check(!finding(&mut s) && shown(&mut s) == all, "Escape shows every book again");
+
+    let pride = all.iter().position(|t| t == "Pride and Prejudice").unwrap_or_else(|| fail("Pride and Prejudice is on the shelf"));
+    open_tile(&mut s, pride);
+    settle_work(&mut s, |s| s.read(|v, _| v.reading().is_some()));
+    s.frame();
+    let start = position(&mut s).unwrap_or_default();
+    s.press("cmd-f");
+    s.input("Pemberley");
+    s.frame();
+    let (_, total) = count(&mut s).unwrap_or_else(|| fail("Find in a book shows its count"));
+    let first = position(&mut s).unwrap_or_default();
+    check(total > 5 && first.chapter >= start.chapter, &format!("Find covers the whole book: 1 / {total}, in chapter {}", first.chapter + 1));
+    s.shot("books-25-find-in-book");
+    let mut moved = None;
+    for _ in 0..total {
+        s.press("enter");
+        s.frame();
+        let at = position(&mut s).unwrap_or_default();
+        if at.chapter != first.chapter {
+            moved = Some(at);
+            break;
+        }
+    }
+    let moved = moved.unwrap_or_else(|| fail("Return reaches a match in another chapter"));
+    check(count(&mut s).is_some_and(|(at, _)| at > 1), &format!("Return goes on into the next chapter with a match ({} → {})", first.chapter + 1, moved.chapter + 1));
+    s.press("shift-enter");
+    s.frame();
+    check(position(&mut s).map(|at| at.chapter) == Some(first.chapter), "Shift-Return goes back to the one before");
+    s.press("enter");
+    s.frame();
+    s.shot("books-26-find-next-chapter");
+    s.press("escape");
+    s.advance(501);
+    let kept = position(&mut s).unwrap_or_default();
+    check(!finding(&mut s) && kept.chapter == moved.chapter, "Escape closes the field and leaves the book at the match");
+
+    s.click("back-to-library");
+    let library = Paths::mac().dir.join("library");
+    let stored = |id: &str| -> usize {
+        ["books", "originals", "covers", "images"].iter().filter_map(|f| std::fs::read_dir(library.join(f)).ok()).flatten().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(id)).count()
+    };
+    let entry = entries(&mut s).into_iter().find(|e| e.title == "Pride and Prejudice").unwrap_or_else(|| fail("Pride and Prejudice is in the index"));
+    let files = stored(&entry.id.0);
+    s.click(("book", pride));
+    s.press("backspace");
+    check(shown(&mut s).len() == 2 && stored(&entry.id.0) == 0, &format!("Delete on the chosen tile deletes the book with its text, cover and file ({files} files)"));
+    s.shot("books-27-deleted");
+    s.press("cmd-z");
+    let back = entries(&mut s).into_iter().find(|e| e.title == "Pride and Prejudice");
+    check(shown(&mut s) == all && stored(&entry.id.0) == files, "Cmd-Z brings it back in its place, with all of them");
+    check(back.is_some_and(|b| b.position == kept && b.cover == entry.cover), "and where the reader left it");
+    drop(s);
+
+    let mut phone = Snap::open_as(dir, FormFactor::Phone);
+    phone.update(|v, _, cx| v.set_book_host(host(vec![folder.to_path_buf()], picked), cx));
+    phone.click("show-reading");
+    settle_work(&mut phone, |s| s.read(|v, _| v.library_open()));
+    phone.click("open-find");
+    phone.input("walden");
+    check(shown(&mut phone) == ["Walden"] && phone.bounds("find-done").is_some(), "on iPhone the magnifier opens Find on the library");
+    phone.click("find-done");
+    check(!finding(&mut phone) && shown(&mut phone).len() == 3, "and Done closes it");
+    let id = entries(&mut phone).into_iter().find(|e| e.title == "Walden").map(|e| e.id).unwrap_or_else(|| fail("Walden is in the index"));
+    let library = Paths::mac().dir.join("library");
+    let marked = inkling_books::highlights::load(&library, &id);
+    check(marked.len() == 2, &format!("Walden has the two highlights made above ({})", marked.len()));
+    phone.update(|v, _, cx| v.hold_book(id.clone(), cx));
+    phone.frame();
+    check(phone.bounds("delete-book").is_some(), "a press held on a tile shows Delete");
+    phone.shot("books-28-iphone-hold");
+    phone.click("delete-book");
+    check(shown(&mut phone).len() == 2 && phone.bounds("undo-remove-book").is_some(), "Delete removes the book and leaves Undo at the bottom");
+    check(inkling_books::highlights::load(&library, &id).is_empty(), "its highlights go with it");
+    phone.shot("books-29-iphone-undo");
+    phone.click("undo-remove-book");
+    check(shown(&mut phone).len() == 3 && phone.bounds("undo-remove-book").is_none(), "Undo brings it back and goes");
+    check(inkling_books::highlights::load(&library, &id) == marked, "with both its highlights");
 }

@@ -14,4 +14,4 @@ pub mod scan;
 pub use book::{Book, BookId, Chapter, Format, PARSER, Position, display_title};
 pub use highlights::Highlight;
 pub use import::ImportError;
-pub use library::{Entry, Library, Prepared, load, prepare};
+pub use library::{Entry, Library, Prepared, Removed, load, prepare};

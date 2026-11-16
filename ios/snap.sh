@@ -26,7 +26,7 @@ point() {
   case "$1" in
     page) echo "200 300" ;;
     header-done) echo "364 84" ;;     # header, while the page has focus
-    add-key) echo "351 84" ;;         # header, "Claude · add a key"
+    add-key) echo "300 84" ;;         # header, "Claude · add a key", left of the magnifier
     fix-grammar) echo "72 752" ;;     # keyboard down
     change-teh) echo "176 182" ;;     # "teh", second line of the review
     keep) echo "106 746" ;;
@@ -35,9 +35,9 @@ point() {
     back) echo "80 105" ;;
     key-field) echo "200 357" ;;
     reveal-key) echo "355 357" ;;
-    open-keys) echo "360 84" ;;       # header, "Claude" once a key is saved
+    open-keys) echo "316 84" ;;       # header, "Claude" once a key is saved
     feedback-link) echo "200 690" ;;  # key screen, scrolled to the bottom
-    open-feedback) echo "282 84" ;;   # header, left of the provider
+    open-feedback) echo "261 84" ;;   # header, the message icon left of the provider
     feedback-field) echo "200 250" ;;
     feedback-done) echo "355 105" ;;
     feedback-back) echo "80 105" ;;
@@ -59,7 +59,7 @@ point() {
     # their imports finish, so the place is read from library.json.
     tile:*) tile "${1#tile:}" ;;
     page-forward) echo "370 450" ;;   # the page's right third
-    contents) echo "343 90" ;;
+    contents) echo "305 90" ;;        # left of the magnifier
     chapter-one) echo "120 237" ;;    # Contents' second chapter, under the Chapters and Highlights tabs
     back-to-library) echo "192 90" ;;  # "‹ Library", right of the 150 pt corner
     add-one-found) echo "200 343" ;;  # Add, under a single book Find books found
@@ -79,7 +79,7 @@ point() {
     pages-paged) echo "290 450" ;;
     # The documents: "‹ Documents" after the corner, then the list's New and rows, newest first.
     open-documents) echo "200 84" ;;
-    new-document) echo "366 84" ;;
+    new-document) echo "316 84" ;;    # left of the magnifier
     row-one) echo "200 136" ;;
     row-two) echo "200 182" ;;
     undo-remove) echo "201 810" ;;
@@ -88,6 +88,15 @@ point() {
     sign-in) echo "201 451" ;;
     copy-address) echo "328 201" ;;  # Agents, the second row
     try-again) echo "355 145" ;;     # the first row, while sync has stopped
+    # Find: the magnifier at the top right and Done beside the field, in a 44 pt header (the page
+    # and the documents) or a 56 pt one (the library and a book).
+    open-find) echo "372 84" ;;
+    find-done) echo "367 84" ;;
+    open-find-tall) echo "378 90" ;;
+    find-done-tall) echo "367 90" ;;
+    # Delete, over a held tile, and Undo under the shelf.
+    delete:*) echo "$(tile "${1#delete:}" | cut -d' ' -f1) 249" ;;
+    undo-remove-book) echo "201 810" ;;
     *) echo "no point named $1" >&2; exit 1 ;;
   esac
 }
@@ -475,6 +484,39 @@ tap undo-remove 1.5
 grep -rqx "The second piece" "$(data_dir)/documents" || fail "Undo did not bring the second piece back whole"
 shot
 
+# Find (TOB-489) on the page and the list. The live editor gives UIKit no accessibility tree, so the
+# page's matches are checked by what the screen shows: the Search key moves the current one.
+begin find-page
+tap row-two 1.5
+expect_draft "$ferry"
+tap open-find
+./keys.sh "$ad" "t"
+sleep 1
+found="$(mktemp -d)"
+"$ad" screenshot "$found/first.png" >/dev/null
+shot
+
+begin find-page-next
+./keys.sh "$ad" "/"
+sleep 1
+"$ad" screenshot "$found/next.png" >/dev/null
+cmp -s "$found/first.png" "$found/next.png" && fail "the Search key did not go to the next match"
+shot
+tap find-done
+"$ad" is visible 'role="button" label="Paste"' >/dev/null && fail "Done left the keyboard up"
+expect_draft "$ferry"
+rm -rf "$found"
+
+begin find-list
+tap open-documents 1.5
+tap open-find
+./keys.sh "$ad" "ferry"
+sleep 1
+shot
+# Filtered, the first row is the ferry, though the second piece is newer.
+tap row-one 1.5
+expect_draft "$ferry"
+
 # The library and reading (TOB-460). Find books always searches the app's Documents, where the
 # fixture books are copied with simctl. The system pickers, for Add and for Search another folder,
 # are driven by hand: see README.md.
@@ -688,6 +730,61 @@ expect_draft "$quoted"
 shot
 tap show-writing 1.5
 "$ad" screenshot "$shots/$(printf %02d "$step")-$name-page.png" --pixel-density 3 >/dev/null
+
+# Find in a book, across its chapters, and in the library; then a book deleted and brought back.
+begin find-book
+tap show-reading 2
+tap open-find-tall
+./keys.sh "$ad" "woods"
+sleep 1
+shot
+
+begin find-book-next
+./keys.sh "$ad" "/"
+sleep 1.5
+shot
+tap find-done-tall 1.5
+[ "$(book_state Walden | cut -d' ' -f1)" = 1 ] || fail "the Search key and Done did not leave Walden at the match in the next chapter: $(book_state Walden)"
+
+begin find-library
+tap back-to-library 1.5
+tap open-find-tall
+./keys.sh "$ad" "pride"
+sleep 1
+shot
+before="$(book_state Pride | cut -d' ' -f3)"
+# Filtered, Pride and Prejudice is the first tile, though Walden is newer.
+"$ad" press 90 296 >/dev/null
+sleep 3
+[ "$(book_state Pride | cut -d' ' -f3)" -gt "$before" ] || fail "the first tile under \"pride\" did not open Pride and Prejudice"
+
+stored() {
+  find "$(data_dir)/library" -path '*/.removed' -prune -o -name "$1*" -print | wc -l | tr -d ' '
+}
+
+begin delete-book
+tap back-to-library 1.5
+walden_id="$(python3 -c 'import json, sys; print(next(b["id"] for b in json.load(open(sys.argv[1]))["books"] if b["title"] == "Walden"))' "$(library_json)")"
+files="$(stored "$walden_id")"
+marked="$(data_dir)/library/highlights/$walden_id.json"
+[ "$files" -ge 4 ] && grep -q '"words"' "$marked" || fail "Walden has $files files, expected its book, original, images and the highlight made above"
+before_marks="$(cat "$marked")"
+# shellcheck disable=SC2046
+"$ad" longpress $(point tile:Walden) 800 >/dev/null
+sleep 1.5
+shot
+
+begin book-deleted
+tap delete:Walden 1.5
+[ "$(book_count)" = 2 ] && [ "$(stored "$walden_id")" = 0 ] && [ ! -f "$marked" ] || fail "Delete left $(book_count) books and $(stored "$walden_id") of Walden's files, its highlights included"
+shot
+
+begin undo-book
+tap undo-remove-book 1.5
+[ "$(book_count)" = 3 ] && [ "$(stored "$walden_id")" = "$files" ] || fail "Undo left $(book_count) books and $(stored "$walden_id") of Walden's $files files"
+[ "$(cat "$marked" 2>/dev/null)" = "$before_marks" ] || fail "Undo did not bring Walden's highlights back"
+[ "$(book_state Walden | cut -d' ' -f1)" = 1 ] || fail "Walden came back without its place: $(book_state Walden)"
+shot
 
 # Account and sync (TOB-490), against the fake server in fake-server.json: no Google, no network.
 fake_server() {

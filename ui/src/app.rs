@@ -3,6 +3,8 @@ use crate::account::Account;
 use crate::appearance::AppearancePanel;
 use crate::documents::{DocList, Docs};
 use crate::feedback::FeedbackScreen;
+use crate::find::Finder;
+use crate::icons::Icon;
 use crate::keys::KeyScreen;
 use crate::library::{Books, Finding};
 use crate::page::Page;
@@ -160,6 +162,10 @@ pub struct Inkling {
     pub(crate) books: Books,
     /// Counts scrolls and chapter turns, so only the last one's timer saves the reading place.
     pub(crate) saves: u64,
+    /// Find's field, kept with its last query while Find is closed.
+    pub(crate) find_field: Entity<InputState>,
+    /// Find, while it is open.
+    pub(crate) finder: Option<Finder>,
     pub(crate) focus: FocusHandle,
     /// The sign-in and sync.
     pub(crate) account: Account,
@@ -220,6 +226,7 @@ impl Inkling {
         });
         let books = Books::open(paths.dir.join("library"));
         let account = Account::new(&paths, form, keys.as_ref());
+        let (find_field, found) = crate::find::new_field(window, cx);
         let mut inkling = Inkling {
             form,
             paths,
@@ -253,7 +260,9 @@ impl Inkling {
             saves: 0,
             account,
             window: window.window_handle(),
-            _subs: vec![sent, intercept, feedback_edited],
+            find_field,
+            finder: None,
+            _subs: vec![sent, intercept, feedback_edited, found],
         };
         let syncing = inkling.start_syncing(window, cx);
         inkling._subs.push(syncing);
@@ -333,6 +342,7 @@ impl Inkling {
         if matches!(self.revision, Revision::Failed(_)) {
             self.revision.dismiss();
         }
+        self.page_edited_while_finding(cx);
         self.saved = Saved::Pending;
         self.save = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(AUTOSAVE).await;
@@ -351,6 +361,14 @@ impl Inkling {
     /// Keys the review, a running request, the key screen or a message own. Runs before any
     /// binding, so the editor never sees them while they mean something here.
     fn key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // While Find's field has the keys they are its own, but for Escape, which closes it.
+        if self.finder.is_some() && self.find_field.read(cx).focus_handle(cx).is_focused(window) {
+            if key.key == "escape" {
+                self.close_find(window, cx);
+                return true;
+            }
+            return false;
+        }
         if key.key != "escape" && self.reading_key(key, window, cx) {
             return true;
         }
@@ -358,7 +376,7 @@ impl Inkling {
             self.send_feedback(window, cx);
             return true;
         }
-        if self.documents_key(key, window, cx) {
+        if self.documents_key(key, window, cx) || self.library_key(key, window, cx) {
             return true;
         }
         if key.modifiers.modified() {
@@ -382,7 +400,9 @@ impl Inkling {
     }
 
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.menu.is_open() {
+        if self.finder.is_some() {
+            self.close_find(window, cx);
+        } else if self.menu.is_open() {
             self.close_menu(cx);
         } else if self.picker_part().is_some() {
             self.close_picker(cx);
@@ -870,13 +890,16 @@ impl Render for Inkling {
             .on_action(cx.listener(Self::on_open_keys))
             .on_action(cx.listener(Self::on_show_writing))
             .on_action(cx.listener(Self::on_show_reading))
-            .on_action(cx.listener(Self::on_new_document));
+            .on_action(cx.listener(Self::on_new_document))
+            .on_action(cx.listener(Self::on_open_find));
         if self.kit_view != self.view() {
             self.kit_view = self.view();
             t.apply_to_kit(cx);
             cx.emit(Ground::of(&t));
         }
         self.panel_follows_view(window, cx);
+        self.find_follows_screen(window, cx);
+        self.removal_follows_screen();
         self.restore_place(window, cx);
         let screen = match &self.screen {
             Screen::Keys(keys) => self.render_keys(keys, cx).into_any_element(),
@@ -897,7 +920,7 @@ impl Render for Inkling {
                 .into_any_element(),
             _ => screen,
         };
-        let root = root.child(screen);
+        let root = root.child(screen).children(self.render_find_bar(cx));
         if self.form == FormFactor::Phone {
             // The Appearance sheet sits over the lower part of the screen, under the corner.
             let sheet = self.panel.as_ref().map(|panel| div().absolute().left_0().right_0().bottom_0().h(relative(0.6)).child(self.render_appearance(panel, cx)));
@@ -1012,10 +1035,17 @@ impl Inkling {
             .when(!typing, |row| row.child(self.render_documents_link(cx)))
             .child(div().flex_1().min_w_0().truncate().child(saved))
             .when(self.feedback_on, |row| {
+                // The message icon, as on the Mac: the row also holds the provider and Find.
                 row.child(
-                    ghost_button(&c, "open-feedback", "Feedback")
-                        .h(m.control)
-                        .text_color(c.ink)
+                    div()
+                        .id("open-feedback")
+                        .flex_none()
+                        .size(m.control)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .aria_label("Feedback")
+                        .child(Icon::Message.draw(px(20.), c.ink))
                         .on_click(cx.listener(|this, _, window, cx| this.open_feedback(window, cx)))
                         .test_support(),
                 )
@@ -1023,13 +1053,15 @@ impl Inkling {
             .child(
                 ghost_button(&c, "open-keys", "")
                     .h(m.control)
-                    .child(key)
+                    .min_w_0()
+                    .child(div().truncate().child(key))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let provider = this.settings.provider;
                         this.open_keys(provider, window, cx);
                     }))
                     .test_support(),
             )
+            .when(!typing, |row| row.children(self.render_find_button(cx)))
             .when(typing, |row| {
                 row.child(
                     ghost_button(&c, "done", "Done")

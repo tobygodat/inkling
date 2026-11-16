@@ -276,7 +276,8 @@ impl Inkling {
     /// iPhone: the toggle alone at the top left, as the phone has no cog. The key and feedback
     /// screens have their own way back, and a review its own bar, so it stays off those.
     pub(crate) fn render_phone_corner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        let shown = match self.screen {
+        let shown = self.finder.is_none()
+            && match self.screen {
             Screen::Page => self.revision.review().is_none(),
             Screen::Library(..) | Screen::Reading(_) | Screen::Documents(_) | Screen::Account => true,
             Screen::Keys(_) | Screen::Feedback(_) => false,

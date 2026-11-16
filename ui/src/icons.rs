@@ -19,10 +19,11 @@ pub(crate) enum Icon {
     Account,
     Highlighter,
     Quote,
+    Search,
 }
 
 impl Icon {
-    const ALL: [Icon; 12] = [
+    const ALL: [Icon; 13] = [
         Icon::Cog,
         Icon::Message,
         Icon::Artboard,
@@ -35,6 +36,7 @@ impl Icon {
         Icon::Account,
         Icon::Highlighter,
         Icon::Quote,
+        Icon::Search,
     ];
 
     fn path(self) -> &'static str {
@@ -51,6 +53,7 @@ impl Icon {
             Icon::Account => "icons/inkling/circle-user.svg",
             Icon::Highlighter => "icons/inkling/highlighter.svg",
             Icon::Quote => "icons/inkling/quote.svg",
+            Icon::Search => "icons/inkling/search.svg",
         }
     }
 
@@ -68,6 +71,7 @@ impl Icon {
             Icon::Account => include_bytes!("../icons/circle-user.svg"),
             Icon::Highlighter => include_bytes!("../icons/highlighter.svg"),
             Icon::Quote => include_bytes!("../icons/quote.svg"),
+            Icon::Search => include_bytes!("../icons/search.svg"),
         }
     }
 
