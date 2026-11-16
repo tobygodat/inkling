@@ -32,7 +32,6 @@ impl Icon {
         Icon::Book,
         Icon::Pen,
         Icon::Link,
-        Icon::Highlighter,
         Icon::Account,
         Icon::Highlighter,
         Icon::Quote,
