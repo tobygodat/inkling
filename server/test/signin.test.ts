@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { REDIRECT, call, rpc, signIn, tool } from "./signin";
 
 describe("signing in", () => {
@@ -6,7 +7,11 @@ describe("signing in", () => {
     const response = await call("/mcp", { method: "POST", body: "{}" });
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toContain("/.well-known/oauth-protected-resource/mcp");
-    const metadata = await (await call("/.well-known/oauth-authorization-server")).json<Record<string, unknown>>();
+
+    const metadata = z
+      .object({ registration_endpoint: z.string(), scopes_supported: z.array(z.string()) })
+      .parse(await (await call("/.well-known/oauth-authorization-server")).json());
+
     expect(metadata.registration_endpoint).toBe("http://localhost/oauth/register");
     expect(metadata.scopes_supported).toEqual(["library:read", "draft:read", "sync", "offline_access"]);
   });

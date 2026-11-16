@@ -7,8 +7,9 @@
 // Positions' `at` and documents' `saved_at` are milliseconds since the Unix epoch.
 
 import { insufficientScope, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
+import { z } from "zod";
 import type { Env, Owner } from "./env";
-import { BOOK_ID, COVER_NAME, DOCUMENT_ID, IMAGE_NAME, MAX_FILE_BYTES, Refused, isWhole, json, readJson } from "./http";
+import { BOOK_ID, COVER_NAME, DOCUMENT_ID, IMAGE_NAME, MAX_FILE_BYTES, Refused, json, readJson, whole } from "./http";
 import { connectReadwise, disconnectReadwise, readwiseStatus } from "./readwise";
 
 export async function serveSync(request: Request, env: Env, ctx: OAuthResourceContext<Owner>): Promise<Response> {
@@ -116,10 +117,11 @@ async function getFile(env: Env, key: string): Promise<Response> {
   return stored ? new Response(stored) : json({ error: "Not found." }, 404);
 }
 
-async function putChapter(request: Request, env: Env, id: string, n: number): Promise<Response> {
-  const body = await readJson<{ title?: unknown; text?: unknown }>(request);
+const Chapter = z.object({ title: z.string(), text: z.string() });
 
-  if (typeof body.title !== "string" || typeof body.text !== "string") throw new Refused(400, "A chapter needs a title and text.");
+async function putChapter(request: Request, env: Env, id: string, n: number): Promise<Response> {
+  const body = await readJson(request, Chapter, "A chapter needs a title and text.");
+
   await env.DB.prepare(
     `INSERT INTO chapters (book_id, n, title, text) VALUES (?, ?, ?, ?)
      ON CONFLICT(book_id, n) DO UPDATE SET title = excluded.title, text = excluded.text`,
@@ -130,21 +132,18 @@ async function putChapter(request: Request, env: Env, id: string, n: number): Pr
   return json({ ok: true });
 }
 
+const Book = z.object({
+  title: z.string(),
+  author: z.string().nullish(),
+  format: z.enum(["Epub", "Pdf"]),
+  chapters: whole,
+  added: whole,
+  cover: z.string().regex(COVER_NAME).nullish(),
+});
+
 /** The book's row, written last: its parsed file and every chapter must already be here. */
 async function putBook(request: Request, env: Env, id: string): Promise<Response> {
-  const b = await readJson<Record<string, unknown>>(request);
-
-  if (
-    typeof b.title !== "string" ||
-    (b.author !== undefined && b.author !== null && typeof b.author !== "string") ||
-    (b.format !== "Epub" && b.format !== "Pdf") ||
-    !isWhole(b.chapters) ||
-    !isWhole(b.added) ||
-    (b.cover !== undefined && b.cover !== null && (typeof b.cover !== "string" || !COVER_NAME.test(b.cover)))
-  ) {
-    throw new Refused(400, "That book row is incomplete.");
-  }
-
+  const b = await readJson(request, Book, "That book row is incomplete.");
   const file = await env.FILES.get(`book/${id}`, "stream");
 
   if (!file) throw new Refused(409, "Upload the book’s file first.");
@@ -165,12 +164,10 @@ async function putBook(request: Request, env: Env, id: string): Promise<Response
   return json({ ok: true });
 }
 
-async function putPosition(request: Request, env: Env, id: string): Promise<Response> {
-  const p = await readJson<{ chapter?: unknown; fraction?: unknown; at?: unknown }>(request);
+const Position = z.object({ chapter: whole, fraction: z.number().min(0).max(1), at: whole });
 
-  if (!isWhole(p.chapter) || typeof p.fraction !== "number" || !(p.fraction >= 0 && p.fraction <= 1) || !isWhole(p.at)) {
-    throw new Refused(400, "A position needs a chapter, a fraction from 0 to 1, and when it changed.");
-  }
+async function putPosition(request: Request, env: Env, id: string): Promise<Response> {
+  const p = await readJson(request, Position, "A position needs a chapter, a fraction from 0 to 1, and when it changed.");
 
   // The later position wins, whichever device reaches the server first.
   const { meta } = await env.DB.prepare(
@@ -182,14 +179,14 @@ async function putPosition(request: Request, env: Env, id: string): Promise<Resp
   return json({ ok: true, kept: meta.changes === 1 });
 }
 
-interface DocumentRow {
+type DocumentRow = {
   id: string;
   text: string;
   saved_at: number;
   device: string;
   version: number;
   deleted: number;
-}
+};
 
 const shown = (d: DocumentRow) => ({ ...d, deleted: d.deleted === 1 });
 
@@ -211,14 +208,22 @@ async function getDocument(env: Env, id: string): Promise<Response> {
  * hasn't seen. Any other base is refused with 409 and what the server has. A delete keeps the
  * last text.
  */
+const DocumentWrite = z.object({
+  text: z.string(),
+  saved_at: whole,
+  device: z.string(),
+  base: whole,
+  deleted: z.boolean().optional(),
+});
+
 async function putDocument(request: Request, env: Env, id: string): Promise<Response> {
-  const d = await readJson<{ text?: unknown; saved_at?: unknown; device?: unknown; base?: unknown; deleted?: unknown }>(request);
+  const d = await readJson(
+    request,
+    DocumentWrite,
+    "A document needs its text, when it was saved, the device and the version it was made on.",
+  );
 
-  if (typeof d.text !== "string" || !isWhole(d.saved_at) || typeof d.device !== "string" || !isWhole(d.base)) {
-    throw new Refused(400, "A document needs its text, when it was saved, the device and the version it was made on.");
-  }
-
-  const deleted = d.deleted === true ? 1 : 0;
+  const deleted = d.deleted ? 1 : 0;
 
   // One statement, so two devices writing at once can't both take the same base.
   const written =
@@ -241,18 +246,21 @@ async function putDocument(request: Request, env: Env, id: string): Promise<Resp
   return json(there ? shown(there) : { id, text: "", saved_at: 0, device: "", version: 0, deleted: false }, 409);
 }
 
+const Settled = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("imported"), book_id: z.string().regex(BOOK_ID) }),
+  z.object({ state: z.literal("failed"), error: z.string() }),
+]);
+
 /** A device says how importing an inbox item went. Its file is no longer needed either way. */
 async function settleInbox(request: Request, env: Env, readwiseId: string): Promise<Response> {
-  const s = await readJson<{ state?: unknown; book_id?: unknown; error?: unknown }>(request);
+  const s = await readJson(request, Settled, "Say imported with the book’s id, or failed with why.");
 
-  if (s.state === "imported" && typeof s.book_id === "string" && BOOK_ID.test(s.book_id)) {
+  if (s.state === "imported") {
     await env.DB.prepare("UPDATE inbox SET state = 'imported', book_id = ?, error = NULL WHERE readwise_id = ?")
       .bind(s.book_id, readwiseId)
       .run();
-  } else if (s.state === "failed" && typeof s.error === "string") {
-    await env.DB.prepare("UPDATE inbox SET state = 'failed', error = ? WHERE readwise_id = ?").bind(s.error.slice(0, 500), readwiseId).run();
   } else {
-    throw new Refused(400, "Say imported with the book’s id, or failed with why.");
+    await env.DB.prepare("UPDATE inbox SET state = 'failed', error = ? WHERE readwise_id = ?").bind(s.error.slice(0, 500), readwiseId).run();
   }
 
   await env.FILES.delete(`inbox/${readwiseId}`);

@@ -10,7 +10,8 @@
     "deploy": "wrangler deploy && wrangler d1 migrations apply inkling --remote"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "1.2.4"
+    "@cloudflare/workers-oauth-provider": "1.2.4",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.8.2",

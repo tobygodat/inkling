@@ -13,14 +13,16 @@ import type { Env, Owner } from "./env";
 import { escapeHtml, page } from "./http";
 
 /** What each scope lets a client do, as the consent form says it. */
-const SCOPES: Record<string, { label: string; ticked: boolean }> = {
+const SCOPES = {
   "library:read": { label: "Read your library: the books, their text and where you are in each", ticked: true },
   "draft:read": { label: "Read your documents", ticked: false },
   sync: { label: "Keep this device’s documents and books in step with your others", ticked: true },
-};
+} satisfies Record<string, { label: string; ticked: boolean }>;
+
+type Scope = keyof typeof SCOPES;
 
 /** Scopes every MCP client is offered, whatever it asked for. */
-const OFFERED_TO_AGENTS = ["library:read", "draft:read"];
+const OFFERED_TO_AGENTS: Scope[] = ["library:read", "draft:read"];
 
 export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/google/callback`;
 
@@ -32,7 +34,8 @@ export async function authorize(request: Request, env: Env, oauth: OAuthHelpers)
 
     return new Response(null, { status: 405, headers: { allow: "GET, POST" } });
   } catch (error) {
-    return explain(error);
+    if (error instanceof AuthorizationError || error instanceof CimdFetchError) return explain(error);
+    throw error;
   }
 }
 
@@ -53,7 +56,7 @@ function consentForm(details: ConsentDescription, handle: string): string {
     ? "<p><strong>This sends access to an app on this computer.</strong> Go on only if you just started signing in from it.</p>"
     : "";
 
-  const offered = details.scope.includes("sync") ? ["sync"] : OFFERED_TO_AGENTS;
+  const offered: Scope[] = details.scope.includes("sync") ? ["sync"] : OFFERED_TO_AGENTS;
 
   const boxes = offered
     .map((scope) => {
@@ -153,18 +156,16 @@ secret <code>OWNER_EMAIL</code> to:</p><p><code>${escapeHtml(email)}</code></p><
 
     return new Response(null, { status: 302, headers: resumed.headers });
   } catch (error) {
-    return explain(error);
+    if (error instanceof AuthorizationError || error instanceof CimdFetchError) return explain(error);
+    throw error;
   }
 }
 
 /** Errors the consent docs say to send back to the client, or to show here. */
-function explain(error: unknown): Response {
-  if (error instanceof AuthorizationError && error.redirectTo) return Response.redirect(error.redirectTo, 302);
-
-  if (error instanceof AuthorizationError) {
-    return page("That sign-in can’t go on", `<p>${escapeHtml(error.description)}</p><p>Start signing in again from the app.</p>`, 400);
-  }
-
+function explain(error: AuthorizationError | CimdFetchError): Response {
   if (error instanceof CimdFetchError) return page("That app couldn’t be checked", "<p>Its description couldn’t be fetched.</p>", 400);
-  throw error;
+
+  if (error.redirectTo) return Response.redirect(error.redirectTo, 302);
+
+  return page("That sign-in can’t go on", `<p>${escapeHtml(error.description)}</p><p>Start signing in again from the app.</p>`, 400);
 }

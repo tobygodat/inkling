@@ -30,9 +30,13 @@ function fakeReadwise(docs: Doc[]) {
       const category = url.searchParams.get("category");
       const after = url.searchParams.get("updatedAfter");
 
-      const results = docs
-        .filter((d) => (id ? d.id === id : d.category === category && Date.parse(d.updated_at) > Date.parse(after ?? "")))
-        .map((d) => ({ ...d, raw_source_url: url.searchParams.get("withRawSourceUrl") ? `https://s3.example/${d.id}` : undefined }));
+      const raw = url.searchParams.get("withRawSourceUrl");
+
+      const results = docs.flatMap((d) =>
+        (id ? d.id === id : d.category === category && Date.parse(d.updated_at) > Date.parse(after ?? ""))
+          ? [{ ...d, raw_source_url: raw ? `https://s3.example/${d.id}` : undefined }]
+          : [],
+      );
 
       return Response.json({ count: results.length, nextPageCursor: null, results });
     }

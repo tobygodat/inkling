@@ -2,6 +2,8 @@
 // nonce; only the verified email in OWNER_EMAIL gets a grant.
 // https://developers.google.com/identity/openid-connect/openid-connect
 
+import { z } from "zod";
+
 export interface GoogleConfig {
   /** The OAuth client of type "Web application" in Google Cloud. */
   GOOGLE_CLIENT_ID: string;
@@ -11,6 +13,21 @@ export interface GoogleConfig {
 const AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN = "https://oauth2.googleapis.com/token";
 const ISSUERS = new Set(["https://accounts.google.com", "accounts.google.com"]);
+
+/** What the token endpoint answers. Anything else reads as no ID token. */
+const TokenAnswer = z.object({ id_token: z.string() });
+
+/** A claim that is missing, or of another type, reads as absent and fails its check below. */
+const claim = <T>(schema: z.ZodType<T>) => schema.optional().catch(undefined);
+
+const IdClaims = z.object({
+  iss: claim(z.string()),
+  aud: claim(z.string()),
+  exp: claim(z.number()),
+  nonce: claim(z.string()),
+  email: claim(z.string()),
+  email_verified: claim(z.boolean()),
+});
 
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -57,26 +74,29 @@ export async function emailFor(config: GoogleConfig, code: string, redirectUri: 
   });
 
   if (!response.ok) throw new Error(`Google refused the sign-in code (${response.status}).`);
-  const { id_token } = (await response.json()) as { id_token?: string };
+  const answer = TokenAnswer.safeParse(await response.json());
 
-  return checkIdToken(config, id_token ?? "", nonce);
+  return checkIdToken(config, answer.data?.id_token ?? "", nonce);
 }
 
 export function checkIdToken(config: GoogleConfig, idToken: string, nonce: string, now = Math.floor(Date.now() / 1000)): string {
   const payload = idToken.split(".")[1];
 
   if (!payload) throw new Error("Google sent no ID token.");
-  const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as Record<string, unknown>;
+  const parsed = IdClaims.safeParse(JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))));
 
-  if (typeof claims.iss !== "string" || !ISSUERS.has(claims.iss)) throw new Error("The ID token isn’t from Google.");
+  if (!parsed.success) throw new Error("The ID token isn’t from Google.");
+  const claims = parsed.data;
+
+  if (!claims.iss || !ISSUERS.has(claims.iss)) throw new Error("The ID token isn’t from Google.");
 
   if (claims.aud !== config.GOOGLE_CLIENT_ID) throw new Error("The ID token is for another app.");
 
-  if (typeof claims.exp !== "number" || claims.exp < now) throw new Error("The ID token has expired.");
+  if (claims.exp === undefined || claims.exp < now) throw new Error("The ID token has expired.");
 
   if (claims.nonce !== nonce) throw new Error("The ID token is from another sign-in.");
 
-  if (claims.email_verified !== true || typeof claims.email !== "string" || !claims.email) {
+  if (claims.email_verified !== true || !claims.email) {
     throw new Error("Google hasn’t verified that account’s email.");
   }
 

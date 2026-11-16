@@ -3,12 +3,12 @@
 
 import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
+import { z } from "zod";
 
 export const ORIGIN = "http://localhost";
 export const REDIRECT = "https://claude.ai/api/mcp/auth_callback";
 
-const worker = () => (exports as unknown as { default: Fetcher }).default;
-export const call = (path: string, init?: RequestInit) => worker().fetch(`${ORIGIN}${path}`, { redirect: "manual", ...init });
+export const call = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, { redirect: "manual", ...init });
 
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -68,7 +68,7 @@ export async function signIn(options: { scope: string; tick: string[]; resource?
     body: JSON.stringify({ client_name: "Test agent", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" }),
   });
 
-  const { client_id } = (await registered.json()) as { client_id: string };
+  const { client_id } = z.object({ client_id: z.string() }).parse(await registered.json());
 
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
@@ -121,13 +121,13 @@ export async function signIn(options: { scope: string; tick: string[]; resource?
     body: new URLSearchParams({ grant_type: "authorization_code", code, client_id, redirect_uri: REDIRECT, code_verifier: verifier }),
   });
 
-  const { access_token, scope } = (await tokens.json()) as { access_token: string; scope: string };
+  const { access_token, scope } = z.object({ access_token: z.string(), scope: z.string() }).parse(await tokens.json());
 
   return { landed, token: access_token, scope };
 }
 
 /** One JSON-RPC request to /mcp. */
-export async function rpc(token: string, method: string, params?: unknown) {
+export async function rpc<Params>(token: string, method: string, params?: Params) {
   const response = await call("/mcp", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
@@ -137,15 +137,19 @@ export async function rpc(token: string, method: string, params?: unknown) {
   return response;
 }
 
-/** A tool's text, from a tools/call that succeeded at the protocol level. */
-export async function tool(token: string, name: string, args: Record<string, unknown> = {}) {
-  const response = await rpc(token, "tools/call", { name, arguments: args });
-  const body = (await response.json()) as { result: { content: { text: string }[]; isError?: boolean } };
+const ToolAnswer = z.object({
+  result: z.object({ content: z.array(z.object({ text: z.string() })).min(1), isError: z.boolean().optional() }),
+});
 
-  return { text: body.result.content[0].text, isError: body.result.isError === true };
+/** A tool's text, from a tools/call that succeeded at the protocol level. */
+export async function tool(token: string, name: string, args: Record<string, string | number> = {}) {
+  const response = await rpc(token, "tools/call", { name, arguments: args });
+  const { result } = ToolAnswer.parse(await response.json());
+
+  return { text: result.content[0].text, isError: result.isError === true };
 }
 
 export const bearer = (token: string, init: RequestInit = {}): RequestInit => ({
   ...init,
-  headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) },
+  headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...init.headers },
 });

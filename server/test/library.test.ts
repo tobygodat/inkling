@@ -64,7 +64,7 @@ describe("the library and the documents", () => {
   it("takes a document only on the version it was made on, and serves documents to agents", async () => {
     const token = await device();
 
-    const put = (id: string, body: Record<string, unknown>) =>
+    const put = (id: string, body: { text: string; base: number; saved_at?: number; device?: string; deleted?: boolean }) =>
       call(`/v1/documents/${id}`, bearer(token, { method: "PUT", body: JSON.stringify({ saved_at: 1, device: "mac", ...body }) }));
 
     expect(await (await put("1700000000000", { text: "# On keeping accounts\n\nEvery list.", base: 0 })).json()).toEqual({ version: 1 });
