@@ -196,7 +196,7 @@ fn decode_entity(source: &str) -> Option<String> {
     }
 }
 
-fn options(maths: bool) -> ParseOptions {
+pub(crate) fn options(maths: bool) -> ParseOptions {
     let mut o = ParseOptions::gfm();
     o.constructs.math_text = maths;
     o.constructs.math_flow = maths;

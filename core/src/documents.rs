@@ -134,12 +134,16 @@ pub fn title(text: &str) -> &str {
     line.trim_start_matches('#').trim()
 }
 
-/// Where a block of Markdown goes into `text`, and the text to put there: after the line that
-/// holds the caret `at`, or at the end with no caret, set apart by a blank line on each side.
-/// The caret goes after the inserted text.
+/// Where a block of Markdown goes into `text`, and the text to put there: after the top-level
+/// block that holds the caret `at` (a whole paragraph, list, quote or code block), at the caret
+/// when it sits between blocks, or at the end with no caret, set apart by a blank line on each
+/// side. The caret goes after the inserted text.
 pub fn place_block(text: &str, at: Option<usize>, block: &str) -> (usize, String) {
     let at = match at {
-        Some(at) if at <= text.len() && text.is_char_boundary(at) => text[at..].find('\n').map_or(text.len(), |n| at + n),
+        Some(at) if at <= text.len() && text.is_char_boundary(at) => {
+            let Ok(markdown::mdast::Node::Root(root)) = markdown::to_mdast(text, &crate::draft::options(true)) else { return place_block(text, None, block) };
+            root.children.iter().filter_map(|c| c.position()).find(|p| p.start.offset <= at && at <= p.end.offset).map_or(at, |p| p.end.offset)
+        }
         _ => text.len(),
     };
     let (before, after) = text.split_at(at);
@@ -182,17 +186,52 @@ mod tests {
         assert_eq!(title(" \n "), "");
     }
 
+    fn put(text: &str, at: Option<usize>) -> String {
+        let (i, block) = place_block(text, at, "> Q");
+        format!("{}{block}|{}", &text[..i], &text[i..])
+    }
+
     #[test]
-    fn a_block_goes_after_the_caret_s_line_set_apart_by_blank_lines() {
-        let put = |text: &str, at: Option<usize>| {
-            let (i, block) = place_block(text, at, "> Q");
-            format!("{}{block}|{}", &text[..i], &text[i..])
-        };
+    fn a_block_goes_after_the_caret_s_block_set_apart_by_blank_lines() {
         assert_eq!(put("One.\n\nTwo.", None), "One.\n\nTwo.\n\n> Q\n\n|");
         assert_eq!(put("One.\n\nTwo.", Some(1)), "One.\n\n> Q|\n\nTwo.");
         assert_eq!(put("One.\n\nTwo.\n", Some(5)), "One.\n\n> Q\n|\nTwo.\n");
         assert_eq!(put("", Some(0)), "> Q\n\n|");
         assert_eq!(put("One.\n", None), "One.\n\n> Q\n\n|");
+        assert_eq!(
+            put("First line\ncontinues the same paragraph.\n\nNext paragraph.", Some(3)),
+            "First line\ncontinues the same paragraph.\n\n> Q|\n\nNext paragraph.",
+            "a soft line break is inside the paragraph"
+        );
+        assert_eq!(put("- one\n- two\n\nAfter.", Some(2)), "- one\n- two\n\n> Q\n|\nAfter.", "after the whole list");
+        assert_eq!(put("> a\n> b\n\nAfter.", Some(2)), "> a\n> b\n\n> Q|\n\nAfter.", "after the whole quote");
+        assert_eq!(put("# Title\nBody.", Some(2)), "# Title\n\n> Q\n|\nBody.", "a heading is a block of its own");
+        assert_eq!(put("```\na\n\nb\n```\n\nAfter.", Some(4)), "```\na\n\nb\n```\n\n> Q|\n\nAfter.", "a blank line inside code is still the code");
+    }
+
+    proptest! {
+        /// Wherever the caret is, the block lands between the document's blocks, never inside
+        /// one, and reads as one block of its own.
+        #[test]
+        fn a_block_never_lands_inside_another(
+            blocks in proptest::collection::vec(proptest::sample::select(vec![
+                "Plain words.", "Soft\nbreak.", "- a\n- b", "1. one\n2. two", "> q\n> r", "# Head", "```\nx\n\ny\n```",
+            ]), 1..5),
+            caret in proptest::option::of(0usize..80),
+        ) {
+            let text = blocks.join("\n\n");
+            let caret = caret.map(|c| c.min(text.len()));
+            let (at, block) = place_block(&text, caret, "> Q");
+            let spans = top_level(&text);
+            prop_assert!(spans.iter().all(|r| !(r.start < at && at < r.end)), "{at} splits a block of {text:?}");
+            let placed = format!("{}{block}{}", &text[..at], &text[at..]);
+            prop_assert_eq!(top_level(&placed).len(), spans.len() + 1, "{:?}", placed);
+        }
+    }
+
+    fn top_level(text: &str) -> Vec<std::ops::Range<usize>> {
+        let Ok(markdown::mdast::Node::Root(root)) = markdown::to_mdast(text, &crate::draft::options(true)) else { return vec![] };
+        root.children.iter().filter_map(|c| c.position().map(|p| p.start.offset..p.end.offset)).collect()
     }
 
     #[test]

@@ -293,7 +293,7 @@ impl Inkling {
     }
 
     /// Quote in the pill: the passage goes into the open document as a block quote, with the
-    /// author and title under it, after the line that holds the caret or at the end, as one undo
+    /// author and title under it, after the block that holds the caret or at the end, as one undo
     /// step. The book stays on screen.
     pub fn quote_selection(&mut self, cx: &mut Context<Self>) {
         let Screen::Reading(r) = &self.screen else { return };

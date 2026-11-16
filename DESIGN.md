@@ -124,7 +124,7 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   once a drag ends. Highlight tints the passage on Highlight; inside a highlight the highlighter
   sits on Segment as chosen, and pressing it removes the highlight. Quote puts the passage into
   the open document as a block quote with its italics, and "— Author, *Title*" under it, after the
-  caret's line or at the end, and the book stays on screen. A click elsewhere or Escape clears the
+  caret's paragraph (or list, quote or code block) or at the end, and the book stays on screen. A click elsewhere or Escape clears the
   selection.
 - **Write and Read toggle.** One pill on Segment holding two square halves, pen then book, 28 pt on
   the Mac and 44 pt on iPhone. The view on screen sits on a lighter square (the surface on a light
