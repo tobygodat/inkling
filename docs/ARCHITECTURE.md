@@ -11,10 +11,11 @@ app.
 - `books/` is `inkling-books`, ported from the reader's `reader-core` (ADR 0003). It has no UI
   dependency. It parses an EPUB (chapters from the navigation document, the cover it names) or a
   PDF with a text layer (pages in sections of ten, running headers and footers dropped) into one
-  `Book` of chapters and blocks. `Library` keeps `library.json`, each parsed book as
-  `books/<sha-256>.json` and covers in `covers/`, writing each file atomically, with each book's
-  reading position. `scan` finds books in folders that the library doesn't have yet. The Library
-  and Reading screens in `ui/` use it.
+  `Book` whose chapters are Markdown (ADR 0006). `Library` keeps `library.json`, each parsed book
+  as `books/<sha-256>.json`, the file it came from in `originals/`, its images in `images/<id>/`
+  and covers in `covers/`, writing each file atomically, with each book's reading position.
+  `scan` finds books in folders that the library doesn't have yet. The Library and Reading
+  screens in `ui/` use it.
 - `mcp/` is `inkling-mcp`, the MCP server of ADR 0004. It has no UI dependency. `Server` answers
   one JSON-RPC message at a time, whatever carries it. Its six tools (`list_books`, `read_book`,
   `search_library`, `read_draft`, `list_documents`, `read_document`) only read, through a `Store`,
@@ -155,10 +156,33 @@ library has no Add and no Find books.
   host's folders and lists what isn't in the library, EPUBs ticked and PDFs not. Each file is parsed
   and stored by `inkling_books::prepare` on the background executor, then recorded with
   `Library::add` on the UI thread. A file that can't be added shows `ImportError`'s words.
+- **A chapter** is Markdown (ADR 0006): CommonMark with GFM footnotes, opening with `# <title>`.
+  `books/src/epub.rs` writes it in two passes over the spine: the first reads every footnote (an
+  element marked as one, or the target of a link marked as a marker) and every id; the second
+  writes the text, with `[^n]` for each marker and its definition at the chapter's end, images as
+  `![alt](images/<id>/<n>.<ext> "caption")` and links inside the book as `#<chapter>:<byte>`,
+  settled once every chapter is written. `books/src/markdown.rs` escapes book text so it reads
+  back as itself, which a property checks against the parser GPUI Kit draws with. A place in a
+  chapter is a byte offset into its text. `read_book` returns the text as stored, and sync sends
+  the same.
+- **Upgrades.** `Book::parser` names the parser that wrote a book. `prepare`, when a file is
+  added, and `library::open`, when a book is opened, parse a book from an older parser again from
+  its original, and `Library::add` moves the place to the chapter with the same title. A book
+  stored before chapters were Markdown has no original: its blocks read as Markdown, chapter for
+  chapter, so it opens at its place until it is added again. `load`, which `inkling-mcp` uses,
+  never writes.
 - **Reading** (`ui/src/reading.rs`). The book is loaded on the background executor, then one
   chapter at a time is set in reading's look: the body face, size, line spacing, page width and
-  colours. It draws the chapter title, headings, quotes and scene breaks, a link back a chapter and
-  Next at the end, a Contents list and a progress line (the chapter and how far through the book).
+  colours. `ui/src/chapter.rs` parses the chapter once, with GPUI Kit's Markdown parser, into a
+  flat list of blocks, each knowing where it starts in the text: the title, headings, paragraphs
+  with their emphasis, links and footnote markers, each paragraph of a quote and each list item
+  on its own, images with their captions, and scene breaks. Each block is one `StyledText`. A tap
+  is hit-tested against the text's layout, on the Mac and on iPhone alike: a marker opens its note
+  beside it (`Reading::note`), a link inside the book goes to its chapter and the block that holds
+  its offset, and any other tap passes through to the page's edges. It draws a link back a
+  chapter and Next at the end, a Contents list and a progress line (the chapter and how far
+  through the book). Leaving a book for the page or the library keeps it laid out in
+  `Books::parked`, so going back to it reads nothing from disk.
 - **Scroll and Paged.** The chapter column reports each child's bounds after layout
   (`on_children_prepainted`), with the line height of the blocks a page may break inside. In
   Scroll the column scrolls. In Paged, `paginate` cuts the chapter into pages the height of the

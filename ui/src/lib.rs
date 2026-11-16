@@ -13,6 +13,7 @@ mod library;
 pub mod live;
 mod page;
 mod picker;
+mod chapter;
 mod reading;
 mod review;
 mod theme;
@@ -77,8 +78,9 @@ impl FormFactor {
 
 pub(crate) const SANS: &str = "Inter";
 
-const FONTS: [&[u8]; 5] = [
+const FONTS: [&[u8]; 6] = [
     include_bytes!("../fonts/SourceSerif4-Regular.ttf"),
+    include_bytes!("../fonts/SourceSerif4-It.ttf"),
     include_bytes!("../fonts/SourceSerif4-Semibold.ttf"),
     include_bytes!("../fonts/Inter-Regular.ttf"),
     include_bytes!("../fonts/Inter-Medium.ttf"),

@@ -98,6 +98,13 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   Shift-Space, Page Up and the left third turn back, Home and End go to the chapter's ends. Past
   either end of a chapter is the next or the one before. Contents lists the chapters under its
   button, the current one on Segment.
+  The chapter is set as the book set it: italics and bold, headings, bulleted and numbered lists
+  with the marker in muted ink, quotes behind a Hairline rule, scene breaks as three muted
+  asterisks, and each picture centred in the column, no wider than its file and at most 60% of a
+  page tall, with its caption under it in muted italic. A footnote marker is raised, in Link
+  (accent); a tap shows the note in a Surface popover with a Hairline border just under the
+  marker, and any other tap or Escape closes it. A link inside the book is in Link (accent),
+  underlined, and goes to its target; a link out of the book looks the same and never opens.
 - **Write and Read toggle.** One pill on Segment holding two square halves, pen then book, 28 pt on
   the Mac and 44 pt on iPhone. The view on screen sits on a lighter square (the surface on a light
   ground, the hairline tone on a dark one) with its icon in ink; the other is muted. Write goes to the

@@ -55,12 +55,16 @@ point() {
     find-books) echo "276 140" ;;
     found-pdf) echo "150 341" ;;      # the second row Find books lists, the PDF
     add-found) echo "201 414" ;;
-    book-pdf) echo "90 296" ;;        # first tile, the newest: the PDF
-    book-epub) echo "274 296" ;;      # second tile
+    # A book's tile, by the start of its title: books added together are listed in the order
+    # their imports finish, so the place is read from library.json.
+    tile:*) tile "${1#tile:}" ;;
     page-forward) echo "370 450" ;;   # the page's right third
     contents) echo "343 90" ;;
     chapter-one) echo "120 189" ;;    # Contents' second row
     back-to-library) echo "192 90" ;;  # "‹ Library", right of the 150 pt corner
+    add-one-found) echo "200 343" ;;  # Add, under a single book Find books found
+    footnote-marker) echo "190 344" ;; # the raised 1 after "what it had to teach."
+    reading-middle) echo "200 650" ;; # the page's middle third, on text
     # The Appearance sheet, from its top; Pages once the sheet is panned to its end.
     sheet-done) echo "363 402" ;;
     sync) echo "353 458" ;;
@@ -478,6 +482,16 @@ print(*(book["position"]["chapter"], book["position"]["fraction"], book["opened"
 PY
 }
 
+# The first two tiles, left to right, for the book whose title starts with `$1`.
+tile() {
+  python3 - "$(library_json)" "$1" <<'PY'
+import json, sys
+books = json.load(open(sys.argv[1]))["books"]
+at = next(i for i, b in enumerate(books) if b["title"].startswith(sys.argv[2]))
+print(*[(90, 296), (274, 296)][at])
+PY
+}
+
 book_count() {
   python3 -c 'import json, os, sys; p = sys.argv[1]; print(len(json.load(open(p))["books"]) if os.path.exists(p) else 0)' "$(library_json)"
 }
@@ -507,7 +521,7 @@ for _ in $(seq 25); do [ "$(book_count)" = 2 ] && break; sleep 0.4; done
 shot
 
 begin books-epub
-tap book-epub 3
+tap tile:Pride 3
 [ "$(book_state Pride | cut -d' ' -f3)" != 0 ] || fail "the EPUB was not opened"
 shot
 
@@ -538,7 +552,7 @@ shot
 
 begin books-pdf
 tap back-to-library 1.5
-tap book-pdf 3
+tap tile:Microsoft 3
 pdf_opened="$(book_state Microsoft | cut -d' ' -f3)"
 epub_opened="$(book_state Pride | cut -d' ' -f3)"
 [ "$pdf_opened" -gt "$epub_opened" ] || fail "the PDF was not opened after the EPUB"
@@ -588,5 +602,28 @@ tap sheet-done
 tap back-to-library 1.5
 [ "$(book_state Microsoft | cut -d' ' -f1-2)" = "$held" ] || fail "the place moved from $held to $(book_state Microsoft) through Scroll and back"
 shot
+
+# A book with italics, a picture with its caption and a footnote (books/examples/walden.rs).
+begin books-walden
+cp ../target/fixtures/walden.epub "$docs/"
+tap find-books 4
+tap add-one-found 3
+for _ in $(seq 25); do [ "$(book_count)" = 3 ] && break; sleep 0.4; done
+[ "$(book_count)" = 3 ] || fail "Find books did not add Walden"
+tap tile:Walden 3
+[ "$(book_state Walden | cut -d' ' -f3)" != 0 ] || fail "Walden was not opened"
+shot
+
+begin books-footnote
+plain="$(mktemp -d)"
+"$ad" screenshot "$plain/before.png" >/dev/null
+tap footnote-marker 1.5
+"$ad" screenshot "$plain/note.png" >/dev/null
+cmp -s "$plain/before.png" "$plain/note.png" && fail "a tap on the footnote marker showed nothing"
+[ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap on the marker turned the page: $(book_state Walden)"
+shot
+tap reading-middle 1.5
+[ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap that closes the note turned the page: $(book_state Walden)"
+rm -rf "$plain"
 
 echo "all $step steps passed; screenshots in $shots"

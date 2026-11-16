@@ -1,10 +1,14 @@
 //! The books on disk, in the data dir:
 //! - `library.json`: one entry per book (id, title, author, format, position, added time).
-//! - `books/<id>.json`: the parsed book. Named by the hash of the file it came from, so
-//!   importing the same file again reuses it, and two imports writing it at once write the same.
+//! - `books/<id>.json`: the parsed book, its chapters in Markdown. Named by the hash of the file
+//!   it came from, so importing the same file again reuses it, and two imports writing it at once
+//!   write the same.
+//! - `originals/<id>.epub` or `.pdf`: the file as it was added, so a newer parser can read it
+//!   again without the reader adding the book again.
+//! - `images/<id>/<n>.<ext>`: the images the chapters show.
 //! - `covers/<id>.<ext>`: the cover image an EPUB names.
 //!
-//! Every write goes to a temporary file first and is renamed into place.
+//! Every write goes to a temporary file first and is renamed into place, the parsed book last.
 
 use std::fs;
 use std::io;
@@ -13,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::book::{Book, BookId, Format, Position};
+use crate::book::{Book, BookId, Format, PARSER, Position};
 use crate::import::{self, ImportError};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,12 +98,25 @@ impl Library {
         self.entries.iter().find(|e| &e.id == id)
     }
 
-    /// Records a book [`prepare`] wrote. The same book again keeps its entry and position.
+    /// Records a book [`prepare`] wrote. The same book again keeps its entry and its place, which
+    /// follows its chapter when a newer parse changed the chapters.
     pub fn add(&mut self, book: &Prepared) -> io::Result<&Entry> {
         let at = match self.entries.iter().position(|e| e.id == book.id) {
             Some(at) => {
-                if self.entries[at].cover.is_none() && book.cover.is_some() {
-                    self.entries[at].cover = book.cover.clone();
+                let entry = &mut self.entries[at];
+                let before = entry.clone();
+                if entry.cover.is_none() && book.cover.is_some() {
+                    entry.cover = book.cover.clone();
+                }
+                if let Some(old) = &book.before {
+                    (entry.title, entry.author, entry.chapters) = (book.title.clone(), book.author.clone(), book.chapters);
+                    let carried = entry.position.carried(old, &book.titles);
+                    if carried != entry.position {
+                        entry.position = carried;
+                        entry.position_at = now_millis().max(entry.position_at + 1);
+                    }
+                }
+                if *entry != before {
                     self.save()?;
                 }
                 at
@@ -142,8 +159,10 @@ impl Library {
 
     /// Records that the book was opened now.
     pub fn opened(&mut self, id: &BookId) -> io::Result<()> {
+        let latest = self.entries.iter().map(|e| e.opened).max().unwrap_or(0);
         let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(()) };
-        entry.opened = now().max(entry.opened + 1);
+        // Later than any book opened before, even within the same second.
+        entry.opened = now().max(latest + 1);
         self.save()
     }
 
@@ -172,33 +191,102 @@ pub struct Prepared {
     pub format: Format,
     pub chapters: usize,
     pub cover: Option<String>,
+    /// Each chapter's title, so a place can follow its chapter.
+    pub titles: Vec<Option<String>>,
+    /// The chapter titles of the parse this one replaced, when it replaced one.
+    pub before: Option<Vec<Option<String>>>,
 }
 
 /// Reads, parses and stores the book at `path` under `dir`, without touching the index, so it
-/// runs on any thread. A book already stored is read back instead of parsed again.
+/// runs on any thread. A book already stored by this parser is read back instead of parsed again;
+/// one stored by an older parser is parsed again, which upgrades it in place.
 pub fn prepare(dir: &Path, path: &Path) -> Result<Prepared, ImportError> {
-    let bytes = fs::read(path).map_err(|e| ImportError::Unreadable(e.to_string().to_lowercase()))?;
+    let unreadable = |e: io::Error| ImportError::Unreadable(e.to_string().to_lowercase());
+    let bytes = fs::read(path).map_err(unreadable)?;
     let id = import::book_id(&bytes);
-    let stored = book_path(dir, &id);
-    let book = match fs::read(&stored).ok().and_then(|b| serde_json::from_slice::<Book>(&b).ok()) {
-        Some(book) => book,
-        None => {
-            let book = import::parse(path, &bytes)?;
-            store(dir, &book).map_err(|e| ImportError::Unreadable(e.to_string().to_lowercase()))?;
-            book
+    let stored = load(dir, &id).ok();
+    let (book, before) = match stored {
+        Some(book) if book.parser >= PARSER => {
+            keep_original(dir, &book, &bytes).map_err(unreadable)?;
+            (book, None)
         }
+        old => (parse_and_store(dir, path, &bytes)?, old.map(|b| titles(&b))),
     };
     let mut prepared = Prepared::of(&book);
+    prepared.before = before;
     if book.format == Format::Epub {
         prepared.cover = store_cover(dir, &id, &bytes);
     }
     Ok(prepared)
 }
 
-/// Reads a stored book from the library in `dir`, without the index, so it runs on any thread.
+/// Reads a stored book from the library in `dir`, without the index and without writing, so it
+/// runs on any thread and in a reader that must not change the library. A book stored before
+/// chapters were Markdown reads as Markdown.
 pub fn load(dir: &Path, id: &BookId) -> io::Result<Book> {
     let bytes = fs::read(book_path(dir, id))?;
     serde_json::from_slice(&bytes).map_err(io::Error::other)
+}
+
+/// Loads a book to read it, first parsing it again from its original when an older parser stored
+/// it. The upgrade comes back for [`Library::add`] to record, which moves the place to follow its
+/// chapter. A book with no original kept (one added before originals were) loads as it is.
+pub fn open(dir: &Path, id: &BookId) -> io::Result<(Book, Option<Prepared>)> {
+    let book = load(dir, id)?;
+    if book.parser >= PARSER {
+        return Ok((book, None));
+    }
+    let original = original_path(dir, id, book.format);
+    if !original.is_file() {
+        return Ok((book, None));
+    }
+    let bytes = fs::read(&original)?;
+    match parse_and_store(dir, &original, &bytes) {
+        Ok(new) => {
+            let mut prepared = Prepared::of(&new);
+            prepared.before = Some(titles(&book));
+            Ok((new, Some(prepared)))
+        }
+        Err(_) => Ok((book, None)),
+    }
+}
+
+/// The file a book was added from, as the library keeps it.
+pub fn original_path(dir: &Path, id: &BookId, format: Format) -> PathBuf {
+    let extension = match format {
+        Format::Epub => "epub",
+        Format::Pdf => "pdf",
+    };
+    dir.join("originals").join(format!("{}.{extension}", id.0))
+}
+
+fn titles(book: &Book) -> Vec<Option<String>> {
+    book.chapters.iter().map(|c| c.title.clone()).collect()
+}
+
+/// Parses the file and stores everything it needs: the original, its images, then the book.
+fn parse_and_store(dir: &Path, path: &Path, bytes: &[u8]) -> Result<Book, ImportError> {
+    let unreadable = |e: io::Error| ImportError::Unreadable(e.to_string().to_lowercase());
+    let parsed = import::parse(path, bytes)?;
+    keep_original(dir, &parsed.book, bytes).map_err(unreadable)?;
+    if !parsed.images.is_empty() {
+        let images = dir.join(import::image_dir(&parsed.book.id));
+        fs::create_dir_all(&images).map_err(unreadable)?;
+        for (name, bytes) in &parsed.images {
+            write_atomic(&images.join(name), bytes).map_err(unreadable)?;
+        }
+    }
+    store(dir, &parsed.book).map_err(unreadable)?;
+    Ok(parsed.book)
+}
+
+fn keep_original(dir: &Path, book: &Book, bytes: &[u8]) -> io::Result<()> {
+    let path = original_path(dir, &book.id, book.format);
+    if path.is_file() {
+        return Ok(());
+    }
+    fs::create_dir_all(dir.join("originals"))?;
+    write_atomic(&path, bytes)
 }
 
 /// Saves the EPUB's cover and returns its file name. A cover that can't be saved only costs the
@@ -213,7 +301,16 @@ fn store_cover(dir: &Path, id: &BookId, bytes: &[u8]) -> Option<String> {
 
 impl Prepared {
     fn of(book: &Book) -> Prepared {
-        Prepared { id: book.id.clone(), title: book.title.clone(), author: book.author.clone(), format: book.format, chapters: book.chapters.len(), cover: None }
+        Prepared {
+            id: book.id.clone(),
+            title: book.title.clone(),
+            author: book.author.clone(),
+            format: book.format,
+            chapters: book.chapters.len(),
+            cover: None,
+            titles: titles(book),
+            before: None,
+        }
     }
 }
 
@@ -285,9 +382,63 @@ mod tests {
         let mut reopened = reopened;
         reopened.opened(&id).unwrap();
         assert_eq!(Library::open(dir.path().join("data")).unwrap().last_opened().map(|e| &e.id), Some(&id), "the last book opened is kept");
+        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![] };
+        reopened.insert(&other).unwrap();
+        for _ in 0..3 {
+            reopened.opened(&id).unwrap();
+        }
+        reopened.opened(&other.id).unwrap();
+        assert_eq!(reopened.last_opened().map(|e| &e.id), Some(&other.id), "the book opened last wins, however often another was opened in the same second");
 
         let leftovers = fs::read_dir(lib.dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
         assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn a_book_added_before_markdown_opens_then_upgrades_in_place_at_its_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("small.epub");
+        let bytes = crate::epub::tests::sample();
+        fs::write(&file, &bytes).unwrap();
+        let id = import::book_id(&bytes);
+        let data = dir.path().join("data");
+        fs::create_dir_all(data.join("books")).unwrap();
+        // As the library stored it before: blocks, no original, one chapter fewer than a parse
+        // now finds, and the reader two thirds into "Three".
+        let old = format!(
+            r#"{{"id":"{}","title":"A Small Book","author":null,"format":"Epub","chapters":[
+                {{"title":"Chapter Two","blocks":[{{"Paragraph":"The second."}}]}},{{"title":"Three","blocks":[{{"Paragraph":"Third text."}}]}}]}}"#,
+            id.0
+        );
+        fs::write(book_path(&data, &id), &old).unwrap();
+        let place = Position { chapter: 1, fraction: 0.66 };
+        let entry = format!(
+            r#"{{"books":[{{"id":"{}","title":"A Small Book","author":null,"format":"Epub","position":{{"chapter":1,"fraction":0.66}},"added":1,"chapters":2}}]}}"#,
+            id.0
+        );
+        fs::write(data.join("library.json"), entry).unwrap();
+
+        let mut lib = Library::open(&data).unwrap();
+        let (book, upgrade) = open(&data, &id).unwrap();
+        assert_eq!((book.parser, upgrade), (0, None), "with no original kept it opens as it was stored");
+        assert_eq!(book.chapters[1].text, "# Three\n\nThird text.\n");
+        assert_eq!(lib.entries()[0].position, place);
+
+        let prepared = prepare(&data, &file).unwrap();
+        assert!(prepared.before.is_some(), "adding the same file again parses it anew");
+        lib.add(&prepared).unwrap();
+        let entry = &lib.entries()[0];
+        assert_eq!((lib.entries().len(), entry.chapters), (1, 3));
+        assert_eq!(entry.position, Position { chapter: 2, fraction: 0.66 }, "the place follows \"Three\"");
+        assert_eq!(load(&data, &id).unwrap().parser, PARSER);
+        assert_eq!(fs::read(original_path(&data, &id, Format::Epub)).unwrap(), bytes, "the file is kept");
+
+        // A later parser: the stored book is stale, and opening it parses the original again.
+        fs::write(book_path(&data, &id), &old).unwrap();
+        let (book, upgrade) = open(&data, &id).unwrap();
+        assert_eq!((book.parser, book.chapters.len()), (PARSER, 3));
+        assert!(upgrade.as_ref().is_some_and(|u| u.before.as_ref().is_some_and(|b| b.len() == 2)));
+        assert_eq!(load(&data, &id).unwrap(), book, "and stores what it read");
     }
 
     #[test]

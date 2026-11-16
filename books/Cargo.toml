@@ -16,4 +16,7 @@ sha2 = "0.11"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+# The parser GPUI Kit reads Markdown with, so the escaping is checked against what draws it.
+markdown = "=1.0.0"
+proptest = "1.12"
 tempfile = "3"

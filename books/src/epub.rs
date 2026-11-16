@@ -4,22 +4,25 @@
 //! Content documents go through quick-xml with end-name checks off, and entities resolve through
 //! the HTML table, so `&nbsp;` and unclosed `<br>` don't stop a book from opening.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
 
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
-use crate::book::{Block, Chapter};
+use crate::book::{Chapter, display_title};
+use crate::markdown::{Doc, Inline, Style};
 
 #[derive(Debug)]
 pub struct Parsed {
     pub title: Option<String>,
     pub author: Option<String>,
     pub chapters: Vec<Chapter>,
+    /// The images the chapters show, by their file name under the book's image folder.
+    pub images: Vec<(String, Vec<u8>)>,
 }
 
-pub fn parse(bytes: &[u8]) -> Result<Parsed, String> {
+pub fn parse(bytes: &[u8], image_dir: &str) -> Result<Parsed, String> {
     let mut zip = Zip::open(bytes)?;
     let container = zip.read_text("META-INF/container.xml").ok_or("it has no META-INF/container.xml")?;
     let opf_path = first_attr(&container, b"rootfile", b"full-path").ok_or("its container.xml names no package file")?;
@@ -34,9 +37,35 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed, String> {
         .or_else(|| package.ncx.as_ref().and_then(|ncx| zip.read_text(ncx).map(|src| ncx_targets(&src, &dir_of(ncx)))))
         .unwrap_or_default();
 
-    let mut walker = Walker::default();
-    for doc in &package.spine {
-        let Some(src) = zip.read_text(doc) else { continue };
+    let docs: Vec<(String, String)> = package
+        .spine
+        .iter()
+        .filter(|doc| package.cover_page.as_ref() != Some(*doc))
+        .filter_map(|doc| Some((doc.clone(), zip.read_text(doc)?)))
+        .collect();
+    let refs = References::scan(&docs);
+
+    let mut notes = Walker::new(true, &refs);
+    for (doc, src) in &docs {
+        notes.walk(doc, src, &HashMap::new(), &mut |_| None);
+    }
+    let notes = notes.notes;
+
+    let mut images: Vec<(String, Vec<u8>)> = vec![];
+    let mut named: HashMap<String, Option<String>> = HashMap::new();
+    let mut image = |path: &str| -> Option<String> {
+        named
+            .entry(path.to_string())
+            .or_insert_with(|| {
+                let bytes = zip.read_bytes(path)?;
+                let name = format!("{}.{}", images.len() + 1, image_extension(&bytes)?);
+                images.push((name.clone(), bytes));
+                Some(format!("{image_dir}{name}"))
+            })
+            .clone()
+    };
+    let mut walker = Walker::new(false, &refs).with_notes(notes);
+    for (doc, src) in &docs {
         let here: HashMap<&str, &str> = targets
             .iter()
             .filter(|t| &t.file == doc)
@@ -47,13 +76,13 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed, String> {
         } else if let Some(label) = here.get("") {
             walker.start_chapter(Some(label));
         }
-        walker.walk(&src, &here);
+        walker.walk(doc, src, &here, &mut image);
     }
     let chapters = walker.finish();
     if chapters.is_empty() {
         return Err("it has no readable text".into());
     }
-    Ok(Parsed { title: package.title, author: package.author, chapters })
+    Ok(Parsed { title: package.title, author: package.author, chapters, images })
 }
 
 /// The title and author an EPUB's package file names, without reading its text. `None` for a
@@ -301,69 +330,276 @@ fn ncx_targets(src: &str, base: &str) -> Vec<Target> {
     out
 }
 
+/// What every content document holds that a link can point at, read before any is written, so a
+/// link can be told from a footnote marker and a target that isn't there.
+#[derive(Default)]
+struct References {
+    /// Every element id, as (file, id).
+    ids: HashSet<(String, String)>,
+    files: HashSet<String>,
+    /// Every target a link points at, as (file, id or "").
+    linked: HashSet<(String, String)>,
+    /// The targets of links marked as footnote markers.
+    noterefs: HashSet<(String, String)>,
+}
+
+impl References {
+    fn scan(docs: &[(String, String)]) -> References {
+        let mut r = References::default();
+        for (file, src) in docs {
+            r.files.insert(file.clone());
+            let base = dir_of(file);
+            for ev in events(src) {
+                let (Xml::Open(tag, attrs) | Xml::Empty(tag, attrs)) = ev else { continue };
+                for (n, v) in &attrs {
+                    if n == "id" || (n == "name" && tag == "a") {
+                        r.ids.insert((file.clone(), v.clone()));
+                    }
+                }
+                if tag == "a"
+                    && let Some(href) = attr(&attrs, "href")
+                    && !is_external(href)
+                {
+                    let to = target(file, &base, href);
+                    if is_noteref(&attrs) {
+                        r.noterefs.insert(to.clone());
+                    }
+                    r.linked.insert(to);
+                }
+            }
+        }
+        r
+    }
+
+    fn exists(&self, to: &(String, String)) -> bool {
+        if to.1.is_empty() { self.files.contains(&to.0) } else { self.ids.contains(to) }
+    }
+}
+
+fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    attrs.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
+}
+
+fn has_token(attrs: &[(String, String)], name: &str, tokens: &[&str]) -> bool {
+    attr(attrs, name).is_some_and(|v| v.split_whitespace().any(|t| tokens.iter().any(|w| t.eq_ignore_ascii_case(w))))
+}
+
+/// A link that leaves the book: one with a scheme.
+fn is_external(href: &str) -> bool {
+    href.split_once(':').is_some_and(|(scheme, _)| !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+}
+
+fn target(file: &str, base: &str, href: &str) -> (String, String) {
+    match href.strip_prefix('#') {
+        Some(id) => (file.to_string(), percent_decode(id)),
+        None => {
+            let (path, fragment) = resolve(base, href);
+            (path, fragment.unwrap_or_default())
+        }
+    }
+}
+
+fn is_noteref(attrs: &[(String, String)]) -> bool {
+    has_token(attrs, "type", &["noteref"])
+        || has_token(attrs, "role", &["doc-noteref"])
+        || has_token(attrs, "class", &["noteref", "fnanchor", "footnote-ref", "footnoteref", "footnote-link"])
+}
+
+fn is_note(attrs: &[(String, String)]) -> bool {
+    has_token(attrs, "type", &["footnote", "endnote", "rearnote"])
+        || has_token(attrs, "role", &["doc-footnote", "doc-endnote"])
+        || has_token(attrs, "class", &["footnote", "endnote"])
+}
+
+fn is_figure(tag: &str, attrs: &[(String, String)]) -> bool {
+    tag == "figure" || has_token(attrs, "role", &["figure"]) || has_token(attrs, "class", &["figcenter", "figleft", "figright", "figure"])
+}
+
+fn style_of(tag: &str, attrs: &[(String, String)]) -> Style {
+    let class = attr(attrs, "class").unwrap_or_default().to_ascii_lowercase();
+    let css = attr(attrs, "style").unwrap_or_default().to_ascii_lowercase().replace(' ', "");
+    Style {
+        em: matches!(tag, "em" | "i" | "cite" | "dfn" | "var") || class.split_whitespace().any(|c| c == "italic" || c == "ital" || c == "i") || css.contains("font-style:italic"),
+        strong: matches!(tag, "strong" | "b") || class.split_whitespace().any(|c| c == "bold") || css.contains("font-weight:bold"),
+    }
+}
+
+/// A back-link from a note to its marker: "[1]", "2", "↩".
+fn is_backlink(text: &str) -> bool {
+    let t = text.trim();
+    t.contains('↩') || (t.chars().count() <= 5 && t.chars().all(|c| c.is_alphanumeric() || matches!(c, '[' | ']' | '(' | ')' | '.' | '*' | '†' | '‡' | '§')))
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Plain,
+    Quote,
+    List,
+    Item,
+    Figure,
+    /// A footnote's own element.
+    Note,
+    /// A footnote marker: its text is the marker, which the reader draws itself.
+    NoteRef,
+    Link,
+}
+
 /// One open element in a content document, and what it changed on the way in.
 struct Open {
     tag: String,
     skip: bool,
+    block: bool,
     heading: Option<u8>,
-    quote: bool,
-    link: bool,
+    style: Style,
+    kind: Kind,
+    /// A note's key: its own id, or the first one inside it.
+    key: Option<String>,
+    /// A link's place in the paragraph and its destination.
+    link: Option<(usize, String)>,
 }
 
+/// One chapter as it is written.
+struct Build {
+    label: Option<String>,
+    title: Option<String>,
+    doc: Doc,
+    /// Blocks besides the title.
+    body: usize,
+    /// Blocks of text: a chapter of only pictures, like the plates before a book's first
+    /// chapter, is left out, as it was before images were kept.
+    text: usize,
+    /// The notes its markers point at, in order: the label of each is its place, from 1.
+    notes: Vec<(String, String)>,
+}
+
+/// The footnotes of a book, read in a first pass.
 #[derive(Default)]
-struct Walker {
-    chapters: Vec<(Option<String>, Vec<Block>)>,
-    stack: Vec<Open>,
-    text: String,
-    skipping: usize,
-    quoting: usize,
-    linking: usize,
-    /// How much of `text` sits inside links, to spot contents lists.
-    link_chars: usize,
+struct Notes {
+    text: HashMap<(String, String), Vec<Inline>>,
+    /// Every id inside a note, to the note's key.
+    alias: HashMap<(String, String), (String, String)>,
+    /// Notes some link points at, so the reader shows them as notes rather than as text.
+    referenced: HashSet<(String, String)>,
 }
 
-const LINE: char = '\u{2028}';
+struct Walker<'r> {
+    /// The first pass, which only reads the notes.
+    collect: bool,
+    refs: &'r References,
+    notes: Notes,
+    file: String,
+    base: String,
+    chapters: Vec<Build>,
+    stack: Vec<Open>,
+    inlines: Vec<Inline>,
+    skipping: usize,
+    /// Ids read since the last block was written, waiting for where the next one starts.
+    waiting: Vec<(String, String)>,
+    /// Each id's chapter and byte offset, as first written.
+    anchors: HashMap<(String, String), (usize, usize)>,
+    /// Ids in the paragraph being read, and the note it is when one of them is a note's.
+    block_ids: Vec<String>,
+    block_note: Option<String>,
+    /// Images waiting for the end of the paragraph they sit in.
+    images: Vec<(String, String)>,
+    /// Inside a figure: its images and caption.
+    figure: Option<(Vec<(String, String)>, String)>,
+    /// Where each link inside the book points, by its placeholder.
+    links: Vec<(String, String)>,
+}
 
-impl Walker {
-    fn start_chapter(&mut self, label: Option<&str>) {
-        self.flush();
-        self.chapters.push((label.map(str::to_owned), Vec::new()));
+/// A link's destination until every chapter is written and the offsets are known.
+fn placeholder(n: usize) -> String {
+    format!("\u{1}{n}\u{1}")
+}
+
+impl<'r> Walker<'r> {
+    fn new(collect: bool, refs: &'r References) -> Self {
+        Walker {
+            collect,
+            refs,
+            notes: Notes::default(),
+            file: String::new(),
+            base: String::new(),
+            chapters: vec![],
+            stack: vec![],
+            inlines: vec![],
+            skipping: 0,
+            waiting: vec![],
+            anchors: HashMap::new(),
+            block_ids: vec![],
+            block_note: None,
+            images: vec![],
+            figure: None,
+            links: vec![],
+        }
     }
 
-    fn walk(&mut self, src: &str, targets: &HashMap<&str, &str>) {
+    /// Takes the notes the first pass read.
+    fn with_notes(mut self, mut notes: Notes) -> Self {
+        for (id, key) in &notes.alias {
+            if self.refs.linked.contains(id) || self.refs.noterefs.contains(id) {
+                notes.referenced.insert(key.clone());
+            }
+        }
+        self.notes = notes;
+        self
+    }
+
+    fn start_chapter(&mut self, label: Option<&str>) {
+        self.flush();
+        self.chapters.push(Build { label: label.map(str::to_owned), title: None, doc: Doc::default(), body: 0, text: 0, notes: vec![] });
+        // A quote or list open across the split carries on in the new chapter.
+        let kinds: Vec<(Kind, String)> = self.stack.iter().map(|o| (o.kind, o.tag.clone())).collect();
+        for (kind, tag) in kinds {
+            match kind {
+                Kind::Quote => self.doc().open_quote(),
+                Kind::List => self.doc().open_list(tag == "ol", 1),
+                Kind::Item => self.doc().open_item(),
+                _ => {}
+            }
+        }
+    }
+
+    fn doc(&mut self) -> &mut Doc {
+        if self.chapters.is_empty() {
+            self.chapters.push(Build { label: None, title: None, doc: Doc::default(), body: 0, text: 0, notes: vec![] });
+        }
+        &mut self.chapters.last_mut().expect("a chapter was just ensured").doc
+    }
+
+    fn walk(&mut self, file: &str, src: &str, targets: &HashMap<&str, &str>, image: &mut dyn FnMut(&str) -> Option<String>) {
+        self.file = file.to_string();
+        self.base = dir_of(file);
         self.stack.clear();
         self.skipping = 0;
-        self.quoting = 0;
-        self.linking = 0;
+        self.waiting.push((file.to_string(), String::new()));
         for ev in events(src) {
             match ev {
                 Xml::Open(tag, attrs) => {
                     self.check_target(&attrs, targets);
                     if is_void(&tag) {
-                        self.empty(&tag, &attrs);
+                        self.empty(&tag, &attrs, image);
                     } else {
                         self.open(tag, &attrs);
                     }
                 }
                 Xml::Empty(tag, attrs) => {
                     self.check_target(&attrs, targets);
-                    self.empty(&tag, &attrs);
+                    self.empty(&tag, &attrs, image);
                 }
                 Xml::Close(tag) => self.close(&tag),
-                Xml::Text(t) if self.skipping == 0 => {
-                    if self.linking > 0 {
-                        self.link_chars += t.trim().chars().count();
-                    }
-                    self.text.push_str(&t);
-                }
-                Xml::Text(_) => {}
+                Xml::Text(t) => self.text(&t),
             }
+        }
+        while let Some(tag) = self.stack.last().map(|o| o.tag.clone()) {
+            self.close(&tag);
         }
         self.flush();
     }
 
     fn check_target(&mut self, attrs: &[(String, String)], targets: &HashMap<&str, &str>) {
-        if self.skipping > 0 {
+        if self.skipping > 0 || self.collect {
             return;
         }
         let label = attrs.iter().filter(|(n, _)| n == "id" || n == "name").find_map(|(_, v)| targets.get(v.as_str()));
@@ -372,128 +608,395 @@ impl Walker {
             self.start_chapter(Some(label));
             // An anchor inside a heading starts the chapter at that heading.
             if heading.is_some() {
-                self.text.clear();
+                self.inlines.clear();
             }
         }
     }
 
+    /// Records the element's ids: anchors for links, and the key of the note they are in.
+    fn ids(&mut self, tag: &str, attrs: &[(String, String)], block: bool) {
+        for (n, v) in attrs {
+            if !(n == "id" || (n == "name" && tag == "a")) {
+                continue;
+            }
+            let id = (self.file.clone(), v.clone());
+            self.waiting.push(id.clone());
+            self.block_ids.push(v.clone());
+            if let Some(note) = self.stack.iter_mut().rev().find(|o| o.kind == Kind::Note)
+                && note.key.is_none()
+            {
+                note.key = Some(v.clone());
+            } else if self.refs.noterefs.contains(&id) && !self.stack.iter().any(|o| o.kind == Kind::Note) {
+                if block && let Some(top) = self.stack.last_mut().filter(|o| o.kind == Kind::Plain) {
+                    top.kind = Kind::Note;
+                    top.key = Some(v.clone());
+                } else {
+                    self.block_note = Some(v.clone());
+                }
+            }
+        }
+    }
+
+    fn style(&self) -> Style {
+        self.stack.iter().fold(Style::default(), |s, o| Style { em: s.em || o.style.em, strong: s.strong || o.style.strong })
+    }
+
+    fn text(&mut self, t: &str) {
+        if self.skipping > 0 {
+            return;
+        }
+        let style = self.style();
+        // Text inside a link stays apart from the text before it.
+        let floor = self.stack.iter().filter_map(|o| o.link.as_ref().map(|l| l.0)).max().unwrap_or(0);
+        let len = self.inlines.len();
+        match self.inlines.last_mut() {
+            Some(Inline::Text(last, s)) if *s == style && len > floor => last.push_str(t),
+            _ => self.inlines.push(Inline::Text(t.to_string(), style)),
+        }
+    }
+
     fn open(&mut self, tag: String, attrs: &[(String, String)]) {
-        let skip = self.skipping > 0 || skipped(&tag, attrs);
+        // A caption outside a figure belongs to an image the book doesn't place here.
+        let stray_caption = self.figure.is_none() && has_token(attrs, "class", &["caption"]);
+        let skip = self.skipping > 0 || skipped(&tag, attrs) || stray_caption;
         let heading = heading_level(&tag);
-        let quote = tag == "blockquote";
-        let link = tag == "a" && attrs.iter().any(|(n, _)| n == "href");
-        if !skip && (is_block(&tag) || heading.is_some()) {
+        let in_list = self.stack.last().is_some_and(|o| o.kind == Kind::List);
+        let block = !skip && (is_block(&tag) || heading.is_some());
+        if block {
             self.flush();
         }
         if !skip && matches!(tag.as_str(), "td" | "th") {
-            self.text.push(' ');
+            self.text(" ");
         }
-        if skip {
+        let in_link = self.stack.iter().any(|o| matches!(o.kind, Kind::Link | Kind::NoteRef));
+        let style = style_of(&tag, attrs);
+        let mut open = Open { tag, skip, block, heading, style, kind: Kind::Plain, key: None, link: None };
+        if !skip {
+            open.kind = match open.tag.as_str() {
+                "blockquote" => Kind::Quote,
+                "ul" | "ol" => Kind::List,
+                "li" if in_list => Kind::Item,
+                "a" if !in_link => self.link(attrs, &mut open),
+                t if is_figure(t, attrs) && self.figure.is_none() => Kind::Figure,
+                _ if is_note(attrs) && !self.stack.iter().any(|o| o.kind == Kind::Note) => Kind::Note,
+                _ => Kind::Plain,
+            };
+        }
+        if open.kind == Kind::NoteRef {
+            open.skip = true;
+        }
+        if open.skip {
             self.skipping += 1;
         }
-        if quote {
-            self.quoting += 1;
+        if !self.collect {
+            match open.kind {
+                Kind::Quote => self.doc().open_quote(),
+                Kind::List => {
+                    let start = attr(attrs, "start").and_then(|s| s.trim().parse().ok()).unwrap_or(1);
+                    self.doc().open_list(open.tag == "ol", start);
+                }
+                Kind::Item => self.doc().open_item(),
+                Kind::Figure => self.figure = Some((vec![], String::new())),
+                _ => {}
+            }
+        } else if open.kind == Kind::Figure {
+            self.figure = Some((vec![], String::new()));
         }
-        if link {
-            self.linking += 1;
+        let tag = open.tag.clone();
+        self.stack.push(open);
+        if !skip {
+            self.ids(&tag, attrs, block);
         }
-        self.stack.push(Open { tag, skip, heading, quote, link });
+    }
+
+    /// What an `<a>` is: a footnote marker, a link in or out of the book, or neither.
+    fn link(&mut self, attrs: &[(String, String)], open: &mut Open) -> Kind {
+        let Some(href) = attr(attrs, "href") else { return Kind::Plain };
+        if is_external(href) {
+            let web = href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:");
+            open.link = web.then(|| (self.inlines.len(), href.to_string()));
+            return if web { Kind::Link } else { Kind::Plain };
+        }
+        let to = target(&self.file, &self.base, href);
+        if self.collect {
+            open.link = Some((self.inlines.len(), String::new()));
+            return Kind::Link;
+        }
+        if let Some(key) = self.notes.alias.get(&to).filter(|k| self.notes.referenced.contains(*k)).cloned() {
+            self.doc();
+            let notes = &mut self.chapters.last_mut().expect("a chapter was just ensured").notes;
+            let label = match notes.iter().position(|k| *k == key) {
+                Some(at) => at + 1,
+                None => {
+                    notes.push(key);
+                    notes.len()
+                }
+            };
+            self.inlines.push(Inline::Note(label.to_string()));
+            return Kind::NoteRef;
+        }
+        if !self.refs.exists(&to) {
+            return Kind::Plain;
+        }
+        self.links.push(to);
+        open.link = Some((self.inlines.len(), placeholder(self.links.len() - 1)));
+        Kind::Link
     }
 
     fn close(&mut self, tag: &str) {
         let Some(at) = self.stack.iter().rposition(|o| o.tag == tag) else { return };
         while self.stack.len() > at {
             let top = self.stack.last().expect("stack is longer than `at`");
-            if !top.skip && (is_block(&top.tag) || top.heading.is_some()) {
+            if top.block {
                 self.flush();
             }
             let open = self.stack.pop().expect("stack is longer than `at`");
             if open.skip {
                 self.skipping -= 1;
             }
-            if open.quote {
-                self.quoting -= 1;
-            }
-            if open.link {
-                self.linking -= 1;
+            match open.kind {
+                Kind::Link => self.close_link(open.link),
+                Kind::Quote if !self.collect => self.doc().close_quote(),
+                Kind::List if !self.collect => self.doc().close_list(),
+                Kind::Item if !self.collect => self.doc().close_item(),
+                Kind::Figure => self.close_figure(),
+                _ => {}
             }
         }
     }
 
-    fn empty(&mut self, tag: &str, attrs: &[(String, String)]) {
+    fn close_link(&mut self, link: Option<(usize, String)>) {
+        let Some((start, dest)) = link else { return };
+        if start > self.inlines.len() {
+            return;
+        }
+        let children: Vec<Inline> = self.inlines.drain(start..).collect();
+        let text = Inline::plain(&children);
+        if self.collect {
+            if is_external(&dest) {
+                self.inlines.push(Inline::Link(dest, children));
+            } else if !is_backlink(&text) {
+                self.inlines.extend(children);
+            }
+        } else if text.trim().is_empty() {
+            self.inlines.extend(children);
+        } else {
+            self.inlines.push(Inline::Link(dest, children));
+        }
+    }
+
+    fn close_figure(&mut self) {
+        self.flush();
+        let Some((images, caption)) = self.figure.take() else { return };
+        if self.collect {
+            return;
+        }
+        let caption = collapse(&caption);
+        if images.is_empty() {
+            // A figure of text, such as a poem set apart.
+            if !caption.is_empty() {
+                self.write(None, |doc| doc.paragraph(&[Inline::text(caption)]));
+            }
+            return;
+        }
+        let last = images.len() - 1;
+        for (i, (alt, src)) in images.into_iter().enumerate() {
+            let caption = if i == last { caption.as_str() } else { "" };
+            self.write_image(&alt, &src, caption);
+        }
+    }
+
+    fn empty(&mut self, tag: &str, attrs: &[(String, String)], image: &mut dyn FnMut(&str) -> Option<String>) {
         if self.skipping > 0 || skipped(tag, attrs) {
             return;
         }
+        self.ids(tag, attrs, false);
         match tag {
-            "br" => self.text.push(LINE),
+            "br" => self.inlines.push(Inline::Break),
             "hr" => {
                 self.flush();
-                self.push(Block::Break);
+                self.rule();
             }
-            // A drop cap is often an image whose alt is the letter. Other images' alt text
-            // describes a picture the reader doesn't show.
             "img" | "image" => {
-                if let Some((_, alt)) = attrs.iter().find(|(n, v)| n == "alt" && (1..=2).contains(&v.trim().chars().count())) {
-                    self.text.push_str(alt);
+                let alt = attr(attrs, "alt").unwrap_or_default().trim().to_string();
+                // A drop cap is often an image whose alt is the letter.
+                if (1..=2).contains(&alt.chars().count()) {
+                    return self.text(&alt);
+                }
+                let Some(src) = attr(attrs, "src").or_else(|| attr(attrs, "href")) else { return };
+                let Some(path) = image(&resolve(&self.base, src).0) else { return };
+                match &mut self.figure {
+                    Some((images, _)) => images.push((alt, path)),
+                    None => self.images.push((alt, path)),
                 }
             }
             _ => {}
         }
     }
 
-    fn flush(&mut self) {
-        let raw = std::mem::take(&mut self.text);
-        let link_chars = std::mem::take(&mut self.link_chars);
-        let text = collapse_lines(&raw);
-        let chars = text.chars().filter(|c| !c.is_whitespace()).count();
-        // A block that is mostly links is the book's own contents list.
-        if text.is_empty() || link_chars * 10 >= chars * 8 {
-            return;
-        }
-        let heading = self.stack.iter().rev().find_map(|o| o.heading);
-        let block = if let Some(level) = heading {
-            Block::Heading { level, text }
-        } else if is_scene_break(&text) {
-            Block::Break
-        } else if self.quoting > 0 {
-            Block::Quote(text)
-        } else {
-            Block::Paragraph(text)
-        };
-        self.push(block);
+    /// Writes a block into the chapter, after its title. The chapter's first heading is its
+    /// title; a chapter that starts some other way takes its contents label as one.
+    fn write(&mut self, title: Option<String>, block: impl FnOnce(&mut Doc) -> usize) {
+        self.write_block(title, true, block);
     }
 
-    fn push(&mut self, block: Block) {
-        if self.chapters.is_empty() {
-            self.chapters.push((None, Vec::new()));
+    fn write_image(&mut self, alt: &str, src: &str, caption: &str) {
+        self.write_block(None, false, |doc| doc.image(alt, src, caption));
+    }
+
+    fn write_block(&mut self, title: Option<String>, text: bool, block: impl FnOnce(&mut Doc) -> usize) {
+        self.doc();
+        let at = self.chapters.len() - 1;
+        let b = &mut self.chapters[at];
+        let fresh = b.doc.is_empty() && b.title.is_none();
+        if fresh && let Some(t) = title.clone().or_else(|| b.label.clone().filter(|l| !l.is_empty())) {
+            b.doc.heading(1, &[Inline::text(display_title(&t))]);
+            b.title = Some(t);
         }
-        let blocks = &mut self.chapters.last_mut().expect("a chapter was just ensured").1;
-        if block == Block::Break && matches!(blocks.last(), None | Some(Block::Break)) {
+        let start = if fresh && title.is_some() {
+            0
+        } else {
+            b.body += 1;
+            b.text += usize::from(text);
+            block(&mut b.doc)
+        };
+        for id in self.waiting.drain(..) {
+            self.anchors.entry(id).or_insert((at, start));
+        }
+    }
+
+    fn rule(&mut self) {
+        if !self.collect {
+            self.doc();
+            let b = self.chapters.last_mut().expect("a chapter was just ensured");
+            if b.body > 0 {
+                b.doc.rule();
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        let inlines = std::mem::take(&mut self.inlines);
+        let ids = std::mem::take(&mut self.block_ids);
+        let block_note = self.block_note.take();
+        if let Some((_, caption)) = &mut self.figure {
+            caption.push(' ');
+            caption.push_str(&Inline::plain(&inlines));
             return;
         }
-        blocks.push(block);
+        let note = self.stack.iter().rev().find(|o| o.kind == Kind::Note).and_then(|o| o.key.clone()).or(block_note);
+        if self.collect {
+            if let Some(key) = note {
+                let key = (self.file.clone(), key);
+                let text = self.notes.text.entry(key.clone()).or_default();
+                if !text.is_empty() {
+                    text.push(Inline::text(" "));
+                }
+                text.extend(inlines);
+                for id in ids {
+                    self.notes.alias.insert((self.file.clone(), id), key.clone());
+                }
+                self.notes.alias.insert(key.clone(), key);
+            }
+            return;
+        }
+        if note.is_some_and(|key| self.notes.referenced.contains(&(self.file.clone(), key))) {
+            return;
+        }
+        let plain = collapse(&Inline::plain(&inlines).replace('\n', " "));
+        if !plain.is_empty() {
+            let chars = plain.chars().filter(|c| !c.is_whitespace()).count();
+            let linked: usize = inlines.iter().map(|i| if let Inline::Link(_, c) = i { Inline::plain(c).chars().filter(|c| !c.is_whitespace()).count() } else { 0 }).sum();
+            // A block that is mostly links is the book's own contents list.
+            if linked * 10 < chars * 8 {
+                let heading = self.stack.iter().rev().find_map(|o| o.heading);
+                if is_scene_break(&plain) {
+                    self.rule();
+                } else if let Some(level) = heading {
+                    if self.chapters.last().is_none_or(|b| b.doc.is_empty() && b.title.is_none()) {
+                        self.write(Some(plain), |_| 0);
+                    } else {
+                        self.write(None, |doc| doc.heading(level.clamp(2, 6), &inlines));
+                    }
+                } else {
+                    self.write(None, |doc| doc.paragraph(&inlines));
+                }
+            }
+        }
+        for (alt, src) in std::mem::take(&mut self.images) {
+            self.write_image(&alt, &src, "");
+        }
     }
 
     fn finish(mut self) -> Vec<Chapter> {
         self.flush();
-        self.chapters
-            .into_iter()
-            .filter_map(|(label, mut blocks)| {
-                while blocks.last() == Some(&Block::Break) {
-                    blocks.pop();
+        let mut kept: Vec<Option<usize>> = vec![];
+        let mut chapters = vec![];
+        for b in std::mem::take(&mut self.chapters) {
+            if b.text == 0 {
+                kept.push(None);
+                continue;
+            }
+            kept.push(Some(chapters.len()));
+            let mut doc = b.doc;
+            for (n, key) in b.notes.iter().enumerate() {
+                let text = self.notes.text.get(key).cloned().unwrap_or_default();
+                doc.note(&(n + 1).to_string(), &text);
+            }
+            chapters.push(Chapter { title: b.title, text: doc.finish() });
+        }
+        // An anchor in a chapter that was left out points at the start of the next one kept.
+        let place = |(at, offset): (usize, usize)| -> Option<(usize, usize)> {
+            match kept.get(at).copied().flatten() {
+                Some(new) => Some((new, offset)),
+                None => kept.get(at..)?.iter().flatten().next().map(|&new| (new, 0)),
+            }
+        };
+        let destinations: Vec<Option<(usize, usize)>> = self
+            .links
+            .iter()
+            .map(|to| self.anchors.get(to).or_else(|| self.anchors.get(&(to.0.clone(), String::new()))).copied().and_then(place))
+            .collect();
+        resolve_links(&mut chapters, &destinations);
+        chapters
+    }
+}
+
+/// Puts each link's destination in place of its placeholder: `#<chapter>:<byte>`. A destination's
+/// length moves the offsets after it, so this settles in a few rounds.
+fn resolve_links(chapters: &mut [Chapter], targets: &[Option<(usize, usize)>]) {
+    // Each chapter's placeholders: where each starts, its link and its length.
+    let found: Vec<Vec<(usize, usize, usize)>> = chapters
+        .iter()
+        .map(|c| {
+            let mut out = vec![];
+            let mut i = 0;
+            while let Some(at) = c.text[i..].find('\u{1}').map(|a| a + i) {
+                let Some(end) = c.text[at + 1..].find('\u{1}').map(|e| e + at + 1) else { break };
+                if let Ok(n) = c.text[at + 1..end].parse::<usize>() {
+                    out.push((at, n, end + 1 - at));
                 }
-                // The chapter's own heading becomes its title, so the page doesn't show it twice.
-                let title = match blocks.first() {
-                    Some(Block::Heading { text, .. }) => {
-                        let t = text.replace('\n', " ");
-                        blocks.remove(0);
-                        Some(t)
-                    }
-                    _ => label.filter(|l| !l.is_empty()),
-                };
-                (!blocks.is_empty()).then_some(Chapter { title, blocks })
-            })
-            .collect()
+                i = end + 1;
+            }
+            out
+        })
+        .collect();
+    let mut written: Vec<String> = vec![String::new(); targets.len()];
+    for _ in 0..8 {
+        let shifted = |chapter: usize, offset: usize| -> usize {
+            let delta: isize = found[chapter].iter().filter(|(at, ..)| *at < offset).map(|&(_, n, len)| written[n].len() as isize - len as isize).sum();
+            (offset as isize + delta).max(0) as usize
+        };
+        let next: Vec<String> = targets.iter().map(|t| t.map(|(c, o)| format!("#{c}:{}", shifted(c, o))).unwrap_or_else(|| "#0:0".into())).collect();
+        if next == written {
+            break;
+        }
+        written = next;
+    }
+    for (chapter, places) in chapters.iter_mut().zip(&found) {
+        for &(at, n, len) in places.iter().rev() {
+            chapter.text.replace_range(at..at + len, &written[n]);
+        }
     }
 }
 
@@ -508,7 +1011,7 @@ fn is_block(tag: &str) -> bool {
     matches!(
         tag,
         "p" | "div" | "blockquote" | "li" | "ul" | "ol" | "dd" | "dt" | "dl" | "pre" | "section" | "article" | "header"
-            | "footer" | "aside" | "main" | "tr" | "table" | "body" | "address" | "center"
+            | "footer" | "aside" | "main" | "tr" | "table" | "body" | "address" | "center" | "figure" | "figcaption"
     )
 }
 
@@ -516,18 +1019,16 @@ fn is_void(tag: &str) -> bool {
     matches!(tag, "br" | "hr" | "img" | "meta" | "link" | "input" | "col" | "wbr" | "source")
 }
 
-/// Things that aren't the book's running text: page furniture, image captions, the Project
-/// Gutenberg licence boilerplate.
+/// Things that aren't the book's running text: page furniture and the Project Gutenberg licence
+/// boilerplate.
 fn skipped(tag: &str, attrs: &[(String, String)]) -> bool {
-    if matches!(tag, "head" | "script" | "style" | "nav" | "figure" | "figcaption" | "svg" | "math" | "title" | "rt") {
+    if matches!(tag, "head" | "script" | "style" | "nav" | "svg" | "math" | "title" | "rt") {
         return true;
     }
     attrs.iter().any(|(name, value)| match name.as_str() {
-        "class" => value.split_whitespace().any(|c| {
-            matches!(c, "caption" | "pg-boilerplate" | "x-ebookmaker-pageno" | "pagenum" | "pageno" | "figcenter" | "figleft" | "figright" | "footnote-ref")
-        }),
+        "class" => value.split_whitespace().any(|c| matches!(c, "pg-boilerplate" | "x-ebookmaker-pageno" | "pagenum" | "pageno")),
         "type" => value.split_whitespace().any(|t| t == "pagebreak"),
-        "role" => matches!(value.as_str(), "figure" | "doc-pagebreak"),
+        "role" => value == "doc-pagebreak",
         "id" => matches!(value.as_str(), "pg-header" | "pg-footer"),
         _ => false,
     })
@@ -535,11 +1036,6 @@ fn skipped(tag: &str, attrs: &[(String, String)]) -> bool {
 
 fn is_scene_break(text: &str) -> bool {
     text.chars().all(|c| matches!(c, '*' | '⁂' | '·' | '•' | '~' | '#') || c.is_whitespace()) && text.chars().any(|c| !c.is_whitespace())
-}
-
-/// Collapses runs of whitespace to one space, keeping `<br>`s as newlines.
-fn collapse_lines(raw: &str) -> String {
-    raw.split(LINE).map(collapse).collect::<Vec<_>>().join("\n").trim_matches('\n').to_string()
 }
 
 pub(crate) fn collapse(raw: &str) -> String {
@@ -672,6 +1168,17 @@ pub(crate) mod tests {
         out.into_inner()
     }
 
+    pub(crate) fn build_bytes(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        for (path, body) in files {
+            zip.start_file(*path, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+        out.into_inner()
+    }
+
     pub(crate) fn sample() -> Vec<u8> {
         build(&[
             (
@@ -704,17 +1211,14 @@ pub(crate) mod tests {
 
     #[test]
     fn splits_chapters_at_nav_anchors_and_reads_blocks() {
-        let p = parse(&sample()).unwrap();
+        let p = parse(&sample(), "images/x/").unwrap();
         assert_eq!(p.title.as_deref(), Some("A Small Book"));
         assert_eq!(p.author.as_deref(), Some("Ann Author"));
         let titles: Vec<_> = p.chapters.iter().map(|c| c.title.as_deref().unwrap()).collect();
         assert_eq!(titles, ["Chapter\u{a0}One", "Chapter Two", "Three"]);
-        let one = &p.chapters[0].blocks;
-        assert_eq!(one[0], Block::Paragraph("It was a bright cold day—and the clocks\nwere striking.".into()));
-        assert_eq!(one[1], Block::Break);
-        assert_eq!(one[2], Block::Quote("A quoted line.".into()));
-        assert_eq!(p.chapters[1].blocks, [Block::Paragraph("The second & last “part”.".into()), Block::Paragraph("Before the anchor.".into())]);
-        assert_eq!(p.chapters[2].blocks, [Block::Paragraph("Third text.".into())]);
+        assert_eq!(p.chapters[0].text, "# Chapter\u{a0}One\n\nIt was a bright cold day—and the clocks\\\nwere striking.\n\n* * *\n\n> A quoted line.\n");
+        assert_eq!(p.chapters[1].text, "# Chapter Two\n\nThe second & last “part”.\n\nBefore the anchor.\n");
+        assert_eq!(p.chapters[2].text, "# Three\n\nThird text.\n", "no scene break at a chapter's end");
     }
 
     #[test]
@@ -725,12 +1229,71 @@ pub(crate) mod tests {
             ("a.html", "<html><body><h1>First</h1><p>One &hellip; &copy;</body></html>"),
             ("b.html", "<html><body><p>Two</p></body></html>"),
         ]);
-        let p = parse(&epub).unwrap();
+        let p = parse(&epub, "").unwrap();
         assert_eq!(p.title, None);
         assert_eq!(p.chapters.len(), 2);
         assert_eq!(p.chapters[0].title.as_deref(), Some("First"));
-        assert_eq!(p.chapters[0].blocks, [Block::Paragraph("One … ©".into())]);
+        assert_eq!(p.chapters[0].text, "# First\n\nOne … ©\n");
         assert_eq!(p.chapters[1].title, None);
+        assert_eq!(p.chapters[1].text, "Two\n");
+    }
+
+    /// An EPUB 3 chapter with what a book sets besides plain text, and its notes in a file of
+    /// their own.
+    pub(crate) fn walden() -> Vec<u8> {
+        let png: &[u8] = &[0x89, b'P', b'N', b'G', 13, 10];
+        build_bytes(&[
+            ("META-INF/container.xml", br#"<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>"#),
+            (
+                "OPS/book.opf",
+                br#"<package><metadata><dc:title>Walden</dc:title></metadata><manifest><item id="nav" href="nav.xhtml" properties="nav"/>
+                <item id="a" href="text/a.xhtml"/><item id="n" href="text/notes.xhtml"/><item id="p" href="img/pond.png" media-type="image/png"/></manifest>
+                <spine><itemref idref="a"/><itemref idref="n"/></spine></package>"#,
+            ),
+            ("OPS/nav.xhtml", br#"<html><body><nav epub:type="toc"><ol><li><a href="text/a.xhtml">Economy</a></li><li><a href="text/notes.xhtml">Notes</a></li></ol></nav></body></html>"#),
+            (
+                "OPS/text/a.xhtml",
+                br##"<html><body><h1>Economy</h1>
+                <p>I went to the woods because I wished to live <em>deliberately</em>, to front only the essential facts of life.<a epub:type="noteref" href="notes.xhtml#n1" id="r1">1</a></p>
+                <figure><img src="../img/pond.png" alt="The pond"/><figcaption>The pond in <i>winter</i>.</figcaption></figure>
+                <ul><li>Simplicity,</li><li>simplicity!</li></ul>
+                <ol start="3"><li>one</li><li>two</li></ol>
+                <p># 1. *Not* a heading: 50_000 $ and $5 &amp; more</p>
+                <p>See <a href="#lived">below</a>, <a href="https://example.com/a b">the web</a> and <a href="missing.xhtml">nowhere</a>.</p>
+                <blockquote><p>Quoted</p></blockquote>
+                <h2 id="lived">Where I Lived</h2><p>Text.</p></body></html>"##,
+            ),
+            (
+                "OPS/text/notes.xhtml",
+                br#"<html><body><h1>Notes</h1><aside epub:type="footnote" id="n1"><p><a href="a.xhtml#r1">1</a> Written at the pond in the spring of <b>1846</b>.</p></aside></body></html>"#,
+            ),
+            ("OPS/img/pond.png", png),
+        ])
+    }
+
+    #[test]
+    fn keeps_emphasis_images_lists_notes_and_links() {
+        let p = parse(&walden(), "images/w/").unwrap();
+        assert_eq!(p.chapters.len(), 1, "the notes file is only notes, so it is no chapter of its own");
+        assert_eq!(p.images, [("1.png".to_string(), vec![0x89, b'P', b'N', b'G', 13, 10])]);
+        let text = &p.chapters[0].text;
+        let lived = text.find("## Where I Lived").expect("the second heading");
+        assert_eq!(
+            *text,
+            format!(
+                "# Economy\n\n\
+                 I went to the woods because I wished to live *deliberately*, to front only the essential facts of life.[^1]\n\n\
+                 ![The pond](images/w/1.png \"The pond in winter.\")\n\n\
+                 - Simplicity,\n- simplicity!\n\n\
+                 3. one\n4. two\n\n\
+                 \\# 1. \\*Not\\* a heading: 50\\_000 \\$ and \\$5 & more\n\n\
+                 See [below](#0:{lived}), [the web](https://example.com/a%20b) and nowhere.\n\n\
+                 > Quoted\n\n\
+                 ## Where I Lived\n\n\
+                 Text.\n\n\
+                 [^1]: Written at the pond in the spring of **1846**.\n"
+            )
+        );
     }
 
     fn opf(manifest: &str, rest: &str) -> String {
@@ -780,8 +1343,8 @@ pub(crate) mod tests {
 
     #[test]
     fn rejects_files_that_are_not_epubs() {
-        assert!(parse(b"not a zip").is_err());
-        assert!(parse(&build(&[("x.txt", "hi")])).unwrap_err().contains("container.xml"));
+        assert!(parse(b"not a zip", "").is_err());
+        assert!(parse(&build(&[("x.txt", "hi")]), "").unwrap_err().contains("container.xml"));
     }
 
     #[test]
