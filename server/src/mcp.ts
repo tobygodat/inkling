@@ -15,6 +15,9 @@ const INSTRUCTIONS =
   "(EPUBs and PDFs) and their draft. They never change anything. Chapters and positions count from 0.";
 
 
+/** The tools this server answers: highlights come with their sync. */
+const tools = allTools.filter((t) => t.name !== "list_highlights");
+
 /** Tools that read the writer's writing, which the `draft:read` box on the consent page allows. */
 const WRITING = ["read_draft", "list_documents", "read_document"];
 
@@ -61,7 +64,7 @@ export async function serveMcp(request: Request, env: Env, ctx: OAuthResourceCon
     case "ping":
       return json(success(message.id, {}));
     case "tools/list":
-      return json(success(message.id, { tools: allTools }));
+      return json(success(message.id, { tools }));
     case "tools/call": {
       const name = params.name;
       const args = (params.arguments ?? {}) as Record<string, unknown>;

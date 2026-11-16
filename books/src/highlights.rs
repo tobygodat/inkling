@@ -51,13 +51,13 @@ pub fn save(dir: &Path, id: &BookId, highlights: &[Highlight]) -> io::Result<()>
 impl Highlight {
     /// Where the passage is in a chapter as the reader sees it. `text` is the chapter's text as
     /// drawn and `source[i]` the Markdown byte that draws byte `i` of it, with one more entry for
-    /// the end. The stored place while its words are still there; else the place of its words
+    /// the end, never decreasing. The stored place while its words are still there; else the place of its words
     /// nearest to it, after a new parse moved them; else `None`, and it isn't drawn.
     pub fn locate(&self, text: &str, source: &[usize]) -> Option<Range<usize>> {
         if self.words.is_empty() || source.len() != text.len() + 1 {
             return None;
         }
-        let at = |byte: usize| source.iter().position(|s| *s >= byte).unwrap_or(text.len());
+        let at = |byte: usize| source.partition_point(|s| *s < byte).min(text.len());
         let stored = at(self.start)..at(self.end);
         if text.get(stored.clone()) == Some(self.words.as_str()) {
             return Some(stored);

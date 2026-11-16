@@ -2,6 +2,10 @@
 //! the page with, into a flat list of blocks. A quote's paragraphs and a list's items are blocks of
 //! their own, so a page can end between any two of them, and each block knows where it starts in
 //! the chapter's Markdown.
+//!
+//! A selection or a highlight is a range of `Laid::text`: every block's text, one after another
+//! with a newline between. `Laid::map` takes each byte of it back to the Markdown byte that draws
+//! it, so a highlight is kept as a place in the chapter's Markdown (ADR 0006).
 
 use gpui_kit::base::text::editor_host::{self as eh, BlockNode, Paragraph};
 use gpui_kit::base::text::{MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast};
@@ -59,12 +63,18 @@ pub(crate) struct Block {
     pub marker: Option<String>,
     /// Where it starts in the chapter's Markdown, in bytes.
     pub source: usize,
+    /// Where its text starts in `Laid::text`.
+    pub at: usize,
 }
 
 /// A chapter, ready to lay out.
 #[derive(Default)]
 pub(crate) struct Laid {
     pub blocks: Vec<Block>,
+    /// Every block's text, each followed by a newline.
+    pub text: String,
+    /// The Markdown byte that draws each byte of `text`, and one more for its end.
+    pub map: Vec<usize>,
     /// Each footnote's text, by its label.
     pub notes: HashMap<String, Text>,
 }
@@ -115,11 +125,13 @@ pub(crate) fn lay(markdown: &str) -> Laid {
     let ext = extensions();
     let nodes = eh::parse_markdown(markdown, ext.clone()).unwrap_or_default();
     let mut laid = Laid::default();
-    let mut walk = Walk { out: &mut laid.blocks, notes: vec![], quote: 0, indent: 0, marker: None };
+    let mut maps = vec![];
+    let mut walk = Walk { markdown, out: &mut laid.blocks, maps: &mut maps, notes: vec![], quote: 0, indent: 0, marker: None };
     for (i, node) in nodes.iter().enumerate() {
         walk.block(node, i == 0);
     }
-    for (label, body) in std::mem::take(&mut walk.notes) {
+    let notes = std::mem::take(&mut walk.notes);
+    for (label, body) in notes {
         let text = eh::parse_markdown(&body, ext.clone())
             .unwrap_or_default()
             .iter()
@@ -127,11 +139,21 @@ pub(crate) fn lay(markdown: &str) -> Laid {
             .unwrap_or_default();
         laid.notes.insert(label, text);
     }
+    for (block, map) in laid.blocks.iter_mut().zip(maps) {
+        block.at = laid.text.len();
+        laid.text.push_str(&block.text.text);
+        laid.map.extend_from_slice(&map);
+        laid.text.push('\n');
+    }
+    laid.map.push(markdown.len());
     laid
 }
 
 struct Walk<'a> {
+    markdown: &'a str,
     out: &'a mut Vec<Block>,
+    /// Each block's map from its text to the Markdown, as `Laid::map`, with an entry for its end.
+    maps: &'a mut Vec<Vec<usize>>,
     notes: Vec<(String, String)>,
     quote: usize,
     indent: usize,
@@ -140,25 +162,27 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    fn push(&mut self, kind: Kind, text: Text, source: usize) {
+    fn push(&mut self, kind: Kind, text: Text, span: Range<usize>) {
         let marker = self.marker.take();
-        self.out.push(Block { kind, text, quote: self.quote, indent: self.indent, marker, source });
+        self.maps.push(align(&text, self.markdown, span.clone()));
+        self.out.push(Block { kind, text, quote: self.quote, indent: self.indent, marker, source: span.start, at: 0 });
     }
 
     fn block(&mut self, node: &BlockNode, first: bool) {
-        let source = node.span().map_or(0, |s| s.start);
+        let span = node.span().map_or(0..0, |s| s.start..s.end.min(self.markdown.len()));
+        let source = span.start;
         match node {
             BlockNode::Heading { level, children, .. } => {
                 let kind = if first && *level == 1 { Kind::Title } else { Kind::Heading(*level) };
-                self.push(kind, text(children).0, source);
+                self.push(kind, text(children).0, span);
             }
             BlockNode::Paragraph(p) => {
                 let (body, images) = text(p);
                 if !body.text.trim().is_empty() {
-                    self.push(Kind::Paragraph, body, source);
+                    self.push(Kind::Paragraph, body, span.clone());
                 }
                 for (src, alt, caption) in images {
-                    self.push(Kind::Image { src, alt, caption }, Text::default(), source);
+                    self.push(Kind::Image { src, alt, caption }, Text::default(), source..source);
                 }
             }
             BlockNode::Blockquote { children, .. } => {
@@ -182,7 +206,7 @@ impl Walk<'_> {
                     self.marker = None;
                 }
             }
-            BlockNode::HorizontalRule { .. } => self.push(Kind::Rule, Text::default(), source),
+            BlockNode::HorizontalRule { .. } => self.push(Kind::Rule, Text::default(), source..source),
             BlockNode::Custom { node, .. } if node.name() == NOTE_TEXT => {
                 if let Some((label, body)) = node.data::<(String, String)>() {
                     self.notes.push((label.clone(), body.clone()));
@@ -193,7 +217,7 @@ impl Walk<'_> {
                     self.block(c, false);
                 }
             }
-            BlockNode::CodeBlock(code) => self.push(Kind::Paragraph, Text { text: code.code(), marks: vec![] }, source),
+            BlockNode::CodeBlock(code) => self.push(Kind::Paragraph, Text { text: code.code(), marks: vec![] }, span),
             _ => {}
         }
     }
@@ -236,6 +260,64 @@ fn text(p: &Paragraph) -> (Text, Vec<(String, String, String)>) {
         }
     }
     (Text { text: out.into(), marks }, images)
+}
+
+/// Which Markdown byte in `span` draws each byte of a block's text, with one more entry for its
+/// end. The text is the Markdown less its syntax, so each character is the next one like it in
+/// the Markdown, past escapes, emphasis, link targets and pictures; a footnote marker is its
+/// `[^label]`. A character it can't find maps to where the search started, so the map only ever
+/// moves forward.
+fn align(text: &Text, markdown: &str, span: Range<usize>) -> Vec<usize> {
+    const REACH: usize = 400;
+    let md = markdown.as_bytes();
+    let end = span.end.min(markdown.len());
+    let mut at = span.start.min(end);
+    let mut map = Vec::with_capacity(text.text.len() + 1);
+    let notes: Vec<Range<usize>> = text.marks.iter().filter(|(_, m)| matches!(m, Mark::Note(_))).map(|(r, _)| r.clone()).collect();
+    let skip_to = |from: usize, needle: u8| md[from.min(end)..end].iter().position(|b| *b == needle).map(|i| from + i + 1);
+    let mut chars = text.text.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if let Some(note) = notes.iter().find(|r| r.start == i) {
+            let found = markdown[at..end].find("[^").map(|n| at + n);
+            let p = found.unwrap_or(at);
+            map.extend(std::iter::repeat_n(p, note.end - i));
+            at = found.and_then(|p| skip_to(p, b']')).unwrap_or(at);
+            while chars.peek().is_some_and(|(j, _)| *j < note.end) {
+                chars.next();
+            }
+            continue;
+        }
+        let mut q = at;
+        let mut found = None;
+        while q < end && q < at + REACH {
+            let rest = &markdown[q..end];
+            if let Some(escaped) = rest.strip_prefix('\\') {
+                if escaped.starts_with(ch) {
+                    found = Some(q + 1);
+                    break;
+                }
+                q += 1 + escaped.chars().next().map_or(0, char::len_utf8);
+                continue;
+            }
+            if rest.starts_with("](") || rest.starts_with("![") {
+                q = rest.find(')').map_or(end, |n| q + n + 1);
+                continue;
+            }
+            let c = rest.chars().next().unwrap_or(' ');
+            if c == ch || (ch.is_whitespace() && c.is_whitespace()) {
+                found = Some(q);
+                break;
+            }
+            q += c.len_utf8();
+        }
+        let p = found.unwrap_or(at);
+        map.extend((0..ch.len_utf8()).map(|k| p + k));
+        if let Some(p) = found {
+            at = p + markdown[p..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    map.push(at);
+    map
 }
 
 /// A footnote marker as a book prints it, raised: "12" becomes "¹²".

@@ -324,7 +324,8 @@ impl Inkling {
                             let _ = library.opened(&book.id);
                         }
                         this.books.left_in_book = true;
-                        this.screen = Screen::Reading(Reading::new(book, position, dir));
+                        let highlights = this.books.library.as_ref().map(|l| l.highlights(&book.id)).unwrap_or_default();
+                        this.screen = Screen::Reading(Reading::new(book, position, dir, highlights));
                     }
                     Err(e) => this.books.errors = vec![format!("The book couldn't be opened ({e}).")],
                 }

@@ -10,10 +10,11 @@
 use crate::app::{Inkling, Screen, ghost_button};
 use crate::chapter::{self, Kind, Laid, Mark, Text};
 use crate::library::outlined_button;
+use crate::passage::{Press, Tab};
 use crate::theme::{Body, Colors, Theme};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use inkling_books::{Book, Position, display_title};
+use inkling_books::{Book, Highlight, Position, display_title};
 use inkling_core::PageMode;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -66,12 +67,14 @@ pub(crate) struct Reading {
     /// The library's folder, which the chapters' image paths are relative to.
     dir: PathBuf,
     /// The chapter on screen, parsed.
-    laid: Rc<Laid>,
+    pub(crate) laid: Rc<Laid>,
     /// Each image's size in pixels, read once from its file.
     sizes: RefCell<HashMap<String, Option<Size<f32>>>>,
     pub note: Option<OpenNote>,
     /// Each block's text as last laid out, for finding where a marker or link was drawn.
-    drawn: Rc<RefCell<HashMap<usize, (TextLayout, Text)>>>,
+    pub(crate) drawn: Rc<RefCell<HashMap<usize, (TextLayout, Text)>>>,
+    /// `drawn` as the last frame laid it out, which is safe to measure while drawing.
+    pub(crate) painted: Rc<RefCell<HashMap<usize, (TextLayout, Text)>>>,
     /// A byte offset to show once the chapter is laid out: where a link inside the book goes.
     seek: Option<usize>,
     pub scroll: ScrollHandle,
@@ -94,10 +97,18 @@ pub(crate) struct Reading {
     swipe: Pixels,
     last_scroll: Option<std::time::Instant>,
     turned: bool,
+    /// The book's highlights, in reading order.
+    pub highlights: Vec<Highlight>,
+    /// The selection in `Laid::text`: where it started and where it ends (`crate::passage`).
+    pub(crate) sel: Option<(usize, usize)>,
+    pub(crate) press: Option<Press>,
+    /// A drag, a double click or a hold just selected, so the click that ends it does nothing else.
+    pub(crate) held: bool,
+    pub tab: Tab,
 }
 
 impl Reading {
-    pub fn new(book: Book, at: Position, dir: PathBuf) -> Self {
+    pub fn new(book: Book, at: Position, dir: PathBuf, highlights: Vec<Highlight>) -> Self {
         let chapter = at.chapter.min(book.chapters.len().saturating_sub(1));
         let anchor = if chapter == at.chapter { at.fraction.clamp(0., 1.) } else { 0. };
         let laid = Rc::new(book.chapters.get(chapter).map(|c| chapter::lay(&c.text)).unwrap_or_default());
@@ -109,6 +120,7 @@ impl Reading {
             sizes: RefCell::default(),
             note: None,
             drawn: Rc::default(),
+            painted: Rc::default(),
             seek: None,
             scroll: ScrollHandle::new(),
             anchor,
@@ -121,6 +133,11 @@ impl Reading {
             swipe: px(0.),
             last_scroll: None,
             turned: false,
+            highlights,
+            sel: None,
+            press: None,
+            held: false,
+            tab: Tab::default(),
         }
     }
 
@@ -130,6 +147,7 @@ impl Reading {
         self.pending = true;
         self.note = None;
         self.contents = false;
+        self.deselect();
     }
 
     /// Where the reader is: the chapter, and how far down it the view starts.
@@ -241,12 +259,14 @@ impl Inkling {
         if r.chapter != at {
             r.laid = Rc::new(chapter::lay(&r.book.chapters[at].text));
             r.drawn.borrow_mut().clear();
+            r.painted.borrow_mut().clear();
         }
         r.chapter = at;
         r.anchor = anchor.clamp(0., 1.);
         r.pending = true;
         r.note = None;
         r.seek = None;
+        r.deselect();
         *r.layout.borrow_mut() = Layout::default();
         r.height = px(0.);
         r.page = 0;
@@ -269,6 +289,9 @@ impl Inkling {
     /// A tap on a book's text: a footnote marker shows its note beside it, a link inside the book
     /// goes to its target, and a link out of the book does nothing. Any tap closes an open note.
     fn tapped(&mut self, hit: Option<Mark>, at: Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        if self.swallow_click(cx) {
+            return true;
+        }
         let Screen::Reading(r) = &mut self.screen else { return false };
         let was_open = r.note.take().is_some();
         match hit {
@@ -342,6 +365,7 @@ impl Inkling {
             return;
         }
         r.note = None;
+        r.deselect();
         let (chapter, last) = (r.chapter, r.book.chapters.len().saturating_sub(1));
         let at_edge = match pages {
             PageMode::Paged => {
@@ -411,6 +435,9 @@ impl Inkling {
 
     /// Keys while a book is open. Runs before any binding.
     pub(crate) fn reading_key(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if key.modifiers.platform && key.key == "c" && !self.typing_hex(window, cx) && self.copy_selection(cx) {
+            return true;
+        }
         if !matches!(self.screen, Screen::Reading(_)) || self.typing_hex(window, cx) || key.modifiers.platform || key.modifiers.control {
             return false;
         }
@@ -470,6 +497,7 @@ impl Inkling {
     fn wheeled(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let line = self.theme().body.size * self.theme().body.line;
         let Screen::Reading(r) = &mut self.screen else { return };
+        r.press = None;
         let dy = event.delta.pixel_delta(line).y;
         let (offset, max) = (-r.scroll.offset().y, r.scroll.max_offset().y);
         let (chapter, last) = (r.chapter, r.book.chapters.len().saturating_sub(1));
@@ -498,6 +526,7 @@ impl Inkling {
     fn swiped(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         let Screen::Reading(r) = &mut self.screen else { return };
+        r.press = None;
         let paused = r.last_scroll.is_none_or(|at| now.duration_since(at) >= SWIPE_PAUSE);
         r.last_scroll = Some(now);
         if paused || event.touch_phase == TouchPhase::Started {
@@ -660,8 +689,8 @@ impl Inkling {
                         .h(page_h)
                         // The edges turn the page; the text over them keeps its taps for markers
                         // and links, and passes the rest through.
-                        .child(zone("page-back").left_0().on_click(cx.listener(|this, _, window, cx| this.page_back(window, cx))).test_support())
-                        .child(zone("page-forward").right_0().on_click(cx.listener(|this, _, window, cx| this.page_forward(window, cx))).test_support())
+                        .child(zone("page-back").left_0().on_click(cx.listener(|this, _, window, cx| if !this.swallow_click(cx) { this.page_back(window, cx) })).test_support())
+                        .child(zone("page-forward").right_0().on_click(cx.listener(|this, _, window, cx| if !this.swallow_click(cx) { this.page_forward(window, cx) })).test_support())
                         .child(
                             div()
                                 .id("page-text")
@@ -683,9 +712,13 @@ impl Inkling {
             .size_full()
             .flex()
             .flex_col()
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| this.move_over_text(event, cx)))
+            // Before the click that a release may end in, which stops the event.
+            .capture_any_mouse_up(cx.listener(|this, _, _, cx| this.release_text(cx)))
             .child(top)
             .child(body)
             .child(bottom)
+            .children(self.render_pill(r, window, cx))
             .when(r.contents, |screen| screen.child(self.render_contents(r, &c, window.viewport_size().width, cx)))
             .children(self.render_note(r, window))
             .test_support()
@@ -710,7 +743,9 @@ impl Inkling {
             .shadow_md()
             .occlude()
             .text_size(px(13.))
-            .children((0..r.book.chapters.len()).map(|at| {
+            .child(self.render_tabs(r.tab, c, cx))
+            .when(r.tab == Tab::Highlights, |list| list.children(self.render_highlight_rows(r, c, cx)))
+            .when(r.tab == Tab::Chapters, |list| list.children((0..r.book.chapters.len()).map(|at| {
                 let on = at == r.chapter;
                 div()
                     .id(("chapter", at))
@@ -727,8 +762,38 @@ impl Inkling {
                     .child(div().flex_1().min_w_0().truncate().child(r.chapter_title(at)))
                     .on_click(cx.listener(move |this, _, _, cx| this.go_to_chapter(at, 0., cx)))
                     .test_support()
-            }))
+            })))
             .test_support()
+    }
+
+    /// Chapters and Highlights, at the top of the contents popover.
+    fn render_tabs(&self, on: Tab, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let height = self.metrics().control.min(px(44.));
+        let tab = |id: &'static str, tab: Tab, label: &'static str| {
+            div()
+                .id(id)
+                .flex_1()
+                .h(height - px(6.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .when(on == tab, |t| t.bg(c.surface).border_1().border_color(c.hairline).text_color(c.ink))
+                .when(on != tab, |t| t.text_color(c.muted))
+                .aria_selected(on == tab)
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.show_contents_tab(tab, cx)))
+                .test_support()
+        };
+        div()
+            .flex()
+            .mb(px(4.))
+            .p(px(3.))
+            .rounded(px(8.))
+            .bg(c.segment)
+            .child(tab("contents-chapters", Tab::Chapters, "Chapters"))
+            .child(tab("contents-highlights", Tab::Highlights, "Highlights"))
     }
 
     fn render_chapter(&self, r: &Reading, t: &Theme, page_h: Pixels, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
@@ -822,9 +887,11 @@ impl Inkling {
             false => div().id("the-end").mt(gap).w_full().flex().justify_center().italic().text_color(c.muted).child("The end").test_support().into_any_element(),
         });
         let layout = r.layout.clone();
+        let (drawn, painted) = (r.drawn.clone(), r.painted.clone());
         let view = cx.entity_id();
         div()
             .on_children_prepainted(move |bounds, window, cx| {
+                painted.borrow_mut().clone_from(&drawn.borrow());
                 let Some(first) = bounds.first().map(|b| b.top()) else { return };
                 let pieces: Vec<Piece> = bounds
                     .iter()
@@ -858,11 +925,15 @@ impl Inkling {
 
     /// A block's text, set as the book set it. A tap on a footnote marker or a link acts on it.
     fn reading_text(&self, r: &Reading, i: usize, text: &Text, c: &Colors, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let styled = styled(text, c);
+        let styled = styled(text, c, r.tints(i, c));
         let layout = styled.layout().clone();
         r.drawn.borrow_mut().insert(i, (layout.clone(), text.clone()));
         let marks = text.clone();
-        div().id(("block", i)).child(styled).on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+        div()
+            .id(("block", i))
+            .child(styled)
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, _, cx| this.press_text(i, event, cx)))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
             let at = event.position();
             let hit = layout.index_for_position(at).ok().and_then(|ix| marks.target(ix).cloned()).or_else(|| near_marker(&layout, &marks, at));
             if this.tapped(hit, event.position(), cx) {
@@ -930,7 +1001,7 @@ impl Inkling {
                 .flex()
                 .gap(px(8.))
                 .child(div().text_color(c.muted).child(open.label.clone()))
-                .child(div().flex_1().min_w_0().child(styled(text, &c)))
+                .child(div().flex_1().min_w_0().child(styled(text, &c, vec![])))
                 .test_support(),
         )
     }
@@ -950,8 +1021,9 @@ fn near_marker(layout: &TextLayout, text: &Text, at: Point<Pixels>) -> Option<Ma
     })
 }
 
-/// Text with its emphasis, and links and footnote markers in the link colour.
-fn styled(text: &Text, c: &Colors) -> StyledText {
+/// Text with its emphasis, links and footnote markers in the link colour, and `tints` behind it:
+/// highlights and the selection.
+fn styled(text: &Text, c: &Colors, tints: Vec<(std::ops::Range<usize>, Hsla)>) -> StyledText {
     let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = vec![];
     for (range, mark) in &text.marks {
         let style = match mark {
@@ -966,6 +1038,7 @@ fn styled(text: &Text, c: &Colors) -> StyledText {
         };
         highlights.push((range.clone(), style));
     }
+    highlights.extend(tints.into_iter().map(|(range, tint)| (range, HighlightStyle { background_color: Some(tint), ..Default::default() })));
     StyledText::new(text.text.clone()).with_highlights(split(highlights))
 }
 

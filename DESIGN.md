@@ -29,9 +29,10 @@ from `inkling_core::Appearance::tokens`. Light is the default.
 | Removed text / fill / line | `#82071E` / `#FFEBE9` / `#CF222E` | `#FFA198` / `#3D1418` / `#F85149` | Deletions, reject |
 | Link (accent) | `#0969DA` | `#58A6FF` | Links, the panel's sliders |
 | Selection | `#B6D4FE` | `#264F78` | Selected text |
+| Highlight | `#DCE9FD` | `#1F3550` | A highlighted passage in a book |
 
 - Custom takes four colours: Background (ground), Foreground (surface: bars, fields, chips, the
-  panel), Text (ink) and Accent (link). Selection, muted, hairline and segment are mixed from them,
+  panel), Text (ink) and Accent (link). Selection, highlight, muted, hairline and segment are mixed from them,
   and muted is pulled toward the text until it reads at 4.5:1. Changes use Light's or Dark's
   greens and reds, whichever suits the background.
 - Changing one colour while Light or Dark is on switches to Custom, starting from the colours on
@@ -105,8 +106,9 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   page, in muted ink at the bottom. Scroll, or Paged: a page fills the area between the bars and
   ends on a whole line; Right, Space, Page Down and a click on the right third turn forward, Left,
   Shift-Space, Page Up and the left third turn back, Home and End go to the chapter's ends. Past
-  either end of a chapter is the next or the one before. Contents lists the chapters under its
-  button, the current one on Segment.
+  either end of a chapter is the next or the one before. Contents opens under its button with two
+  tabs on Segment, Chapters and Highlights: the chapters, the current one on Segment, or the
+  highlights in reading order, each in the body face; choosing one goes to it.
   The chapter is set as the book set it: italics and bold, headings, bulleted and numbered lists
   with the marker in muted ink, quotes behind a Hairline rule, scene breaks as three muted
   asterisks, and each picture centred in the column, no wider than its file and at most 60% of a
@@ -114,6 +116,16 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   (accent); a tap shows the note in a Surface popover with a Hairline border just under the
   marker, and any other tap or Escape closes it. A link inside the book is in Link (accent),
   underlined, and goes to its target; a link out of the book looks the same and never opens.
+- **Passage.** On the Mac a drag across a book's text selects it, a double click selects a word,
+  and Cmd-C copies it; on iPhone pressing and holding a paragraph selects it, and a tap still turns
+  the page. A selection is drawn on Selection and shows a pill on Surface with a Hairline border:
+  Lucide's highlighter and its quotation marks in ink, "Highlight" and "Quote", 28 pt just after
+  the selection on the Mac (with tooltips) and 44 pt at the bottom of the screen on iPhone. It shows
+  once a drag ends. Highlight tints the passage on Highlight; inside a highlight the highlighter
+  sits on Segment as chosen, and pressing it removes the highlight. Quote puts the passage into
+  the open document as a block quote with its italics, and "— Author, *Title*" under it, after the
+  caret's line or at the end, and the book stays on screen. A click elsewhere or Escape clears the
+  selection.
 - **Write and Read toggle.** One pill on Segment holding two square halves, pen then book, 28 pt on
   the Mac and 44 pt on iPhone. The view on screen sits on a lighter square (the surface on a light
   ground, the hairline tone on a dark one) with its icon in ink; the other is muted. Write goes to the
@@ -131,7 +143,8 @@ from `inkling_core::Appearance::tokens`. Light is the default.
 - **Colour picker.** Under the colour row it belongs to: ten swatches that suit that colour, then
   Custom, which adds a wheel (angle is hue, distance from the centre is strength), a lightness
   slider and a hex field.
-- **Icons.** One colour, the ink. Lucide for the cog, message, artboard, robot, book, pen and link; Simple Icons for
+- **Icons.** One colour, the ink. Lucide for the cog, message, artboard, robot, book, pen, link,
+  highlighter and quote; Simple Icons for
   Claude and Gemini. ChatGPT shows the robot. Sources are in `ui/icons/SOURCES.md`.
 
 - Inline buttons are 28 pt on Mac. No control on iPhone is under 44 pt.

@@ -189,6 +189,7 @@ impl LiveEditor {
         self.draft.seal();
         self.marked = None;
         self.draft.set_selection(if extend { sel.anchor } else { to }, to);
+        self.placed = true;
         self.moved(cx);
     }
 
@@ -291,6 +292,7 @@ impl EntityInputHandler for LiveEditor {
             self.draft.set_selection(r.start, r.end);
         }
         self.goal_x = None;
+        self.placed = true;
         // A caret is brought into view. A range is not: its moved end is under the finger,
         // and Select All leaves the page where it is.
         if r.is_empty() {
