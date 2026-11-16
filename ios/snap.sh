@@ -766,7 +766,9 @@ begin delete-book
 tap back-to-library 1.5
 walden_id="$(python3 -c 'import json, sys; print(next(b["id"] for b in json.load(open(sys.argv[1]))["books"] if b["title"] == "Walden"))' "$(library_json)")"
 files="$(stored "$walden_id")"
-[ "$files" -ge 3 ] || fail "Walden has $files files, expected its book, original and images"
+marked="$(data_dir)/library/highlights/$walden_id.json"
+[ "$files" -ge 4 ] && grep -q '"words"' "$marked" || fail "Walden has $files files, expected its book, original, images and the highlight made above"
+before_marks="$(cat "$marked")"
 # shellcheck disable=SC2046
 "$ad" longpress $(point tile:Walden) 800 >/dev/null
 sleep 1.5
@@ -774,12 +776,13 @@ shot
 
 begin book-deleted
 tap delete:Walden 1.5
-[ "$(book_count)" = 2 ] && [ "$(stored "$walden_id")" = 0 ] || fail "Delete left $(book_count) books and $(stored "$walden_id") of Walden's files"
+[ "$(book_count)" = 2 ] && [ "$(stored "$walden_id")" = 0 ] && [ ! -f "$marked" ] || fail "Delete left $(book_count) books and $(stored "$walden_id") of Walden's files, its highlights included"
 shot
 
 begin undo-book
 tap undo-remove-book 1.5
 [ "$(book_count)" = 3 ] && [ "$(stored "$walden_id")" = "$files" ] || fail "Undo left $(book_count) books and $(stored "$walden_id") of Walden's $files files"
+[ "$(cat "$marked" 2>/dev/null)" = "$before_marks" ] || fail "Undo did not bring Walden's highlights back"
 [ "$(book_state Walden | cut -d' ' -f1)" = 1 ] || fail "Walden came back without its place: $(book_state Walden)"
 shot
 

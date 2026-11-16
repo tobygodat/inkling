@@ -563,9 +563,8 @@ mod tests {
         lib.insert(&other).unwrap();
         let id = lib.add(&prepare(lib.dir(), &file).unwrap()).unwrap().id.clone();
         lib.set_position(&id, Position { chapter: 1, fraction: 0.5 }).unwrap();
-        // Whatever else is kept by the book's id, such as its highlights, goes and comes back too.
-        fs::create_dir_all(lib.dir().join("highlights")).unwrap();
-        fs::write(lib.dir().join("highlights").join(format!("{}.json", id.0)), "[]").unwrap();
+        let highlight = Highlight { chapter: 1, start: 0, end: 4, words: "Some".into(), made: 1 };
+        lib.set_highlights(&id, std::slice::from_ref(&highlight)).unwrap();
         fs::create_dir_all(lib.dir().join("covers")).unwrap();
         fs::write(lib.dir().join("covers").join(format!("{}.jpg", id.0)), "jpeg").unwrap();
         let files = |lib: &Library| -> Vec<PathBuf> {
@@ -585,8 +584,11 @@ mod tests {
         assert_eq!(Library::open(lib.dir()).unwrap().entries().iter().map(|e| &e.id).collect::<Vec<_>>(), [&other.id]);
         assert!(lib.load(&other.id).is_ok(), "the other book is untouched");
 
+        assert!(lib.highlights(&id).is_empty(), "its highlights go with it");
+
         lib.restore(removed).unwrap();
         assert_eq!(files(&lib), before);
+        assert_eq!(lib.highlights(&id), [highlight], "and come back with it");
         assert_eq!(Library::open(lib.dir()).unwrap().entries(), entries, "back in its place, where the reader left it");
 
         let removed = lib.remove(&id).unwrap();

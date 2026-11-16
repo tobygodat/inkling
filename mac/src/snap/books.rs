@@ -556,7 +556,7 @@ fn find_and_delete(dir: &Path, folder: &Path, picked: &Picked) {
     s.press("cmd-f");
     s.input("PRIDE");
     check(shown(&mut s) == ["Pride and Prejudice"], "Find on the library filters the books by title, ignoring case");
-    s.shot("books-20-find-library");
+    s.shot("books-24-find-library");
     s.press("escape");
     s.press("cmd-f");
     s.input("thoreau");
@@ -575,7 +575,7 @@ fn find_and_delete(dir: &Path, folder: &Path, picked: &Picked) {
     let (_, total) = count(&mut s).unwrap_or_else(|| fail("Find in a book shows its count"));
     let first = position(&mut s).unwrap_or_default();
     check(total > 5 && first.chapter >= start.chapter, &format!("Find covers the whole book: 1 / {total}, in chapter {}", first.chapter + 1));
-    s.shot("books-21-find-in-book");
+    s.shot("books-25-find-in-book");
     let mut moved = None;
     for _ in 0..total {
         s.press("enter");
@@ -593,7 +593,7 @@ fn find_and_delete(dir: &Path, folder: &Path, picked: &Picked) {
     check(position(&mut s).map(|at| at.chapter) == Some(first.chapter), "Shift-Return goes back to the one before");
     s.press("enter");
     s.frame();
-    s.shot("books-22-find-next-chapter");
+    s.shot("books-26-find-next-chapter");
     s.press("escape");
     s.advance(501);
     let kept = position(&mut s).unwrap_or_default();
@@ -609,7 +609,7 @@ fn find_and_delete(dir: &Path, folder: &Path, picked: &Picked) {
     s.click(("book", pride));
     s.press("backspace");
     check(shown(&mut s).len() == 2 && stored(&entry.id.0) == 0, &format!("Delete on the chosen tile deletes the book with its text, cover and file ({files} files)"));
-    s.shot("books-23-deleted");
+    s.shot("books-27-deleted");
     s.press("cmd-z");
     let back = entries(&mut s).into_iter().find(|e| e.title == "Pride and Prejudice");
     check(shown(&mut s) == all && stored(&entry.id.0) == files, "Cmd-Z brings it back in its place, with all of them");
@@ -626,13 +626,18 @@ fn find_and_delete(dir: &Path, folder: &Path, picked: &Picked) {
     phone.click("find-done");
     check(!finding(&mut phone) && shown(&mut phone).len() == 3, "and Done closes it");
     let id = entries(&mut phone).into_iter().find(|e| e.title == "Walden").map(|e| e.id).unwrap_or_else(|| fail("Walden is in the index"));
+    let library = Paths::mac().dir.join("library");
+    let marked = inkling_books::highlights::load(&library, &id);
+    check(marked.len() == 2, &format!("Walden has the two highlights made above ({})", marked.len()));
     phone.update(|v, _, cx| v.hold_book(id.clone(), cx));
     phone.frame();
     check(phone.bounds("delete-book").is_some(), "a press held on a tile shows Delete");
-    phone.shot("books-24-iphone-hold");
+    phone.shot("books-28-iphone-hold");
     phone.click("delete-book");
     check(shown(&mut phone).len() == 2 && phone.bounds("undo-remove-book").is_some(), "Delete removes the book and leaves Undo at the bottom");
-    phone.shot("books-25-iphone-undo");
+    check(inkling_books::highlights::load(&library, &id).is_empty(), "its highlights go with it");
+    phone.shot("books-29-iphone-undo");
     phone.click("undo-remove-book");
     check(shown(&mut phone).len() == 3 && phone.bounds("undo-remove-book").is_none(), "Undo brings it back and goes");
+    check(inkling_books::highlights::load(&library, &id) == marked, "with both its highlights");
 }
