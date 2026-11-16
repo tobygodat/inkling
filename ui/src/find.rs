@@ -261,8 +261,9 @@ impl Inkling {
             self.forget_find(f, cx);
             if self.find_field.read(cx).focus_handle(cx).is_focused(window) {
                 self.focus.focus(window, cx);
-                window.dismiss_virtual_keyboard();
             }
+            // The tap that changed the screen may already have taken the focus, not the keyboard.
+            window.dismiss_virtual_keyboard();
         }
     }
 
