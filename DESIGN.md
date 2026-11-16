@@ -60,7 +60,7 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   while it is open, because a look is judged on the page: the writer sees each change on the real
   draft as they make it, and closes the panel with Done.
 - Mac corners: the cog and the Write and Read toggle at the top left, and the round feedback button
-  at the bottom right, on every screen. The cog's menu opens below the cog and never reaches the
+  at the bottom right, on every screen except the feedback screen, which drops the button. The cog's menu opens below the cog and never reaches the
   column at 1280 by 800. Bars along the top start after the corner. On iPhone a 44 pt cog and the
   toggle sit at the top left on the page, the library and a book, outside a review. The cog there
   opens Appearance directly, as a sheet over the lower 60% of the screen with 44 pt rows, so the

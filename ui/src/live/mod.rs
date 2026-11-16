@@ -517,6 +517,7 @@ impl LiveEditor {
             underlines: self.marked.clone().map(|m| element::underline(self, m)).unwrap_or_default(),
             ink: self.theme.c.ink,
             ground: self.theme.c.ground,
+            face: self.theme.body.face,
         }
     }
 
@@ -562,6 +563,8 @@ pub struct Snapshot {
     pub underlines: Vec<Bounds<Pixels>>,
     pub ink: Rgba,
     pub ground: Rgba,
+    /// The family the page sets its text in.
+    pub face: &'static str,
 }
 
 #[derive(Debug)]

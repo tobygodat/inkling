@@ -467,7 +467,8 @@ pub fn run(dir: &Path) {
     s.click("cog");
     s.click("menu-provider");
     check(s.view.read_with(&s.cx, |v, _| v.key_screen_provider()) == Some(Provider::Claude), "Provider in the cog's menu opens the key screen");
-    check(s.menu() != Menu::Open { pinned: true }, "choosing Provider closes the menu");
+    s.advance(200);
+    check(s.menu() == Menu::Closed && s.bounds("menu").is_none(), "choosing Provider closes the menu");
     check(s.bounds("cog").is_some(), "the cog is on the key screen too");
     s.press("escape");
 
@@ -538,8 +539,14 @@ fn appearance(dir: &Path) {
     s.shot("24-appearance-open");
 
     let face = s.read(|v, _| v.faces().get(1).copied()).unwrap_or_else(|| fail("this Mac has a second face"));
+    let word_end = |s: &mut Snap| s.point_for(20).map(|(p, _)| p.x);
+    let before = word_end(&mut s);
     s.click(("face", 1usize));
     check(s.appearance().face == face, &format!("choosing {} sets the body face", face.family()));
+    check(
+        s.live().face == face.family() && before.is_some() && word_end(&mut s) != before,
+        &format!("and the page draws its text in {}", face.family()),
+    );
     s.slide("text-size", 6. / 17., 15. / 17.);
     let size = s.appearance().text_size.get();
     check(size > 27 && s.first_line() > line, &format!("a bigger text size ({size} pt) takes effect on the page"));
@@ -660,6 +667,7 @@ fn feedback(dir: &Path) {
     let paths = Paths::mac();
     let keys = Arc::new(MemoryKeys::default());
     let mut s = Snap::open_with(dir, FormFactor::Mac, keys.clone(), Build::with_records(Some(BuildNumber(41)), []));
+    let draft = s.text();
     check(s.bounds("open-feedback").is_none(), "with no feedback link nothing offers feedback");
 
     s.save_link("not a link");
@@ -701,7 +709,7 @@ fn feedback(dir: &Path) {
     s.press("escape");
 
     s.click("open-feedback");
-    check(s.read(|v, _| v.feedback_open()), "Feedback opens the feedback screen");
+    check(s.read(|v, _| v.feedback_open()) && s.bounds("open-feedback").is_none(), "Feedback opens the feedback screen, without its own button");
     check(s.statuses().is_empty() && s.bounds(("feedback-item", 0usize)).is_none(), "an empty list says nothing was sent");
     s.shot("15-feedback-empty");
     s.press("cmd-enter");
@@ -791,6 +799,9 @@ fn feedback(dir: &Path) {
     dev.update(|v, _, cx| v.set_installed_build(Some(BuildNumber(43)), cx));
     dev.frame();
     check(dev.bounds("restart").is_none(), "a development build never offers a restart");
+    drop(dev);
+    // The Appearance screenshots that follow show the snap's draft, not what this test typed.
+    seed(&paths, &draft);
 }
 
 const PAGE: &str = "# Ferry notes\n\n- The crossing takes **twenty-two** minutes\n- The fare is cheap\n\nEnergy is $E = mc^2$ on the water.\n\nThe caret starts in this last paragraph.";

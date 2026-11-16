@@ -1,5 +1,5 @@
-//! What sits in the Mac window's corners on every screen: the cog and its menu at the top left,
-//! and the round feedback button at the bottom right.
+//! What sits in the Mac window's corners: the cog and its menu at the top left on every screen,
+//! and the round feedback button at the bottom right on every screen but the feedback screen.
 
 use crate::app::{Inkling, OpenKeys, Screen, ShowReading, ShowWriting};
 use crate::FormFactor;
@@ -308,9 +308,10 @@ impl Inkling {
         })
     }
 
-    /// Round, outlined in ink, at the bottom right. Hidden until a feedback link is saved.
+    /// Round, outlined in ink, at the bottom right. Hidden until a feedback link is saved, and on
+    /// the feedback screen itself.
     pub(crate) fn render_feedback_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        if !self.feedback_on {
+        if !self.feedback_on || self.screen.feedback().is_some() {
             return None;
         }
         let c = self.theme().c;
