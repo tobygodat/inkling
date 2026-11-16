@@ -60,11 +60,17 @@ point() {
     tile:*) tile "${1#tile:}" ;;
     page-forward) echo "370 450" ;;   # the page's right third
     contents) echo "343 90" ;;
-    chapter-one) echo "120 189" ;;    # Contents' second row
+    chapter-one) echo "120 237" ;;    # Contents' second chapter, under the Chapters and Highlights tabs
     back-to-library) echo "192 90" ;;  # "‹ Library", right of the 150 pt corner
     add-one-found) echo "200 343" ;;  # Add, under a single book Find books found
     footnote-marker) echo "190 344" ;; # the raised 1 after "what it had to teach."
     reading-middle) echo "200 650" ;; # the page's middle third, on text
+    page-back) echo "30 450" ;;       # the page's left third
+    walden-paragraph) echo "200 300" ;; # Walden's first paragraph, "I went to the woods…"
+    pill-highlight) echo "178 757" ;; # the pill at the bottom while a passage is selected
+    pill-quote) echo "224 757" ;;
+    contents-highlights) echo "297 145" ;; # Contents' Highlights tab
+    first-highlight) echo "200 206" ;;
     # The Appearance sheet, from its top; Pages once the sheet is panned to its end.
     sheet-done) echo "363 402" ;;
     sync) echo "353 458" ;;
@@ -629,6 +635,59 @@ shot
 tap reading-middle 1.5
 [ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap that closes the note turned the page: $(book_state Walden)"
 rm -rf "$plain"
+
+# Highlights and quotes: holding a paragraph selects it and shows the pill at the bottom.
+highlights() { cat "$(data_dir)/library/highlights/"*.json 2>/dev/null || true; }
+hold() {
+  # shellcheck disable=SC2046
+  "$ad" longpress $(point "$1") 900 >/dev/null
+  sleep 1.5
+}
+walden_paragraph="I went to the woods because I wished to live deliberately, to front only the essential facts of life, and see if I could not learn what it had to teach."
+
+begin books-hold
+hold walden-paragraph
+shot
+
+begin books-highlight
+tap pill-highlight
+highlights | grep -qF "\"words\": \"$walden_paragraph" || fail "Highlight kept nothing: $(highlights)"
+tap reading-middle 1.5
+[ "$(book_state Walden | cut -d' ' -f1-2)" = "0 0.0" ] || fail "the tap that clears the selection turned the page: $(book_state Walden)"
+shot
+tap page-forward 1.5
+[ "$(book_state Walden | cut -d' ' -f1)" = 0 ] && python3 -c "import sys; sys.exit(0 if float('$(book_state Walden | cut -d' ' -f2)') > 0 else 1)" || fail "after a highlight a tap no longer turns the page: $(book_state Walden)"
+tap page-back 1.5
+
+begin books-remove
+hold walden-paragraph
+tap pill-highlight
+highlights | grep -qF "$walden_paragraph" && fail "pressing the highlighter again kept the highlight: $(highlights)"
+tap reading-middle 1.5
+shot
+hold walden-paragraph
+tap pill-highlight
+tap reading-middle 1.5
+
+begin books-highlights-tab
+tap page-forward 1.5
+tap page-forward 1.5
+[ "$(book_state Walden | cut -d' ' -f1)" = 1 ] || fail "two turns did not reach the next chapter: $(book_state Walden)"
+tap contents
+tap contents-highlights 1.2
+shot
+tap first-highlight 1.5
+[ "$(book_state Walden | cut -d' ' -f1)" = 0 ] || fail "choosing the highlight did not go to it: $(book_state Walden)"
+
+begin books-quote
+hold walden-paragraph
+tap pill-quote 1.5
+quoted="$(printf '%s\n\n> %s\n>\n> — Henry David Thoreau, *Walden*\n\n' "$reading_draft" "${walden_paragraph/deliberately/*deliberately*}")"
+expect_draft "$quoted"
+[ "$(book_state Walden | cut -d' ' -f1)" = 0 ] || fail "quoting left the book: $(book_state Walden)"
+shot
+tap show-writing 1.5
+"$ad" screenshot "$shots/$(printf %02d "$step")-$name-page.png" --pixel-density 3 >/dev/null
 
 # Account and sync (TOB-490), against the fake server in fake-server.json: no Google, no network.
 fake_server() {

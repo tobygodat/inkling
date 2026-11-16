@@ -102,7 +102,7 @@ pub(crate) struct Reading {
     /// The selection in `Laid::text`: where it started and where it ends (`crate::passage`).
     pub(crate) sel: Option<(usize, usize)>,
     pub(crate) press: Option<Press>,
-    /// A drag, a double click or a hold just selected, so the click that ends it does nothing else.
+    /// A drag or a double click just selected, so the click that ends it does nothing else.
     pub(crate) held: bool,
     pub tab: Tab,
 }
@@ -497,7 +497,6 @@ impl Inkling {
     fn wheeled(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let line = self.theme().body.size * self.theme().body.line;
         let Screen::Reading(r) = &mut self.screen else { return };
-        r.press = None;
         let dy = event.delta.pixel_delta(line).y;
         let (offset, max) = (-r.scroll.offset().y, r.scroll.max_offset().y);
         let (chapter, last) = (r.chapter, r.book.chapters.len().saturating_sub(1));
@@ -526,7 +525,6 @@ impl Inkling {
     fn swiped(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         let Screen::Reading(r) = &mut self.screen else { return };
-        r.press = None;
         let paused = r.last_scroll.is_none_or(|at| now.duration_since(at) >= SWIPE_PAUSE);
         r.last_scroll = Some(now);
         if paused || event.touch_phase == TouchPhase::Started {
@@ -718,6 +716,7 @@ impl Inkling {
             .child(top)
             .child(body)
             .child(bottom)
+            .when(self.form == crate::FormFactor::Phone, |screen| screen.child(self.listen_for_hold(cx)))
             .children(self.render_pill(r, window, cx))
             .when(r.contents, |screen| screen.child(self.render_contents(r, &c, window.viewport_size().width, cx)))
             .children(self.render_note(r, window))
@@ -932,7 +931,7 @@ impl Inkling {
         div()
             .id(("block", i))
             .child(styled)
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, _, cx| this.press_text(i, event, cx)))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, _, cx| this.press_text(event, cx)))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
             let at = event.position();
             let hit = layout.index_for_position(at).ok().and_then(|ix| marks.target(ix).cloned()).or_else(|| near_marker(&layout, &marks, at));

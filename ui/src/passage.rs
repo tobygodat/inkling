@@ -17,26 +17,18 @@ use gpui_kit::*;
 use inkling_books::Highlight;
 use inkling_books::highlights::{Run, quote};
 use std::ops::Range;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// How long a finger rests on a paragraph before it is selected.
-const HOLD: Duration = Duration::from_millis(500);
-/// How far a finger may move and still be holding still.
-const STILL: Pixels = px(10.);
 /// How far the mouse moves before a press becomes a drag.
 const DRAG: Pixels = px(3.);
 
-/// A press on the book's text that may become a drag (Mac) or a hold (iPhone).
+/// A press on the book's text on the Mac, which may become a drag.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Press {
     /// Where it landed, in `Laid::text`.
     pub at: usize,
     pub point: Point<Pixels>,
-    /// The block it landed on.
-    pub block: usize,
     pub dragging: bool,
-    /// Tells a hold's timer whether this is still the press it was started for.
-    pub token: u64,
 }
 
 /// What the contents popover lists.
@@ -176,13 +168,14 @@ impl Inkling {
         }
     }
 
-    /// A press on block `block` of the text.
-    pub(crate) fn press_text(&mut self, block: usize, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        let phone = self.form == FormFactor::Phone;
+    /// A mouse press on the book's text.
+    pub(crate) fn press_text(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        if self.form == FormFactor::Phone {
+            return;
+        }
         let Some(r) = self.book_open_mut() else { return };
         let Some((_, at)) = r.hit(event.position) else { return };
-        let token = r.press.map_or(0, |p| p.token) + 1;
-        if !phone && event.click_count == 2 {
+        if event.click_count == 2 {
             r.sel = Some((r.word_at(at).start, r.word_at(at).end));
             r.held = true;
             r.press = None;
@@ -190,40 +183,47 @@ impl Inkling {
             return;
         }
         r.held = false;
-        r.press = Some(Press { at, point: event.position, block, dragging: false, token });
-        if phone {
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(HOLD).await;
-                let _ = this.update(cx, |this, cx| this.held_still(token, cx));
-            })
-            .detach();
+        r.press = Some(Press { at, point: event.position, dragging: false });
+    }
+
+    /// A finger held on a paragraph on iPhone, as GPUI recognizes it: the paragraph is selected,
+    /// whole.
+    fn held_at(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        let Some(r) = self.book_open_mut() else { return false };
+        if r.contents || r.note.is_some() {
+            return false;
         }
-    }
-
-    /// A finger has rested on a paragraph: it is selected, whole.
-    fn held_still(&mut self, token: u64, cx: &mut Context<Self>) {
-        let Some(r) = self.book_open_mut() else { return };
-        let Some(press) = r.press.filter(|p| p.token == token && !p.dragging) else { return };
-        let Some(block) = r.laid.blocks.get(press.block) else { return };
+        let Some(block) = r.hit(at).and_then(|(i, _)| r.laid.blocks.get(i)).filter(|b| !b.text.text.is_empty()) else { return false };
         r.sel = Some((block.at, block.at + block.text.text.len()));
-        r.held = true;
-        r.press = None;
         cx.notify();
+        true
     }
 
-    /// The mouse or a finger moving over the book.
+    /// Listens for a hold on the book's text on iPhone.
+    pub(crate) fn listen_for_hold(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let view = cx.entity().downgrade();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let view = view.clone();
+                window.on_mouse_event(move |event: &LongPressEvent, phase, window, cx| {
+                    if phase.bubble() && event.phase == TouchPhase::Started && view.update(cx, |this, cx| this.held_at(event.start_position, cx)).unwrap_or(false) {
+                        // Claims the touch, so it isn't also a tap or a scroll.
+                        window.prevent_default();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full()
+    }
+
+    /// The mouse moving over the book: a press that moves becomes a drag that selects.
     pub(crate) fn move_over_text(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        let phone = self.form == FormFactor::Phone;
         let Some(r) = self.book_open_mut() else { return };
         let Some(mut press) = r.press else { return };
         let d = event.position - press.point;
         let beyond = |reach: Pixels| d.x.abs() > reach || d.y.abs() > reach;
-        if phone {
-            if beyond(STILL) {
-                r.press = None;
-            }
-            return;
-        }
         if event.pressed_button != Some(MouseButton::Left) {
             r.press = None;
             return;
