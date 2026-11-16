@@ -134,11 +134,13 @@ pub fn title(text: &str) -> &str {
     line.trim_start_matches('#').trim()
 }
 
-/// Where a block of Markdown goes into `text`, and the text to put there: after the top-level
-/// block that holds the caret `at` (a whole paragraph, list, quote or code block), at the caret
-/// when it sits between blocks, or at the end with no caret, set apart by a blank line on each
-/// side. A code fence left open there is closed first, or the block would be code. The caret goes
-/// after the inserted text.
+/// Where a block of Markdown goes into `text`, and the text to put there, set apart by a blank
+/// line on each side: after the top-level block that holds the caret `at` (a whole paragraph,
+/// list, quote or code block), at the caret when it sits between blocks, or at the end with no
+/// caret. A code fence left open there is closed first. Each place is checked by parsing the
+/// result, and where the block wouldn't read as a block of its own (an open maths or HTML block
+/// would swallow it) it goes before the block that holds the caret instead, else at the start.
+/// The caret goes after the inserted text.
 pub fn place_block(text: &str, at: Option<usize>, block: &str) -> (usize, String) {
     use markdown::mdast::Node;
     let children = match markdown::to_mdast(text, &crate::draft::options(true)) {
@@ -147,16 +149,28 @@ pub fn place_block(text: &str, at: Option<usize>, block: &str) -> (usize, String
     };
     let spans: Vec<(std::ops::Range<usize>, bool)> =
         children.iter().filter_map(|c| c.position().map(|p| (p.start.offset..p.end.offset, matches!(c, Node::Code(_))))).collect();
-    let at = match at {
+    let after = match at {
         Some(at) if at <= text.len() && text.is_char_boundary(at) => spans.iter().find(|(r, _)| r.start <= at && at <= r.end).map_or(at, |(r, _)| r.end),
         _ => text.len(),
     };
-    let (before, after) = text.split_at(at);
-    let close = spans
-        .iter()
-        .find(|(r, code)| *code && r.end == at)
+    let holder = spans.iter().find(|(r, _)| r.start <= after && after <= r.end);
+    let close = holder
+        .filter(|(r, code)| *code && r.end == after)
         .and_then(|(r, _)| open_fence(&text[r.clone()]))
-        .map_or(String::new(), |fence| format!("{}{fence}", if before.ends_with('\n') { "" } else { "\n" }));
+        .map_or(String::new(), |fence| format!("{}{fence}", if text[..after].ends_with('\n') { "" } else { "\n" }));
+    let tries = [(after, close), (holder.map_or(after, |(r, _)| r.start), String::new()), (0, String::new())];
+    for (at, close) in &tries {
+        let insert = framed(text, *at, close, block);
+        if reads_as_its_own(&format!("{}{insert}{}", &text[..*at], &text[*at..]), block) {
+            return (*at, insert);
+        }
+    }
+    (0, framed(text, 0, "", block))
+}
+
+/// `close`, then `block` set apart by a blank line from the text on each side of `at`.
+fn framed(text: &str, at: usize, close: &str, block: &str) -> String {
+    let (before, after) = text.split_at(at);
     let closed = format!("{before}{close}");
     let lead = match closed.len() - closed.trim_end_matches('\n').len() {
         _ if closed.trim().is_empty() => "",
@@ -165,7 +179,13 @@ pub fn place_block(text: &str, at: Option<usize>, block: &str) -> (usize, String
         _ => "",
     };
     let trail = &"\n\n"[(after.len() - after.trim_start_matches('\n').len()).min(2)..];
-    (at, format!("{close}{lead}{block}{trail}"))
+    format!("{close}{lead}{block}{trail}")
+}
+
+/// Whether `text` holds `block` as a top-level block of its own.
+fn reads_as_its_own(text: &str, block: &str) -> bool {
+    let Ok(markdown::mdast::Node::Root(root)) = markdown::to_mdast(text, &crate::draft::options(true)) else { return false };
+    root.children.iter().filter_map(|c| c.position()).any(|p| text[p.start.offset..p.end.offset].trim_end() == block.trim_end())
 }
 
 /// The fence that would close a fenced code block whose fence was never closed: its own character,
@@ -233,6 +253,11 @@ mod tests {
         assert_eq!(put("```\na\n\nb\n```\n\nAfter.", Some(4)), "```\na\n\nb\n```\n\n> Q|\n\nAfter.", "a blank line inside code is still the code");
         assert_eq!(put("```rust\nlet x = 1;", Some(12)), "```rust\nlet x = 1;\n```\n\n> Q\n\n|", "a fence left open is closed first");
         assert_eq!(put("~~~~\nopen\n", None), "~~~~\nopen\n~~~~\n\n> Q\n\n|", "with its own fence");
+        for text in ["```rust\nlet x = 1;\n    ```", "~~~\nx\n    ~~~", "$$\nx^2"] {
+            for at in [Some(4), None] {
+                assert!(quotes(&put(text, at).replace('|', "")).iter().any(|q| q == "> Q"), "the quote is swallowed in {text:?} at {at:?}");
+            }
+        }
     }
 
     proptest! {
@@ -242,7 +267,8 @@ mod tests {
         fn a_block_never_lands_inside_another(
             blocks in proptest::collection::vec(proptest::sample::select(vec![
                 "Plain words.", "Soft\nbreak.", "- a\n- b", "1. one\n2. two", "> q\n> r", "# Head", "```\nx\n\ny\n```",
-                "```rust\nopen", "~~~\nopen\n\nstill code",
+                "```rust\nopen", "~~~\nopen\n\nstill code", "```rust\nlet x = 1;\n    ```", "~~~\nx\n    ~~~",
+                "$$\nx^2", "$$\ny\n$$", "<pre>\nraw", "<div>\nblock", "<!-- open",
             ]), 1..5),
             caret in proptest::option::of(0usize..80),
         ) {
@@ -252,9 +278,22 @@ mod tests {
             let spans = top_level(&text);
             prop_assert!(spans.iter().all(|r| !(r.start < at && at < r.end)), "{at} splits a block of {text:?}");
             let placed = format!("{}{block}{}", &text[..at], &text[at..]);
-            prop_assert_eq!(top_level(&placed).len(), spans.len() + 1, "{:?}", placed);
             prop_assert!(quotes(&placed).iter().any(|q| q == "> Q"), "the block is no quote of its own in {:?}", placed);
+            // Every block that was there still reads as it did; a fence closed for the quote
+            // only gains its closing line.
+            let was = sources(&text);
+            let mut now = sources(&placed);
+            if let Some(i) = now.iter().position(|q| q == "> Q") {
+                now.remove(i);
+            }
+            prop_assert_eq!(was.len(), now.len(), "{:?} became {:?}", text, placed);
+            prop_assert!(was.iter().zip(&now).all(|(a, b)| b.starts_with(a.as_str())), "{:?} became {:?}", text, placed);
         }
+    }
+
+    /// The source of each top-level block.
+    fn sources(text: &str) -> Vec<String> {
+        top_level(text).into_iter().map(|r| text[r].trim_end().to_string()).collect()
     }
 
     /// The source of each top-level block quote.
