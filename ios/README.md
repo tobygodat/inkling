@@ -221,7 +221,7 @@ the paint after it sees the mouse down. So `ui/src/review.rs` gives the review a
 | Use accepts it and the sheet moves to the next pending change | `09-used` |
 | Keep rejects it and the sheet moves on | `10-kept` |
 | Accept the rest applies the rest and returns to the draft | `11-accept-rest` |
-| Double tap selects a word (the text-area page, with the kit's handles; the live page's are in `snap/21-live-select`) | `12-word-selected` |
+| Double tap selects a word (the text-area page, with the kit's handles; the live page's are in `snap/live-select`) | `12-word-selected` |
 | Find a word with the keyboard up | `13-find-a-word` |
 | Other wordings in the sheet, 44 pt rows | `14-other-words` |
 | Choosing a wording, then Use | `15-wording-chosen`, `16-wording-used` |
@@ -245,39 +245,44 @@ live editor replaced. The scripted run below proves the same page behaviour on t
 ## The scripted run
 
 `snap.sh <agent-device>` uninstalls the app, builds and installs it through `run.sh` with
-`--fake-ai`, drives the main flow through `agent-device` and saves each step to
-`docs/screenshots/ios/snap/`. It stops with a non-zero exit at the first failed check. A run takes
+`--fake-ai`, drives the main flow through `agent-device` and saves each step's screenshot to
+`target/snap/ios/`. A step and its screenshot go by the step's name, with no number, so adding a
+step renames nothing. A passing run copies into `docs/screenshots/ios/snap/` only the steps with no
+screenshot there yet and the steps named after `<agent-device>`. Name the steps whose screen your
+change alters, as in `snap.sh <agent-device> books-library books-epub`, and commit those. Two PRs
+then meet in that folder only on a screen both changed. It stops with a non-zero exit at the first
+failed check. A run takes
 about three and a half minutes, the build included. Every `agent-device` call goes through
 `device.sh`, which runs it again when the shared daemon answers "Remote daemon is unavailable".
 Other sessions on the Mac cause these gaps, and they last from a few seconds to a minute.
 
 | Step | Checked | Screenshot only |
 | --- | --- | --- |
-| Launch on an empty page | the saved draft is empty | `01-empty` |
-| Type a line on the keyboard, paste a second part with the Paste control | the saved draft is exactly the typed and pasted text | `02-written` |
-| Done | | `03-keyboard-down` |
-| Fix grammar | | `04-review` |
-| Tap the "teh" change, Use it, Keep the next one | | `05-change-tapped`, `06-used`, `07-kept` |
-| Accept the rest | the saved draft has the used and accepted changes and not the kept one | `08-accepted` |
-| Open the key screen | | `09-keys` |
-| Paste a fake key with the Paste control, reveal it | | `10-key-pasted` |
-| Return saves | `settings.json` appears only now | `11-key-saved` |
-| Back to the page | | `12-back-with-key` |
-| Scroll the key screen, paste a fake feedback link, Return saves it | no file in the data folder holds `#k=` | `13-link-saved` |
-| Back, then Feedback in the header | | `14-feedback-open` |
-| Type "bigger margins", Done, Send | `sent-feedback.json` holds "Bigger margins" and not the draft | `15-feedback-sent` |
-| Save a link on an `.invalid` host, send "a darker caret" | the failed send adds nothing to `sent-feedback.json` | `16-feedback-failed` |
-| Relaunch on an empty draft, tap the page, type a line | the saved draft is the line, and the Paste control shows, so the keyboard is up | `17-live-typed` |
-| Type `# title`, Return twice, a line | the saved draft is the heading, a blank line and the line; the heading is drawn large (by eye) | `18-live-heading` |
-| Type "becuase" and a space | the saved draft says "because" | `19-live-autocorrect` |
-| Type "rive", tap "river" in the suggestion bar | the saved draft ends "river " | `20-live-suggestion` |
-| Relaunch on two blocks, double tap "light" | Copy in UIKit's menu puts "light" on the clipboard; the handles show (by eye) | `21-live-select` |
-| Double tap "paragraph" in the second block, drag its start handle into the first | Copy puts the source from "light" to "paragraph" on the clipboard, blank line included | `22-live-handles` |
-| Tap the end of the second block, Paste | the saved draft is the two blocks and then the copied source | `23-live-paste` |
-| Relaunch on a draft with a heading, an inline formula and a block formula | the draft is unchanged and the shot is 1206 px wide (3x); both formulas are drawn and sharp (by eye) | `24-live-maths` |
-| Relaunch on a misspelt line, Fix grammar, Use the first change, Keep the other three | the saved draft holds that one change | `25-live-review` |
-| Relaunch on two blocks, tap the first line | the accessibility snapshot's focused page reads the draft's source | `26-a11y-ios` |
-| The same page | its node is at least 44 pt tall | `27-a11y-target` |
+| Launch on an empty page | the saved draft is empty | `empty` |
+| Type a line on the keyboard, paste a second part with the Paste control | the saved draft is exactly the typed and pasted text | `written` |
+| Done | | `keyboard-down` |
+| Fix grammar | | `review` |
+| Tap the "teh" change, Use it, Keep the next one | | `change-tapped`, `used`, `kept` |
+| Accept the rest | the saved draft has the used and accepted changes and not the kept one | `accepted` |
+| Open the key screen | | `keys` |
+| Paste a fake key with the Paste control, reveal it | | `key-pasted` |
+| Return saves | `settings.json` appears only now | `key-saved` |
+| Back to the page | | `back-with-key` |
+| Scroll the key screen, paste a fake feedback link, Return saves it | no file in the data folder holds `#k=` | `link-saved` |
+| Back, then Feedback in the header | | `feedback-open` |
+| Type "bigger margins", Done, Send | `sent-feedback.json` holds "Bigger margins" and not the draft | `feedback-sent` |
+| Save a link on an `.invalid` host, send "a darker caret" | the failed send adds nothing to `sent-feedback.json` | `feedback-failed` |
+| Relaunch on an empty draft, tap the page, type a line | the saved draft is the line, and the Paste control shows, so the keyboard is up | `live-typed` |
+| Type `# title`, Return twice, a line | the saved draft is the heading, a blank line and the line; the heading is drawn large (by eye) | `live-heading` |
+| Type "becuase" and a space | the saved draft says "because" | `live-autocorrect` |
+| Type "rive", tap "river" in the suggestion bar | the saved draft ends "river " | `live-suggestion` |
+| Relaunch on two blocks, double tap "light" | Copy in UIKit's menu puts "light" on the clipboard; the handles show (by eye) | `live-select` |
+| Double tap "paragraph" in the second block, drag its start handle into the first | Copy puts the source from "light" to "paragraph" on the clipboard, blank line included | `live-handles` |
+| Tap the end of the second block, Paste | the saved draft is the two blocks and then the copied source | `live-paste` |
+| Relaunch on a draft with a heading, an inline formula and a block formula | the draft is unchanged and the shot is 1206 px wide (3x); both formulas are drawn and sharp (by eye) | `live-maths` |
+| Relaunch on a misspelt line, Fix grammar, Use the first change, Keep the other three | the saved draft holds that one change | `live-review` |
+| Relaunch on two blocks, tap the first line | the accessibility snapshot's focused page reads the draft's source | `a11y-ios` |
+| The same page | its node is at least 44 pt tall | `a11y-target` |
 
 After every tap it also checks that Inkling is still the foreground app, so a crash fails the
 step. The pasted part carries the misspellings the fake Fix grammar corrects (`i`, `dont`,

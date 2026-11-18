@@ -56,8 +56,10 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
-- `ios/snap.sh <agent-device>` reinstalls the iPhone app and drives the main flow and the live
-  page on the Simulator, with 66 checked steps. Any change under `ui/` or `ios/` reruns it.
+- `ios/snap.sh <agent-device> [step…]` reinstalls the iPhone app and drives the main flow and the
+  live page on the Simulator. Any change under `ui/` or `ios/` reruns it. It writes its screenshots
+  to `target/snap/ios/` and copies into `docs/screenshots/ios/snap/` only new steps and the steps
+  you name, so name the steps whose screen your change alters and commit only those.
   `ios/README.md` lists what is still driven by hand.
 - `ios/bench.sh <agent-device>` types 50 characters into a 5,000-word draft in the installed Debug
   build and prints the median and worst time from a typed character to its painted frame.
@@ -104,8 +106,18 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   `mac/snap.sh` when `core/`, `ui/` or `mac/` changed and `ios/snap.sh` when `ui/` or `ios/` changed.
   It does not repeat the tests or clippy.
 - A PR that changes only docs or CI config needs green CI and no final check.
-- After a `FAIL`, check the fix against the step that failed, not the whole proof.
-- A finding outside the issue's "done when" becomes a line on the issue, not a fix round.
+- A final check fails only on a "Done when" line that breaks in a journey a user would take, on
+  lost data, or on a security hole. Any other finding is a note in a `PASS+NOTES` and a line on the
+  issue. That includes input no writer produces, such as an unclosed code fence.
+- One `ios/snap.sh` run is enough for a check. A run that stops on the Simulator or the machine
+  before it reaches the PR's code is run again, and is never reported as a `FAIL`.
+- After a `FAIL`, check the fix against the step that failed, not the whole proof. The re-check
+  runs the repro that failed and does not look for new inputs.
+- A PR gets one fix round. After a second `FAIL`, the thread that started the author files the
+  finding on the issue and merges, unless it is one of the three kinds above.
+- The thread that started the author fixes a finding of one or two files itself, a doc line
+  included, and does not send it back to the author.
+- A snap step goes by its name, never a number, so a new step renames nothing.
 - No review panel on an ordinary diff. `interrogate` is for a contested design.
 
 ## Feedback threads
