@@ -91,9 +91,10 @@ bucket is missing.
    answered "Please enable R2 through the Cloudflare Dashboard." The free tier covers five builds.
 2. Create the bucket: `bunx wrangler r2 bucket create inkling-builds`.
 3. Make the upload token, keep it in the login Keychain, and give the Worker the same value. It
-   never goes in a file:
+   never goes in a file. `security -i` reads its command from stdin, so the token never shows up in
+   `ps`:
    ```sh
-   security add-generic-password -s inkling-ota -a upload-token -w "$(openssl rand -hex 32)"
+   printf 'add-generic-password -s inkling-ota -a upload-token -w %s\n' "$(openssl rand -hex 32)" | security -i
    security find-generic-password -s inkling-ota -a upload-token -w | bunx wrangler secret put BUILD_UPLOAD_TOKEN
    ```
    Without `BUILD_UPLOAD_TOKEN`, every upload is refused.
