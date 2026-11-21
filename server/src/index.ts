@@ -1,9 +1,11 @@
 // inkling-server: the OAuth authorization server, the remote MCP endpoint at /mcp, the devices' sync
-// API under /v1, and the Readwise inbox (ADR 0004). One Worker on Cloudflare's free plan, so every
-// request stays well inside 10 ms of CPU: no book is parsed here.
+// API under /v1, the Readwise inbox (ADR 0004), and the iPhone builds' signed links under /builds.
+// One Worker on Cloudflare's free plan, so every request stays well inside 10 ms of CPU: no book is
+// parsed here.
 
 import { OAuthAuthorizationServer, OAuthResourceServer } from "@cloudflare/workers-oauth-provider";
 import { authorize, googleCallback } from "./authorize";
+import { serveBuilds } from "./builds";
 import type { Env, Owner } from "./env";
 import { Refused, json } from "./http";
 import { serveMcp } from "./mcp";
@@ -90,6 +92,8 @@ export default {
       if (under(pathname, "/v1") || pathname.startsWith("/.well-known/oauth-protected-resource/v1")) {
         return await s.sync.fetch(request, env, ctx);
       }
+
+      if (under(pathname, "/builds")) return await serveBuilds(request, env);
 
       if (pathname === "/authorize") return await authorize(request, env, s.auth.getOAuthApi(env));
 

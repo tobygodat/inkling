@@ -1,7 +1,7 @@
 // The Readwise token is kept as AES-256-GCM ciphertext under SECRET_KEY, a Worker secret of 32
 // random bytes in base64. Reading D1 alone doesn't reveal it.
 
-const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+export const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 
 async function key(secretKey: string): Promise<CryptoKey> {

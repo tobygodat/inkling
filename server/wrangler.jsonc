@@ -25,6 +25,8 @@
     { "binding": "OAUTH_KV", "id": "d4006d99485f48c3a66f0ac3f6996fa8" },
     { "binding": "FILES", "id": "c46f70b6d4ff4039ad168af527dd361a" }
   ],
+  // The newest five iPhone builds, served behind signed links (TOB-518).
+  "r2_buckets": [{ "binding": "BUILDS", "bucket_name": "inkling-builds" }],
   // The Readwise backstop poll, and the OAuth store's cleanup.
   "triggers": { "crons": ["*/30 * * * *"] }
 }
