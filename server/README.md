@@ -1,11 +1,12 @@
 # inkling-server
 
-The Cloudflare Worker of ADR 0004. It runs on the free plan and handles four things:
+The Cloudflare Worker of ADR 0004. It runs on the free plan and handles five things:
 
 - the OAuth sign-in, through Sign in with Google, for one owner;
 - the remote MCP endpoint at `/mcp`;
 - the devices' sync API under `/v1`;
-- the Readwise inbox.
+- the Readwise inbox;
+- the iPhone builds' signed install links under `/builds` (TOB-518).
 
 `docs/ARCHITECTURE.md` says how the pieces fit.
 
@@ -72,3 +73,31 @@ On Account, Readwise's Connect asks for the token from readwise.io/access_token.
 `PUT /v1/readwise` with `{"token": …}`. The server checks Reader every 30 minutes; only documents
 saved after you connect come in. EPUBs and PDFs land in the inbox, and the next device to sync adds
 them to its library.
+
+## Over-the-air builds
+
+`ios/ota.sh` uploads an ad hoc .ipa with `POST /builds?version=…&build=…` and the upload token as
+a bearer token. The Worker stores it in the R2 bucket `inkling-builds` under a random ID, deletes
+all but the newest five, and answers with a link to `/builds/<id>`. The install page, its
+`manifest.plist` and `Inkling.ipa` are each refused unless their URL carries an HMAC of its path
+and expiry, under a key derived from `SECRET_KEY`. A link works for 24 hours after the upload, and
+the page and the manifest pass that same expiry on. Every response sends `Cache-Control: no-store`.
+A Worker on the free plan takes request bodies of up to 100 MB, which caps the .ipa.
+
+Set it up once, on the Mac. Do it before the next deploy of any change: the deploy fails while the
+bucket is missing.
+
+1. Enable R2 in the Cloudflare dashboard (R2 Object Storage). On 2026-11-21 the account's API
+   answered "Please enable R2 through the Cloudflare Dashboard." The free tier covers five builds.
+2. Create the bucket: `bunx wrangler r2 bucket create inkling-builds`.
+3. Make the upload token, keep it in the login Keychain, and give the Worker the same value. It
+   never goes in a file. `security -i` reads its command from stdin, so the token never shows up in
+   `ps`:
+   ```sh
+   printf 'add-generic-password -s inkling-ota -a upload-token -w %s\n' "$(openssl rand -hex 32)" | security -i
+   security find-generic-password -s inkling-ota -a upload-token -w | bunx wrangler secret put BUILD_UPLOAD_TOKEN
+   ```
+   Without `BUILD_UPLOAD_TOKEN`, every upload is refused.
+4. `bun run deploy`. Only Toby runs it.
+
+Then `ios/ota.sh` works. `ios/README.md` has the rest, including registering the iPhone's UDID.

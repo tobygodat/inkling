@@ -26,7 +26,8 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
   server, kept in `fake-server.json` in the data folder, never to the real one. No UI framework
   may be a dependency of it.
 - `server/` is `inkling-server`, the Cloudflare Worker of ADR 0004: OAuth with Sign in with Google,
-  the remote MCP endpoint, the devices' sync API and the Readwise inbox. TypeScript on Bun, not in
+  the remote MCP endpoint, the devices' sync API, the Readwise inbox and the iPhone builds' signed
+  install links (TOB-518). TypeScript on Bun, not in
   the Cargo workspace. `server/README.md` has its setup.
 - `ui/` is `inkling-ui`: every view, shared by the Mac app and the iPhone host. It takes its form
   factor as a value and never reads the platform.
@@ -68,6 +69,13 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   headers, and uploads it to TestFlight. Xcode's signed-in account signs it, and `altool` uploads it
   with the App Store Connect API key in the login Keychain (service `inkling-app-store-connect`). It
   sends a build to Apple, so run it only when Toby asks for a TestFlight build.
+- `ios/ota.sh` archives the iPhone app in Release for a real device, exports it ad hoc
+  (`release-testing`) for the iPhones registered on team Q6NAWA42Y2, uploads it to `inkling-server`
+  and prints an install link that works for 24 hours. It sends nothing to Apple, so any thread
+  working on Toby's Mac may run it without asking, and hands Toby the link. The upload token is
+  read from the login Keychain (service `inkling-ota`, account `upload-token`). It needs the
+  one-time setup in `ios/README.md` (R2 bucket, upload token, registered UDID) and the Worker
+  deployed with its `/builds` routes. Feedback threads don't use it.
 - `feedback/ship.sh done|declined <id> "<one line>"` ships one feedback from the standing checkout:
   tests, clippy, `mac/snap.sh`, the record, a commit on `main`, `mac/install.sh` and a push. Only a
   feedback thread runs it.

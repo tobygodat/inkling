@@ -303,6 +303,10 @@ more than 10 ms of CPU, so it never parses a book.
   poll every 30 minutes streams each new EPUB or PDF from Reader into KV as an inbox item. The next
   device to sync downloads it, parses it into its library and settles the item. Only documents
   saved after the link was made come in.
+- **iPhone builds.** `src/builds.ts` (TOB-518). `ios/ota.sh` uploads an ad hoc .ipa with a bearer
+  token to R2, where the newest five are kept. The install page, its manifest and the .ipa are
+  each served only on a URL signed with HMAC under a key derived from `SECRET_KEY`, which expires
+  24 hours after the upload, because iOS fetches the manifest and the .ipa without cookies.
 
 ## External services
 Anthropic, OpenAI and Google's generative language API, each called directly with the user's key.

@@ -15,6 +15,7 @@ export default defineConfig(async () => ({
           OWNER_EMAIL: "Owner@Example.com",
           GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",
           GOOGLE_CLIENT_SECRET: "test-secret",
+          BUILD_UPLOAD_TOKEN: "test-upload-token",
         },
       },
     }),
