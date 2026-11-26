@@ -6,11 +6,18 @@ set -euo pipefail
 cd "$(dirname "$0")"
 rev=7548ebc4b24f00494af9976af8852c7163ded9ce
 dir=target/gpui-mobile
-if [ ! -d "$dir/.git" ]; then
+clone() {
+  rm -rf "$dir"
   mkdir -p target
   git clone -q https://github.com/longbridge/gpui-mobile "$dir"
+}
+[ -d "$dir/.git" ] || clone
+# CI's cache of target/ can restore the checkout without objects the pin needs. Clone it afresh then.
+if ! git -C "$dir" checkout -q --force "$rev" 2>/dev/null; then
+  echo "target/gpui-mobile cannot check out $rev; cloning it again" >&2
+  clone
+  git -C "$dir" checkout -q --force "$rev"
 fi
-git -C "$dir" checkout -q --force "$rev"
 git -C "$dir" clean -fdq
 for patch in patches/*.patch; do
   git -C "$dir" apply --whitespace=nowarn "$PWD/$patch"
