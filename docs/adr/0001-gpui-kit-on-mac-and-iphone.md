@@ -1,6 +1,7 @@
 # 0001. GPUI Kit for the UI on both Mac and iPhone
 
-Status: Accepted, 2026-11-11
+Status: Accepted, 2026-11-11. Being superseded by ADR 0007 (2026-11-26): the screens move to a native
+SwiftUI app over the same Rust crates, and this holds until they have.
 
 ## Context
 
