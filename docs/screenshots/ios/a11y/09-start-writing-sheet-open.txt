@@ -1,0 +1,3 @@
+Tapped label="Start writing" (201, 243)
+{"role": "GPUITextInputView", "focused": true, "rect": {"x": 14, "y": 113, "width": 374, "height": 121.66666666666666}}
+sheet still open: Done at {'x': 335.3333333333333, 'y': 241.66666666666666, 'width': 56.666666666666686, 'height': 43.99999999999997}

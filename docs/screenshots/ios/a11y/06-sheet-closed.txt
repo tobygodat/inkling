@@ -1,0 +1,13 @@
+Page: com.tobygodat.inkling
+App: com.tobygodat.inkling
+Snapshot: 10 nodes
+@e1 [application] "Inkling"
+  @e2 [button] "‹ Documents"
+  @e3 [button] "Claude · add a key"
+  @e4 [button] "Find"
+  @e5 [other] "Start writing"
+  @e6 [other] "Ask for fixes, words or a nudge"
+  @e7 [button] "Send"
+  @e8 [button] "Appearance"
+  @e9 [button] "Writing" [selected]
+  @e10 [button] "Reading"

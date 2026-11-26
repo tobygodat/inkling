@@ -66,7 +66,7 @@ replaced 13.6 ms. Both are Debug builds on the Simulator, so they are a floor fo
 
 `ios/e2e/` uses the official `e2e` runner (`@e2e-dev/mobile`) against a Debug simulator build with
 canned AI, in-memory keys, and no e2e model provider or telemetry. It shadows `ios/snap.sh` across
-all 8 lanes (68 steps) and is not a CI gate yet.
+all 8 lanes (69 steps) and is not a CI gate yet.
 
 With Xcode and Node 22.22.3+, 24.8+, or 26+, boot a dedicated iPhone 18 Pro simulator
 with no Inkling install, then run from the repo root:
@@ -75,7 +75,7 @@ with no Inkling install, then run from the repo root:
 cd ios/e2e
 npm ci --ignore-scripts
 INKLING_E2E_SIMULATOR=<simulator-uuid> npm run smoke   # single editor smoke test (~6 s)
-INKLING_E2E_SIMULATOR=<simulator-uuid> npm test        # full 9-file (68-step) suite
+INKLING_E2E_SIMULATOR=<simulator-uuid> npm test        # full 9-file (69-step) suite
 ```
 
 The runner builds and installs Inkling only on that simulator, disables e2e telemetry, and fixes
@@ -191,6 +191,13 @@ link, image, header, search field, selected, not enabled) and its frame. An elem
 `.accessibility_id(..)` becomes its `accessibilityIdentifier`, and the controls in `ui/` set it to
 their element id, such as `cog` or `show-reading`. A container gives no element, and a button's children make its label when it has
 none. A password input's value is left out.
+
+A dialog hides what it is drawn over. Every element before it in the tree keeps only the largest
+part of its frame the dialog leaves showing, and an element it covers whole is left out. The
+iPhone's Appearance sheet and the find bar are dialogs, so while the sheet is open the page reads
+only above it and the ask field and Send are gone, and while Find is open the header's buttons
+under it are gone. The contents list, the footnote, the held book's Delete and the highlight pill
+cover only drawn text, which has no elements.
 
 The focused input is the bridge's own `GPUITextInputView`, set at the input's frame, in the
 place of the input's element. UIKit reads the document, the caret and the typing from it,
@@ -466,7 +473,8 @@ place or needs the app deleted first.
   needs a device run.
 - **Views with no role.** GPUI gives a node only to an element with an id and a role. The
   header's controls and the kit's ghost, footer and primary buttons have one; other tappable rows
-  (the library's books, the documents list, the review's changes and chips) do not yet.
+  (the library's books, the documents list, the review's changes and chips, and the Appearance
+  sheet's tones, fonts and sliders) do not yet.
 - **The masked key is readable by accessibility while it has focus.** Unfocused, it is a password
   input and its element has no value. Focused, it is the text input view, which answers UIKit's
   `textInRange:` with the document's real text, and the accessibility tree reads it back, so the

@@ -1,7 +1,7 @@
 diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 --- a/src/ios/window/accessibility.rs
 +++ b/src/ios/window/accessibility.rs
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,513 @@
 +//! UIKit accessibility for the AccessKit tree GPUI builds for the window.
 +//!
 +//! GPUI builds the tree only while the platform says it is active, so it
@@ -19,6 +19,11 @@ diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 +//! input is the bridge's own `GPUITextInputView` rather than an element, so
 +//! UIKit keeps reading the document, the caret and the typing from it. The
 +//! GPUI view's other subviews follow, as UIKit found them before.
++//!
++//! A dialog is drawn over what came before it in the tree and takes the
++//! touches there, so those elements keep only the largest part of their frame
++//! it leaves uncovered, and an element it covers whole is left out. Its own
++//! elements, and what is drawn after it, are not affected.
 +//!
 +//! An element does nothing of its own when activated: VoiceOver taps its
 +//! centre, which GPUI handles as a finger's tap.
@@ -314,6 +319,7 @@ diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 +    static OBSERVING: std::sync::Once = std::sync::Once::new();
 +    OBSERVING.call_once(|| unsafe {
 +        let center: Id = msg_send![class!(NSNotificationCenter), defaultCenter];
++        let main: Id = msg_send![class!(NSOperationQueue), mainQueue];
 +        let block = block2::RcBlock::new(|_: Id| {
 +            if let Some(windows) = crate::ios::ffi::IOS_WINDOW_LIST.get() {
 +                for &window in (*windows.0.get()).iter() {
@@ -327,7 +333,7 @@ diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 +            let _: Id = msg_send![center,
 +                addObserverForName: name,
 +                object: ptr::null::<AnyObject>(),
-+                queue: ptr::null::<AnyObject>(),
++                queue: main,
 +                usingBlock: &*block
 +            ];
 +        }
@@ -412,6 +418,11 @@ diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 +    for child in node.children() {
 +        walk(*child, nodes, focus, scale, out);
 +    }
++    if matches!(role, Role::Dialog | Role::AlertDialog) {
++        if let Some(cover) = frame_of(node, scale) {
++            occlude(out, before, cover);
++        }
++    }
 +    // A labelled group with nothing readable inside (an alert, a status)
 +    // reads as its label.
 +    if kind.is_none() && out.len() == before && role != Role::Window {
@@ -435,13 +446,9 @@ diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 +    scale: f64,
 +) {
 +    // A node with no place on screen cannot be found or tapped.
-+    let Some(bounds) = node.bounds() else {
++    let Some(frame) = frame_of(node, scale) else {
 +        return;
 +    };
-+    let frame = [bounds.x0 / scale, bounds.y0 / scale, (bounds.x1 - bounds.x0) / scale, (bounds.y1 - bounds.y0) / scale];
-+    if frame[2] <= 0.0 || frame[3] <= 0.0 {
-+        return;
-+    }
 +    out.push(Exposed {
 +        id,
 +        kind,
@@ -453,6 +460,42 @@ diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
 +        frame,
 +        focused_input: kind == Kind::Input && id == focus,
 +    });
++}
++
++/// A node's frame in the GPUI view's points, `[x, y, width, height]`, when it
++/// has an area.
++fn frame_of(node: &Node, scale: f64) -> Option<[f64; 4]> {
++    let bounds = node.bounds()?;
++    let frame = [bounds.x0 / scale, bounds.y0 / scale, (bounds.x1 - bounds.x0) / scale, (bounds.y1 - bounds.y0) / scale];
++    (frame[2] > 0.0 && frame[3] > 0.0).then_some(frame)
++}
++
++/// The elements before `upto` as they show around `cover`, drawn over them.
++fn occlude(out: &mut Vec<Exposed>, upto: usize, cover: [f64; 4]) {
++    let after = out.split_off(upto);
++    out.retain_mut(|exposed| match uncovered(exposed.frame, cover) {
++        Some(frame) => {
++            exposed.frame = frame;
++            true
++        }
++        None => false,
++    });
++    out.extend(after);
++}
++
++/// The largest part of `frame` that `cover` leaves showing, above, below,
++/// left or right of it; `None` when less than a point is left either way.
++fn uncovered(frame: [f64; 4], cover: [f64; 4]) -> Option<[f64; 4]> {
++    let [x0, y0, x1, y1] = [frame[0], frame[1], frame[0] + frame[2], frame[1] + frame[3]];
++    let [cx0, cy0, cx1, cy1] = [cover[0], cover[1], cover[0] + cover[2], cover[1] + cover[3]];
++    if cx0 >= x1 || cx1 <= x0 || cy0 >= y1 || cy1 <= y0 {
++        return Some(frame);
++    }
++    [[x0, y0, x1, y1.min(cy0)], [x0, y0.max(cy1), x1, y1], [x0, y0, x1.min(cx0), y1], [x0.max(cx1), y0, x1, y1]]
++        .into_iter()
++        .map(|[x0, y0, x1, y1]| [x0, y0, x1 - x0, y1 - y0])
++        .filter(|[_, _, width, height]| *width >= 1.0 && *height >= 1.0)
++        .max_by(|a, b| (a[2] * a[3]).total_cmp(&(b[2] * b[3])))
 +}
 +
 +/// A control's text, from the labels and values beneath it.
@@ -522,7 +565,23 @@ diff -ruN a/src/ios/window.rs b/src/ios/window.rs
      /// Current bounds in pixels
      bounds: Cell<Bounds<Pixels>>,
      /// Scale factor
-@@ -465,6 +487,7 @@
+@@ -379,6 +401,15 @@
+         // freed memory. Pointer matches the one passed to `register_with_ffi`
+         // (the window lives at a stable address in a Box for its whole lifetime).
+         super::ffi::deregister_window(self as *const Self);
++        // The views can outlive the window (UIKit or an accessibility client
++        // may hold them), so they must not keep pointing at it.
++        unsafe {
++            #[allow(deprecated)]
++            {
++                *(*self.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = ptr::null_mut();
++                *(*self.text_input.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = ptr::null_mut();
++            }
++        }
+     }
+ }
+ 
+@@ -465,6 +496,7 @@
                  view_controller,
                  view,
                  text_input,
@@ -530,7 +589,7 @@ diff -ruN a/src/ios/window.rs b/src/ios/window.rs
                  bounds: Cell::new(screen_bounds),
                  scale_factor: Cell::new(scale_factor),
                  input_handler: RefCell::new(None),
-@@ -1082,6 +1105,14 @@
+@@ -1082,6 +1114,14 @@
  
      fn hide_soft_keyboard(&self) {
          self.hide_keyboard();

@@ -13,7 +13,7 @@ interface SnapshotNode {
   readonly identifier?: string;
   readonly focused?: boolean;
   readonly selected?: boolean;
-  readonly rect?: { readonly width?: number; readonly height?: number };
+  readonly rect?: { readonly y?: number; readonly width?: number; readonly height?: number };
 }
 
 async function snapshot(device: Device): Promise<readonly SnapshotNode[]> {
@@ -46,6 +46,19 @@ test('GPUI controls reach iOS accessibility with labels and frames before the pa
   }
   expect(nodes.some((node) => node.role === 'GPUITextInputView'), 'no text input view before the page has focus').toBe(false);
   await stepShot(app, 'a11y-controls');
+
+  // a11y-sheet: the Appearance sheet hides what it covers and shows the page only above it.
+  await screen.getByLabel('Appearance', { exact: true }).tap();
+  await pause(600);
+  const sheet = await snapshot(device);
+  expect(byLabel(sheet, 'Done')?.identifier).toBe('appearance-done');
+  expect(byLabel(sheet, 'Send'), 'the sheet covers Send').toBeUndefined();
+  const page = byLabel(sheet, 'Start writing')?.rect;
+  expect((page?.y ?? 0) + (page?.height ?? 0)).toBeLessThanOrEqual(byLabel(sheet, 'Done')?.rect?.y ?? 0);
+  await stepShot(app, 'a11y-sheet');
+  await screen.getByLabel('Done', { exact: true }).tap();
+  await pause(600);
+  expect(byLabel(await snapshot(device), 'Send'), 'Send is back once the sheet closes').toBeDefined();
 
   // a11y-press: a tap found by label reaches GPUI.
   await screen.getByLabel('Reading', { exact: true }).tap();
