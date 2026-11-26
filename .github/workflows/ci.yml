@@ -35,6 +35,8 @@ jobs:
         with:
           path: target/fixtures
           key: book-fixtures-${{ hashFiles('books/fetch-fixtures.sh') }}
+          # An edit to the script changes the key. The last books it fetched still serve the tests.
+          restore-keys: book-fixtures-
 
       - name: Fetch the real books inkling-books tests read
         run: books/fetch-fixtures.sh
