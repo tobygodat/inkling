@@ -1,0 +1,67 @@
+Page: com.tobygodat.inkling
+App: com.tobygodat.inkling
+Snapshot: 64 nodes
+@e1 [application] "Inkling"
+  @e2 [button] "Claude · add a key"
+  @e3 [button] "Done"
+  @e4 [text-view] "Text view" [focused] [editable] [preview:"# Ferry notes Energy is $E = mc^2$ and a gull..."] [truncated]
+  @e5 [text] "Formula E = mc^2"
+  @e6 [text] "the harbour"
+  @e7 [image] "Formula \sum_{k=1}^{n} k"
+  @e8 [image] "a gull"
+  @e9 [other] "Ask for fixes, words or a nudge"
+  @e10 [button] "Send"
+  @e11 [button] "Appearance"
+  @e12 [button] "Writing" [selected]
+  @e13 [button] "Reading"
+  @e14 [button] "Paste"
+  @e15 [other] "inputView"
+  @e16 [other] "SystemInputAssistantView"
+    @e17 [other] "CenterPageView"
+      @e18 [scroll-area] [scrollable]
+      @e19 [other] "Typing Predictions"
+        @e20 [button] "“th”"
+        @e21 [button] "the"
+        @e22 [button] "three"
+  @e23 [keyboard]
+    @e24 [other] "UIKeyboardLayoutStar Preview"
+      @e25 [key] "Padding-Left" [unmeasured]
+      @e26 [key] "q"
+      @e27 [key] "w"
+      @e28 [key] "e"
+      @e29 [key] "r"
+      @e30 [key] "t"
+      @e31 [key] "y"
+      @e32 [key] "u"
+      @e33 [key] "i"
+      @e34 [key] "o"
+      @e35 [key] "p"
+      @e36 [key] "Padding-Right" [unmeasured]
+      @e37 [key] "Padding-Left" [unmeasured]
+      @e38 [key] "a"
+      @e39 [key] "s"
+      @e40 [key] "d"
+      @e41 [key] "f"
+      @e42 [key] "g"
+      @e43 [key] "h"
+      @e44 [key] "j"
+      @e45 [key] "k"
+      @e46 [key] "l"
+      @e47 [key] "Padding-Right" [unmeasured]
+      @e48 [key] "shift"
+      @e49 [key] "Padding-Left" [unmeasured]
+      @e50 [key] "z"
+      @e51 [key] "x"
+      @e52 [key] "c"
+      @e53 [key] "v"
+      @e54 [key] "b"
+      @e55 [key] "n"
+      @e56 [key] "m"
+      @e57 [key] "Padding-Right" [unmeasured]
+      @e58 [key] "delete"
+      @e59 [key] "numbers"
+      @e60 [key] "space"
+      @e61 [key] "return"
+  @e62 [button] "Emoji"
+  @e63 [button] "Dictate"
+  @e64 [button] "Dictate"

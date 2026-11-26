@@ -341,6 +341,8 @@ impl Inkling {
         Some(
             div()
                 .id("open-find")
+                .role(Role::Button)
+                .accessibility_id("open-find")
                 .flex_none()
                 .size(size)
                 .flex()

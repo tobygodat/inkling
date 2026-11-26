@@ -66,7 +66,7 @@ replaced 13.6 ms. Both are Debug builds on the Simulator, so they are a floor fo
 
 `ios/e2e/` uses the official `e2e` runner (`@e2e-dev/mobile`) against a Debug simulator build with
 canned AI, in-memory keys, and no e2e model provider or telemetry. It shadows `ios/snap.sh` across
-all 8 lanes (66 steps) and is not a CI gate yet.
+all 8 lanes (68 steps) and is not a CI gate yet.
 
 With Xcode and Node 22.22.3+, 24.8+, or 26+, boot a dedicated iPhone 18 Pro simulator
 with no Inkling install, then run from the repo root:
@@ -75,7 +75,7 @@ with no Inkling install, then run from the repo root:
 cd ios/e2e
 npm ci --ignore-scripts
 INKLING_E2E_SIMULATOR=<simulator-uuid> npm run smoke   # single editor smoke test (~6 s)
-INKLING_E2E_SIMULATOR=<simulator-uuid> npm test        # full 9-file (66-step) suite
+INKLING_E2E_SIMULATOR=<simulator-uuid> npm test        # full 9-file (68-step) suite
 ```
 
 The runner builds and installs Inkling only on that simulator, disables e2e telemetry, and fixes
@@ -126,6 +126,8 @@ gpui-mobile is pinned to `7548ebc4b24f00494af9976af8852c7163ded9ce`. `fetch-mobi
   pasteboard.
 - `0007-typing-probe.patch` logs, at Debug, the time from the keyboard's `insertText:` to the frame
   that shows it.
+- `0008-ios-a11y-tree.patch` gives UIKit the accessibility tree GPUI builds. See
+  [Accessibility](#accessibility).
 
 To change gpui-mobile, edit `target/gpui-mobile` in place, run `patches/refresh.sh` (it rewrites
 the last patch from the working tree, so a change to an earlier patch needs the later ones taken
@@ -178,6 +180,29 @@ The app opts in per input. The page asks for autocorrection, suggestions and sen
 
 Inline predictions (iOS's grey ghost text) are off (`inlinePredictionType = No`). UIKit would send
 them as marked text, which GPUI would draw as a real composition.
+
+## Accessibility
+
+`IosWindow` implements `PlatformWindow::a11y_init` and `a11y_tree_update`
+(`src/ios/window/accessibility.rs` in the patched gpui-mobile). The GPUI view answers UIKit's
+`accessibilityElements` with one `UIAccessibilityElement` per control, input, image, heading or
+labelled text in GPUI's tree, in tree order. Each carries its label, its value, its traits (button,
+link, image, header, search field, selected, not enabled) and its frame. An element's
+`.accessibility_id(..)` becomes its `accessibilityIdentifier`, and the controls in `ui/` set it to
+their element id, such as `cog` or `show-reading`. A container gives no element, and a button's children make its label when it has
+none. A password input's value is left out.
+
+The focused input is the bridge's own `GPUITextInputView`, set at the input's frame, in the
+place of the input's element. UIKit reads the document, the caret and the typing from it,
+and the page is not read twice.
+
+GPUI builds the tree only while it is active, so an app nobody reads costs nothing. It is active
+while VoiceOver or Switch Control runs, with `GPUI_A11Y_ACTIVE=1`, and for 30 seconds after UIKit
+last asked the view for its elements, as an `agent-device` or XCTest snapshot does. The first
+snapshot after a quiet spell can come before GPUI's next frame and miss the elements; ask again.
+
+`docs/screenshots/ios/a11y/` holds one run's snapshots and screens: the elements before the page
+is tapped, Appearance and Reading pressed by their labels, and the focused text input after.
 
 ## The page's selection
 
@@ -321,9 +346,12 @@ After every tap it also checks that Inkling is still the foreground app, so a cr
 step. The pasted part carries the misspellings the fake Fix grammar corrects (`i`, `dont`,
 `wich`, `teh`), because the keyboard's autocorrect would fix them while typing. The script's
 clipboard is set with `agent-device clipboard write`, which iOS treats as another app's copy.
-GPUI draws everything inside one view, so the accessibility tree has no handles for the page,
-the chips or the review; those taps are coordinates, all in `point()` at the top of the script.
-The Paste control, UIKit's edit menu and the suggestion bar are pressed by their labels. The live
+The header's controls, the kit's buttons and the page reach the accessibility tree (see
+[Accessibility](#accessibility)), but the script's taps on them are still coordinates, all in
+`point()` at the top of the script. The review's changes and the chips have no node of their
+own. The Paste control, UIKit's edit menu and the suggestion bar are pressed by their labels.
+UIKit sometimes closes the edit menu a double tap opened, as the keyboard reloads after the tap;
+`menu` then taps inside the selection, which opens it again. The live
 steps open their drafts by writing `draft.md`, which the app moves into `documents/`, and
 relaunching, because the keyboard has no `$` or
 `*` within `keys.sh`'s reach.
@@ -430,14 +458,19 @@ place or needs the app deleted first.
   fields and the feedback field, still reads the pasteboard without consent, so it pastes only
   what Inkling copied. Text from another app goes through the Paste control above the keyboard.
   Removing the kit's item needs a kit option.
-- **VoiceOver reads only the focused input.** gpui-mobile implements no
-  `PlatformWindow::a11y_tree_update`, so the tree GPUI builds for the Mac never reaches UIKit.
-  UIKit reports the bridge's text input view, with the document as its value, once an input has
-  focus. Before the page is tapped VoiceOver finds no page, and it never hears the formulas'
-  and images' labels, the review, the chips or the header. The text-area page read the same.
-- **The masked key is readable by accessibility.** The bridge answers UIKit's `textInRange:` with
-  the document's real text, and the accessibility tree reads it back, so the key field's value
-  is visible there (and to VoiceOver) while the field shows dots. The bridge needs to know a field
+- **VoiceOver's actions on GPUI's elements.** An element does not implement
+  `accessibilityActivate`, `accessibilityScroll` or custom actions, so a double tap in VoiceOver
+  taps the element's centre, which GPUI takes as a finger's tap. VoiceOver cannot scroll the page
+  or a book by three-finger swipe, and the page's unfocused element reads its whole source as one
+  value rather than by line. Only the Simulator's snapshots have read the tree; VoiceOver itself
+  needs a device run.
+- **Views with no role.** GPUI gives a node only to an element with an id and a role. The
+  header's controls and the kit's ghost, footer and primary buttons have one; other tappable rows
+  (the library's books, the documents list, the review's changes and chips) do not yet.
+- **The masked key is readable by accessibility while it has focus.** Unfocused, it is a password
+  input and its element has no value. Focused, it is the text input view, which answers UIKit's
+  `textInRange:` with the document's real text, and the accessibility tree reads it back, so the
+  key field's value is visible there (and to VoiceOver) while the field shows dots. The bridge needs to know a field
   is masked (`isSecureTextEntry`), which `TextInputConfiguration` does not carry yet.
 - **The feedback link field is under the keyboard while it has focus.** The key screen does not
   scroll a focused field into view, so the link is pasted with the Paste control above the

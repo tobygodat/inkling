@@ -1,0 +1,15 @@
+Tapped label="Reading" (116, 84)
+settled after 1634ms: +4 -13 (~3 unchanged)
+- @e2 [button] "‹ Documents"
+- @e3 [button] "Claude · add a key"
++ @e2~s732346 [button] "Find books"
++ @e3~s732346 [button] "Add"
+- @e5 [other] "Start writing"
+- @e6 [text] "Formula E = mc^2"
+- @e7 [text] "the harbour"
+- @e8 [image] "Formula \sum_{k=1}^{n} k"
+- @e9 [image] "a gull"
+- @e10 [other] "Ask for fixes, words or a nudge"
++ @e6~s732346 [button] "Writing"
++ @e7~s732346 [button] "Reading" [selected]
+… changed lines truncated

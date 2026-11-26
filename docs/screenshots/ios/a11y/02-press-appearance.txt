@@ -1,0 +1,4 @@
+Tapped label="Appearance" (26, 84)
+settled after 400ms: +2 -0 (~14 unchanged)
++ @e12~s732338 [button] "Done"
++ @e13~s732338 [button] "Same look for reading and writing" [selected]

@@ -13,7 +13,8 @@ const DRAFT: &str = "# Ferry notes\n\nEnergy is $E = mc^2$ and a gull ![a gull](
 const TRUNK_ROLE: &str = "MultilineTextInput";
 const TRUNK_ACTIONS: [&str; 2] = ["Focus", "SetValue"];
 const TRUNK_PHONE_LABEL: &str = "Start writing";
-/// The review at that commit reported no node of its own: the window and the ask field.
+/// The review at that commit reported no node of its own: the window and the ask field. The
+/// buttons around it have had nodes since TOB-531 and are left out of the comparison.
 const TRUNK_REVIEW: [(&str, Option<&str>); 2] = [("TextInput", Some("Ask for fixes, words or a nudge")), ("Window", Some("Inkling"))];
 
 const GULL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24"><ellipse cx="24" cy="12" rx="22" ry="10" fill="#8DA2B5"/></svg>"##;
@@ -181,7 +182,7 @@ pub fn run(dir: &Path) {
     s.wait(10_000, reviewing);
     let t = s.tree();
     let mut nodes: Vec<(String, Option<String>)> =
-        t.nodes().map(|(_, n)| (n["aria"]["role"].as_str().unwrap_or_default().to_string(), n["aria"]["label"].as_str().map(str::to_string))).collect();
+        t.nodes().filter(|(_, n)| n["aria"]["role"] != "Button").map(|(_, n)| (n["aria"]["role"].as_str().unwrap_or_default().to_string(), n["aria"]["label"].as_str().map(str::to_string))).collect();
     nodes.sort();
     let trunk: Vec<(String, Option<String>)> = TRUNK_REVIEW.iter().map(|(r, l)| (r.to_string(), l.map(str::to_string))).collect();
     lane(nodes == trunk, l, &format!("the review reports the same nodes as the text-area page's review {nodes:?}"));

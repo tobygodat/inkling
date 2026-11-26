@@ -1,0 +1,1 @@
+{"role": "GPUITextInputView", "value": "# Ferry notes\n\nEnergy is $E = mc^2$ and a gull ![a gull](gull.svg) by ![the harbour](https://img.example/harbour.png).\n\n$$\n\\sum_{k=1}^{n} k\n$$\n\nThe caret starts in this last paragraph.", "focused": true, "rect": {"x": 14, "y": 113, "width": 374, "height": 264}}

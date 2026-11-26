@@ -350,6 +350,8 @@ impl Inkling {
         let button = |id: &'static str, icon: Icon, label: &'static str, on: bool| {
             div()
                 .id(id)
+                .role(Role::Button)
+                .accessibility_id(id)
                 .size(size)
                 .flex()
                 .items_center()

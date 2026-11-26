@@ -1039,6 +1039,8 @@ impl Inkling {
                 row.child(
                     div()
                         .id("open-feedback")
+                        .role(Role::Button)
+                        .accessibility_id("open-feedback")
                         .flex_none()
                         .size(m.control)
                         .flex()
@@ -1052,6 +1054,7 @@ impl Inkling {
             })
             .child(
                 ghost_button(&c, "open-keys", "")
+                    .aria_label(key.clone())
                     .h(m.control)
                     .min_w_0()
                     .child(div().truncate().child(key))
@@ -1083,6 +1086,9 @@ fn bar_row() -> Div {
 pub(crate) fn ghost_button(c: &Colors, id: &'static str, label: &'static str) -> Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Button)
+        .accessibility_id(id)
+        .when(!label.is_empty(), |button| button.aria_label(label))
         .h(px(32.))
         .px_3()
         .flex()
@@ -1096,8 +1102,12 @@ pub(crate) fn ghost_button(c: &Colors, id: &'static str, label: &'static str) ->
 
 /// A Mac footer action: a small outlined pill, so it reads as a button beside the footer's text.
 pub(crate) fn footer_button(c: &Colors, id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
+    let label = label.into();
     div()
         .id(id)
+        .role(Role::Button)
+        .accessibility_id(id)
+        .aria_label(label.clone())
         .flex_none()
         .h(px(26.))
         .px(px(10.))
@@ -1110,13 +1120,16 @@ pub(crate) fn footer_button(c: &Colors, id: &'static str, label: impl Into<Share
         .font_weight(FontWeight::MEDIUM)
         .text_color(c.ink)
         .cursor_pointer()
-        .child(label.into())
+        .child(label)
 }
 
 pub(crate) fn primary_button(c: &Colors, id: &'static str, label: &'static str, m: Metrics) -> Stateful<Div> {
     let height = if m.control > px(32.) { m.control } else { px(32.) };
     div()
         .id(id)
+        .role(Role::Button)
+        .accessibility_id(id)
+        .aria_label(label)
         .h(height)
         .px(px(14.))
         .flex()
