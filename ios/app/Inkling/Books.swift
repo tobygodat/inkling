@@ -72,6 +72,8 @@ final class Books: NSObject, UIDocumentPickerDelegate {
     }
 }
 
+// Rust calls the host's C entry points on the main thread, where GPUI runs. `assumeIsolated`
+// traps if that ever changes, and answers synchronously, as the caller waits for it.
 @_cdecl("inkling_host_pick_books")
 func inklingHostPickBooks(_ token: UInt64) {
     MainActor.assumeIsolated { Books.shared.pickBooks(token: token) }

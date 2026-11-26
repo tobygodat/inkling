@@ -24,7 +24,7 @@ const ENTITIES = new Map([
 ]);
 
 /** For anything a client or Readwise chose, before it goes into a page. */
-export const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ENTITIES.get(c) ?? c);
+export const escapeHtml = (text: string) => text.replaceAll(/[&<>"']/gu, (c) => ENTITIES.get(c) ?? c);
 
 /** A plain page for the sign-in flow: the consent form, and what went wrong. */
 export function page(title: string, body: string, status = 200, headers?: Headers): Response {
@@ -51,14 +51,14 @@ ${body}
   return new Response(html, { status, headers: h });
 }
 
-export const BOOK_ID = /^[0-9a-f]{64}$/;
+export const BOOK_ID = /^[0-9a-f]{64}$/u;
 
 /** A device's document file name: the time it was made in milliseconds, or `draft`. */
-export const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/u;
 
 /** A picture a book's chapters show, as the device names it in `images/<book id>/`. */
-export const IMAGE_NAME = /^[0-9]+\.[a-z0-9]{1,5}$/;
-export const COVER_NAME = /^[0-9a-f]{64}\.(jpg|png|gif|webp)$/;
+export const IMAGE_NAME = /^[0-9]+\.[a-z0-9]{1,5}$/u;
+export const COVER_NAME = /^[0-9a-f]{64}\.(jpg|png|gif|webp)$/u;
 
 /** KV's largest value. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;

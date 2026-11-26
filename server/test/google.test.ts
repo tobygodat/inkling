@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { authorizeUrl, checkIdToken } from "../src/google";
 
 const config = { GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "test-secret" };
-const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 
 describe("Sign in with Google", () => {
   it("asks only for the email, with PKCE and a nonce", async () => {

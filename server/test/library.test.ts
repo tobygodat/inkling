@@ -13,7 +13,8 @@ async function device() {
 async function upload(token: string) {
   expect((await call(`/v1/books/${ID}/file`, bearer(token, { method: "PUT", body: '{"parsed":true}' }))).status).toBe(200);
   const early = await call(`/v1/books/${ID}`, bearer(token, { method: "PUT", body: JSON.stringify({ title: "The Waves", format: "Epub", chapters: 2, added: 1 }) }));
-  expect(early.status).toBe(409); // No chapters yet, so no row.
+  // No chapters yet, so no row.
+  expect(early.status).toBe(409);
 
   const chapters = [
     { title: "One", text: "# One\n\nThe sun had not yet risen.\n" },
@@ -37,7 +38,8 @@ describe("the library and the documents", () => {
       call(`/v1/books/${ID}/position`, bearer(token, { method: "PUT", body: JSON.stringify({ chapter, fraction: 0.5, at }) }));
 
     expect(await (await position(1, 200)).json()).toEqual({ ok: true, kept: true });
-    expect(await (await position(0, 100)).json()).toEqual({ ok: true, kept: false }); // Older: the later stays.
+    // Older: the later stays.
+    expect(await (await position(0, 100)).json()).toEqual({ ok: true, kept: false });
     expect(await (await call(`/v1/books/${ID}/file`, bearer(token))).text()).toBe('{"parsed":true}');
     expect((await call(`/v1/books/${ID}/images/1.png`, bearer(token, { method: "PUT", body: "png" }))).status).toBe(200);
     expect(await (await call(`/v1/books/${ID}/images/1.png`, bearer(token))).text()).toBe("png");
@@ -57,7 +59,8 @@ describe("the library and the documents", () => {
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({ book_id: ID, chapter: 1, chapter_title: "Two" });
     expect(hits[0].passage).toContain("sea was");
-    expect(JSON.parse((await tool(agent, "search_library", { query: "su" })).text)[0].chapter).toBe(0); // Under three letters.
+    // Under three letters.
+    expect(JSON.parse((await tool(agent, "search_library", { query: "su" })).text)[0].chapter).toBe(0);
     expect((await tool(agent, "search_library", { query: "whale" })).text).toBe('Nothing in the library matches "whale".');
   });
 

@@ -29,8 +29,6 @@ const ReaderDocument = z.object({
   raw_source_url: z.string().nullish(),
 });
 
-type ReaderDocument = z.infer<typeof ReaderDocument>;
-
 /** A page of Reader's list endpoint. */
 const ReaderList = z.object({ results: z.array(ReaderDocument) });
 
@@ -77,12 +75,15 @@ export async function disconnectReadwise(env: Env): Promise<Response> {
   return json(await readwiseStatus(env));
 }
 
+/** Readwise and this Worker write timestamps differently, so they are compared as times. */
+const time = (t: string | null | undefined) => (t ? Date.parse(t) : NaN);
+
 /** Every 30 minutes: documents saved to Reader since the last look. */
 export async function poll(env: Env): Promise<void> {
   const current = await link(env);
 
   if (!current) return;
-  const found: ReaderDocument[] = [];
+  const found: z.infer<typeof ReaderDocument>[] = [];
 
   for (const category of CATEGORIES) {
     const url = new URL(`${API}/v3/list/`);
@@ -98,8 +99,6 @@ export async function poll(env: Env): Promise<void> {
 
   // Oldest first, so the cursor only moves past what was handled. A document saved before the
   // link was made has only been read or moved in Reader, so it is passed over.
-  // Readwise and this Worker write timestamps differently, so they are compared as times.
-  const time = (t: string | null | undefined) => (t ? Date.parse(t) : NaN);
   found.sort((a, b) => (time(a.updated_at) || 0) - (time(b.updated_at) || 0));
   let since = current.since;
   let received = 0;

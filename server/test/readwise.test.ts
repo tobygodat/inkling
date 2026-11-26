@@ -99,6 +99,7 @@ describe("Readwise", () => {
     expect(ids).toContain("new2");
     expect(ids).not.toContain("old1");
     const since = await env.DB.prepare("SELECT since FROM readwise").first<{ since: string }>();
-    expect(since!.since).toBe(after); // Past both, so neither is looked at again.
+    // Past both, so neither is looked at again.
+    expect(since!.since).toBe(after);
   });
 });
