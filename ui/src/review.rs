@@ -381,6 +381,7 @@ impl Inkling {
                     let more = if change.more == 1 { "1 more word".to_string() } else { format!("{} more words", change.more) };
                     sheet.child(
                         ghost_button(&c, "more-words", "")
+                            .aria_label(more.clone())
                             .child(more)
                             .h(m.control)
                             .justify_center()

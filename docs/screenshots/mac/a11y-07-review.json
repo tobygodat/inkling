@@ -2,6 +2,20 @@
   "page": null,
   "nodes": [
     {
+      "role": "Button",
+      "on_action": [
+        "Click"
+      ],
+      "label": "Back to draft"
+    },
+    {
+      "role": "Button",
+      "on_action": [
+        "Click"
+      ],
+      "label": "Accept the rest"
+    },
+    {
       "role": "TextInput",
       "on_action": [
         "Focus",
@@ -10,6 +24,38 @@
       "label": "Ask for fixes, words or a nudge",
       "value": "",
       "placeholder": "Ask for fixes, words or a nudge"
+    },
+    {
+      "role": "Button",
+      "on_action": [
+        "Click"
+      ],
+      "label": "Send"
+    },
+    {
+      "role": "Button",
+      "on_action": [
+        "Click"
+      ],
+      "label": "‹ Documents"
+    },
+    {
+      "role": "Button",
+      "on_action": [
+        "Click"
+      ],
+      "label": "Writing",
+      "keyboard_shortcut": "Command+1",
+      "selected": true
+    },
+    {
+      "role": "Button",
+      "on_action": [
+        "Click"
+      ],
+      "label": "Reading",
+      "keyboard_shortcut": "Command+2",
+      "selected": false
     },
     {
       "role": "Window",

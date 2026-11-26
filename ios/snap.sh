@@ -209,9 +209,14 @@ open_draft() {
   sleep 2.5
 }
 
-# Presses `$1` in UIKit's edit menu.
+# Presses `$1` in UIKit's edit menu. UIKit can close the menu a double tap opened, as the keyboard
+# reloads after the tap; a tap at `$2`, inside the selection, opens it again.
 menu() {
-  "$ad" press "role=\"cell\" label=\"$1\"" >/dev/null || fail "the edit menu has no $1"
+  if ! "$ad" press "role=\"cell\" label=\"$1\"" >/dev/null 2>&1; then
+    [ -n "${2:-}" ] || fail "the edit menu has no $1"
+    tap "$2"
+    "$ad" press "role=\"cell\" label=\"$1\"" >/dev/null || fail "the edit menu has no $1"
+  fi
   sleep 0.8
 }
 
@@ -382,7 +387,7 @@ tap line-one-end 1.5
 "$ad" press $(point word-light) --double-tap >/dev/null
 sleep 1.5
 shot
-menu Copy
+menu Copy word-light
 expect_clipboard "light"
 
 begin live-handles
@@ -391,7 +396,7 @@ sleep 1.5
 "$ad" gesture pan $(point start-handle) -30 -38 900 >/dev/null
 sleep 1.5
 shot
-menu Copy
+menu Copy word-paragraph
 expect_clipboard "light held over the river
 
 Second paragraph"

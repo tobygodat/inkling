@@ -1,0 +1,606 @@
+diff -ruN a/src/ios/window/accessibility.rs b/src/ios/window/accessibility.rs
+--- a/src/ios/window/accessibility.rs
++++ b/src/ios/window/accessibility.rs
+@@ -0,0 +1,513 @@
++//! UIKit accessibility for the AccessKit tree GPUI builds for the window.
++//!
++//! GPUI builds the tree only while the platform says it is active, so it
++//! costs nothing until something reads it. It is active while VoiceOver or
++//! Switch Control runs, when `GPUI_A11Y_ACTIVE=1` is set, and after UIKit
++//! asks the GPUI view for its accessibility elements, as an XCTest snapshot
++//! does. Turned on by such a question alone, it turns off again once
++//! [`IDLE`] passes without another.
++//!
++//! Each update is flattened into the elements UIKit reads off the GPUI view:
++//! one per control, input, image, heading or labelled text, in tree order,
++//! with its label, value, traits and frame. Container nodes give no element
++//! of their own, and a control's descendants none either: they make its
++//! label when it has none. Text runs belong to their input. The focused text
++//! input is the bridge's own `GPUITextInputView` rather than an element, so
++//! UIKit keeps reading the document, the caret and the typing from it. The
++//! GPUI view's other subviews follow, as UIKit found them before.
++//!
++//! A dialog is drawn over what came before it in the tree and takes the
++//! touches there, so those elements keep only the largest part of their frame
++//! it leaves uncovered, and an element it covers whole is left out. Its own
++//! elements, and what is drawn after it, are not affected.
++//!
++//! An element does nothing of its own when activated: VoiceOver taps its
++//! centre, which GPUI handles as a finger's tap.
++
++use super::IosWindow;
++use crate::ios::cg_types::ObjcCGRect;
++use crate::ios::util::nsstring;
++use gpui::accesskit::{Node, NodeId, Role, Toggled, TreeUpdate};
++use gpui::A11yCallbacks;
++use objc2::runtime::{AnyObject, Bool};
++use objc2::{class, msg_send};
++use std::cell::{Cell, RefCell};
++use std::collections::HashMap;
++use std::ptr;
++use std::time::{Duration, Instant};
++
++type Id = *mut AnyObject;
++
++/// How long the tree stays on after the last question from UIKit, while no
++/// screen reader or switch runs.
++const IDLE: Duration = Duration::from_secs(30);
++
++#[link(name = "UIKit", kind = "framework")]
++unsafe extern "C" {
++    fn UIAccessibilityIsVoiceOverRunning() -> Bool;
++    fn UIAccessibilityIsSwitchControlRunning() -> Bool;
++    fn UIAccessibilityPostNotification(notification: u32, argument: Id);
++    fn UIAccessibilityConvertFrameToScreenCoordinates(rect: ObjcCGRect, view: Id) -> ObjcCGRect;
++    static UIAccessibilityLayoutChangedNotification: u32;
++    static UIAccessibilityVoiceOverStatusDidChangeNotification: Id;
++    static UIAccessibilitySwitchControlStatusDidChangeNotification: Id;
++    static UIAccessibilityTraitButton: u64;
++    static UIAccessibilityTraitLink: u64;
++    static UIAccessibilityTraitImage: u64;
++    static UIAccessibilityTraitSelected: u64;
++    static UIAccessibilityTraitStaticText: u64;
++    static UIAccessibilityTraitNotEnabled: u64;
++    static UIAccessibilityTraitSearchField: u64;
++    static UIAccessibilityTraitHeader: u64;
++}
++
++/// Whether a screen reader or a switch is reading the screen now.
++fn assistive_technology_running() -> bool {
++    unsafe { UIAccessibilityIsVoiceOverRunning().as_bool() || UIAccessibilityIsSwitchControlRunning().as_bool() }
++}
++
++/// `GPUI_A11Y_ACTIVE=1`: build the tree from launch, as a screen reader would.
++fn forced() -> bool {
++    static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *FORCED.get_or_init(|| std::env::var("GPUI_A11Y_ACTIVE").is_ok_and(|value| value == "1"))
++}
++
++/// What one node shows UIKit.
++#[derive(Clone, Copy, PartialEq)]
++enum Kind {
++    Button,
++    Link,
++    Input,
++    Search,
++    Image,
++    Heading,
++    Text,
++}
++
++/// One element UIKit reads, flattened from the tree.
++#[derive(Clone, PartialEq)]
++struct Exposed {
++    id: NodeId,
++    kind: Kind,
++    label: Option<String>,
++    value: Option<String>,
++    identifier: Option<String>,
++    selected: bool,
++    disabled: bool,
++    /// In the GPUI view's points.
++    frame: [f64; 4],
++    /// The focused input, which UIKit reads from the text input view.
++    focused_input: bool,
++}
++
++impl Exposed {
++    fn traits(&self) -> u64 {
++        unsafe {
++            let kind = match self.kind {
++                Kind::Button => UIAccessibilityTraitButton,
++                Kind::Link => UIAccessibilityTraitLink,
++                Kind::Image => UIAccessibilityTraitImage,
++                Kind::Heading => UIAccessibilityTraitHeader,
++                Kind::Search => UIAccessibilityTraitSearchField,
++                Kind::Text => UIAccessibilityTraitStaticText,
++                Kind::Input => 0,
++            };
++            let selected = if self.selected { UIAccessibilityTraitSelected } else { 0 };
++            let disabled = if self.disabled { UIAccessibilityTraitNotEnabled } else { 0 };
++            kind | selected | disabled
++        }
++    }
++
++    fn frame(&self) -> ObjcCGRect {
++        let [x, y, width, height] = self.frame;
++        ObjcCGRect { x, y, width, height }
++    }
++}
++
++/// The window's accessibility: GPUI's callbacks, the last tree flattened,
++/// and the elements UIKit was given for it.
++#[derive(Default)]
++pub(super) struct Accessibility {
++    callbacks: RefCell<Option<A11yCallbacks>>,
++    active: Cell<bool>,
++    exposed: RefCell<Vec<Exposed>>,
++    /// The elements are behind `exposed`.
++    stale: Cell<bool>,
++    /// The elements by node, kept across updates so VoiceOver's cursor stays
++    /// on the same object. Each is retained here.
++    elements: RefCell<HashMap<NodeId, Id>>,
++    /// What UIKit reads: the elements in order, then the view's subviews.
++    /// Retained here; null until first asked for.
++    array: Cell<Id>,
++    /// Whether the text input view was first responder when `array` was
++    /// made. UIKit makes it so a turn after GPUI focuses an input, with no
++    /// new tree to follow.
++    array_input_first: Cell<bool>,
++    asked_at: Cell<Option<Instant>>,
++}
++
++impl Accessibility {
++    /// `PlatformWindow::a11y_init`.
++    pub(super) fn init(&self, callbacks: A11yCallbacks) {
++        *self.callbacks.borrow_mut() = Some(callbacks);
++        observe_status();
++        self.status_changed();
++    }
++
++    fn wanted(&self) -> bool {
++        forced()
++            || assistive_technology_running()
++            || self.asked_at.get().is_some_and(|at| at.elapsed() < IDLE)
++    }
++
++    /// VoiceOver or Switch Control started or stopped.
++    pub(super) fn status_changed(&self) {
++        if self.wanted() {
++            self.activate();
++        } else {
++            self.deactivate();
++        }
++    }
++
++    fn activate(&self) {
++        if self.active.replace(true) {
++            return;
++        }
++        // GPUI answers with a bare root and draws a frame, whose tree comes next.
++        if let Some(callbacks) = self.callbacks.borrow().as_ref() {
++            let _ = (callbacks.activation)();
++        }
++    }
++
++    fn deactivate(&self) {
++        if !self.active.replace(false) {
++            return;
++        }
++        if let Some(callbacks) = self.callbacks.borrow().as_ref() {
++            (callbacks.deactivation)();
++        }
++    }
++
++    /// `PlatformWindow::a11y_tree_update`, after each frame while active.
++    pub(super) fn update(&self, window: &IosWindow, tree: TreeUpdate) {
++        if !self.wanted() {
++            self.deactivate();
++            return;
++        }
++        let Some(exposed) = flatten(&tree, window.scale_factor.get()) else {
++            return;
++        };
++        if *self.exposed.borrow() == exposed {
++            return;
++        }
++        let moved = {
++            let old = self.exposed.borrow();
++            old.len() != exposed.len() || old.iter().zip(&exposed).any(|(a, b)| a.id != b.id)
++        };
++        *self.exposed.borrow_mut() = exposed;
++        self.stale.set(true);
++        // A screen reader holds on to the elements; give it the new ones now
++        // and say when they are different ones. A snapshot asks again.
++        if assistive_technology_running() {
++            unsafe { self.sync(window) };
++            if moved {
++                unsafe { UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification, ptr::null_mut()) };
++            }
++        }
++    }
++
++    /// The GPUI view's `accessibilityElements`.
++    pub(super) fn elements(&self, window: &IosWindow) -> Id {
++        self.asked_at.set(Some(Instant::now()));
++        self.activate();
++        unsafe {
++            let input_first: Bool = msg_send![window.text_input.view, isFirstResponder];
++            if self.stale.get() || self.array.get().is_null() || self.array_input_first.get() != input_first.as_bool() {
++                self.sync(window);
++            }
++            let array: Id = msg_send![self.array.get(), retain];
++            msg_send![array, autorelease]
++        }
++    }
++
++    /// Bring the elements up to `exposed`.
++    unsafe fn sync(&self, window: &IosWindow) {
++        unsafe {
++            let view = window.view;
++            let input = window.text_input.view;
++            let input_first: Bool = msg_send![input, isFirstResponder];
++            let input_first = input_first.as_bool();
++            let array: Id = msg_send![class!(NSMutableArray), new];
++            let mut old = self.elements.take();
++            let mut kept = HashMap::new();
++            let mut placed_input = false;
++            for exposed in self.exposed.borrow().iter() {
++                if exposed.focused_input && input_first && !placed_input {
++                    let frame = UIAccessibilityConvertFrameToScreenCoordinates(exposed.frame(), view);
++                    let _: () = msg_send![input, setAccessibilityFrame: frame];
++                    let _: () = msg_send![array, addObject: input];
++                    placed_input = true;
++                    continue;
++                }
++                let element = old.remove(&exposed.id).unwrap_or_else(|| {
++                    let element: Id = msg_send![class!(UIAccessibilityElement), alloc];
++                    msg_send![element, initWithAccessibilityContainer: view]
++                });
++                describe(element, exposed);
++                let _: () = msg_send![array, addObject: element];
++                kept.insert(exposed.id, element);
++            }
++            for (_, element) in old {
++                let _: () = msg_send![element, release];
++            }
++            *self.elements.borrow_mut() = kept;
++            // An input with no node of its own (or before the first tree)
++            // still reads as UIKit's text input.
++            if input_first && !placed_input {
++                let _: () = msg_send![array, addObject: input];
++            }
++            let subviews: Id = msg_send![view, subviews];
++            let count: usize = msg_send![subviews, count];
++            for i in 0..count {
++                let subview: Id = msg_send![subviews, objectAtIndex: i];
++                if subview != input {
++                    let _: () = msg_send![array, addObject: subview];
++                }
++            }
++            let previous = self.array.replace(array);
++            if !previous.is_null() {
++                let _: () = msg_send![previous, release];
++            }
++            self.array_input_first.set(input_first);
++            self.stale.set(false);
++        }
++    }
++}
++
++impl Drop for Accessibility {
++    fn drop(&mut self) {
++        unsafe {
++            for (_, element) in self.elements.take() {
++                let _: () = msg_send![element, release];
++            }
++            let array = self.array.get();
++            if !array.is_null() {
++                let _: () = msg_send![array, release];
++            }
++        }
++    }
++}
++
++unsafe fn describe(element: Id, exposed: &Exposed) {
++    unsafe {
++        let string = |text: &Option<String>| text.as_deref().map_or(ptr::null_mut(), |text| nsstring(text));
++        let _: () = msg_send![element, setIsAccessibilityElement: Bool::YES];
++        let _: () = msg_send![element, setAccessibilityLabel: string(&exposed.label)];
++        let _: () = msg_send![element, setAccessibilityValue: string(&exposed.value)];
++        let _: () = msg_send![element, setAccessibilityIdentifier: string(&exposed.identifier)];
++        let _: () = msg_send![element, setAccessibilityTraits: exposed.traits()];
++        let _: () = msg_send![element, setAccessibilityFrameInContainerSpace: exposed.frame()];
++    }
++}
++
++/// Hear VoiceOver and Switch Control start and stop, once for the app.
++fn observe_status() {
++    static OBSERVING: std::sync::Once = std::sync::Once::new();
++    OBSERVING.call_once(|| unsafe {
++        let center: Id = msg_send![class!(NSNotificationCenter), defaultCenter];
++        let main: Id = msg_send![class!(NSOperationQueue), mainQueue];
++        let block = block2::RcBlock::new(|_: Id| {
++            if let Some(windows) = crate::ios::ffi::IOS_WINDOW_LIST.get() {
++                for &window in (*windows.0.get()).iter() {
++                    if !window.is_null() {
++                        (*window).accessibility.status_changed();
++                    }
++                }
++            }
++        });
++        for name in [UIAccessibilityVoiceOverStatusDidChangeNotification, UIAccessibilitySwitchControlStatusDidChangeNotification] {
++            let _: Id = msg_send![center,
++                addObserverForName: name,
++                object: ptr::null::<AnyObject>(),
++                queue: main,
++                usingBlock: &*block
++            ];
++        }
++        // It lives as long as the app.
++        std::mem::forget(block);
++    });
++}
++
++/// The elements a tree shows, in order, or `None` for an update that is not
++/// a whole tree.
++fn flatten(tree: &TreeUpdate, scale: f32) -> Option<Vec<Exposed>> {
++    let root = tree.tree.as_ref()?.root;
++    let nodes: HashMap<NodeId, &Node> = tree.nodes.iter().map(|(id, node)| (*id, node)).collect();
++    let mut out = Vec::new();
++    walk(root, &nodes, tree.focus, f64::from(scale.max(1.0)), &mut out);
++    Some(out)
++}
++
++fn walk(id: NodeId, nodes: &HashMap<NodeId, &Node>, focus: NodeId, scale: f64, out: &mut Vec<Exposed>) {
++    let Some(node) = nodes.get(&id) else {
++        return;
++    };
++    if node.is_hidden() {
++        return;
++    }
++    let role = node.role();
++    let kind = match role {
++        Role::TextRun => return,
++        Role::Button
++        | Role::DefaultButton
++        | Role::CheckBox
++        | Role::Switch
++        | Role::RadioButton
++        | Role::Tab
++        | Role::MenuItem
++        | Role::MenuItemCheckBox
++        | Role::MenuItemRadio
++        | Role::MenuListOption
++        | Role::ListBoxOption
++        | Role::TreeItem
++        | Role::ComboBox
++        | Role::DisclosureTriangle => Some(Kind::Button),
++        Role::Link => Some(Kind::Link),
++        Role::SearchInput => Some(Kind::Search),
++        Role::TextInput
++        | Role::MultilineTextInput
++        | Role::EditableComboBox
++        | Role::EmailInput
++        | Role::NumberInput
++        | Role::PasswordInput
++        | Role::PhoneNumberInput
++        | Role::UrlInput => Some(Kind::Input),
++        Role::Image => Some(Kind::Image),
++        Role::Heading => Some(Kind::Heading),
++        Role::Label | Role::Paragraph => Some(Kind::Text),
++        _ => None,
++    };
++    if let Some(kind) = kind {
++        let mut label = node.label().or(node.placeholder()).map(str::to_string);
++        if label.is_none() && kind != Kind::Input {
++            label = text_of(id, nodes);
++        }
++        // A password's value is its secret.
++        let value = if role == Role::PasswordInput {
++            None
++        } else {
++            node.value().map(str::to_string).or_else(|| match node.toggled() {
++                Some(Toggled::True) => Some("1".into()),
++                Some(Toggled::False) => Some("0".into()),
++                _ => None,
++            })
++        };
++        push(out, id, node, kind, label, value, focus, scale);
++        // A control's descendants are its label. An input's are its runs,
++        // already its value, and what it draws among them, such as formulas
++        // and images, which are read after it.
++        if kind != Kind::Input {
++            return;
++        }
++    }
++    let before = out.len();
++    for child in node.children() {
++        walk(*child, nodes, focus, scale, out);
++    }
++    if matches!(role, Role::Dialog | Role::AlertDialog) {
++        if let Some(cover) = frame_of(node, scale) {
++            occlude(out, before, cover);
++        }
++    }
++    // A labelled group with nothing readable inside (an alert, a status)
++    // reads as its label.
++    if kind.is_none() && out.len() == before && role != Role::Window {
++        let label = node.label().map(str::to_string);
++        let value = node.value().map(str::to_string);
++        if label.is_some() || value.is_some() {
++            push(out, id, node, Kind::Text, label, value, focus, scale);
++        }
++    }
++}
++
++#[allow(clippy::too_many_arguments)]
++fn push(
++    out: &mut Vec<Exposed>,
++    id: NodeId,
++    node: &Node,
++    kind: Kind,
++    label: Option<String>,
++    value: Option<String>,
++    focus: NodeId,
++    scale: f64,
++) {
++    // A node with no place on screen cannot be found or tapped.
++    let Some(frame) = frame_of(node, scale) else {
++        return;
++    };
++    out.push(Exposed {
++        id,
++        kind,
++        label,
++        value,
++        identifier: node.author_id().map(str::to_string),
++        selected: node.is_selected() == Some(true) || node.toggled() == Some(Toggled::True),
++        disabled: node.is_disabled(),
++        frame,
++        focused_input: kind == Kind::Input && id == focus,
++    });
++}
++
++/// A node's frame in the GPUI view's points, `[x, y, width, height]`, when it
++/// has an area.
++fn frame_of(node: &Node, scale: f64) -> Option<[f64; 4]> {
++    let bounds = node.bounds()?;
++    let frame = [bounds.x0 / scale, bounds.y0 / scale, (bounds.x1 - bounds.x0) / scale, (bounds.y1 - bounds.y0) / scale];
++    (frame[2] > 0.0 && frame[3] > 0.0).then_some(frame)
++}
++
++/// The elements before `upto` as they show around `cover`, drawn over them.
++fn occlude(out: &mut Vec<Exposed>, upto: usize, cover: [f64; 4]) {
++    let after = out.split_off(upto);
++    out.retain_mut(|exposed| match uncovered(exposed.frame, cover) {
++        Some(frame) => {
++            exposed.frame = frame;
++            true
++        }
++        None => false,
++    });
++    out.extend(after);
++}
++
++/// The largest part of `frame` that `cover` leaves showing, above, below,
++/// left or right of it; `None` when less than a point is left either way.
++fn uncovered(frame: [f64; 4], cover: [f64; 4]) -> Option<[f64; 4]> {
++    let [x0, y0, x1, y1] = [frame[0], frame[1], frame[0] + frame[2], frame[1] + frame[3]];
++    let [cx0, cy0, cx1, cy1] = [cover[0], cover[1], cover[0] + cover[2], cover[1] + cover[3]];
++    if cx0 >= x1 || cx1 <= x0 || cy0 >= y1 || cy1 <= y0 {
++        return Some(frame);
++    }
++    [[x0, y0, x1, y1.min(cy0)], [x0, y0.max(cy1), x1, y1], [x0, y0, x1.min(cx0), y1], [x0.max(cx1), y0, x1, y1]]
++        .into_iter()
++        .map(|[x0, y0, x1, y1]| [x0, y0, x1 - x0, y1 - y0])
++        .filter(|[_, _, width, height]| *width >= 1.0 && *height >= 1.0)
++        .max_by(|a, b| (a[2] * a[3]).total_cmp(&(b[2] * b[3])))
++}
++
++/// A control's text, from the labels and values beneath it.
++fn text_of(id: NodeId, nodes: &HashMap<NodeId, &Node>) -> Option<String> {
++    let mut parts = Vec::new();
++    let mut stack: Vec<NodeId> = nodes.get(&id).map(|node| node.children().iter().rev().copied().collect()).unwrap_or_default();
++    while let Some(id) = stack.pop() {
++        let Some(node) = nodes.get(&id) else { continue };
++        if node.is_hidden() {
++            continue;
++        }
++        if let Some(text) = node.label().or(node.value()).filter(|text| !text.is_empty()) {
++            parts.push(text.to_string());
++            continue;
++        }
++        stack.extend(node.children().iter().rev());
++    }
++    (!parts.is_empty()).then(|| parts.join(" "))
++}
+diff -ruN a/src/ios/window.rs b/src/ios/window.rs
+--- a/src/ios/window.rs
++++ b/src/ios/window.rs
+@@ -39,8 +39,10 @@
+     sync::Arc,
+ };
+ 
++mod accessibility;
+ mod text_input_view;
+ 
++use accessibility::Accessibility;
+ use text_input_view::TextInputSession;
+ 
+ const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
+@@ -249,8 +251,26 @@
+             }
+         }
+ 
++        // UIKit reads GPUI's accessibility tree from this view; see
++        // `accessibility`. Before the window is attached it has none.
++        extern "C" fn accessibility_elements(this: *mut AnyObject, _sel: Sel) -> *mut AnyObject {
++            unsafe {
++                #[allow(deprecated)]
++                let window: *mut c_void = *(*this).get_ivar(GPUI_WINDOW_IVAR);
++                if window.is_null() {
++                    return msg_send![super(this, class!(UIView)), accessibilityElements];
++                }
++                let window = &*(window as *const IosWindow);
++                window.accessibility.elements(window)
++            }
++        }
++
+         unsafe {
+             decl.add_method(
++                sel!(accessibilityElements),
++                accessibility_elements as extern "C" fn(*mut AnyObject, Sel) -> *mut AnyObject,
++            );
++            decl.add_method(
+                 sel!(targetForAction:withSender:),
+                 target_for_action
+                     as extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> *mut AnyObject,
+@@ -323,6 +343,8 @@
+     view: *mut AnyObject,
+     /// The `UITextInput` view the keyboard edits the focused document through
+     text_input: TextInputSession,
++    /// GPUI's accessibility tree, as UIKit reads it
++    accessibility: Accessibility,
+     /// Current bounds in pixels
+     bounds: Cell<Bounds<Pixels>>,
+     /// Scale factor
+@@ -379,6 +401,15 @@
+         // freed memory. Pointer matches the one passed to `register_with_ffi`
+         // (the window lives at a stable address in a Box for its whole lifetime).
+         super::ffi::deregister_window(self as *const Self);
++        // The views can outlive the window (UIKit or an accessibility client
++        // may hold them), so they must not keep pointing at it.
++        unsafe {
++            #[allow(deprecated)]
++            {
++                *(*self.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = ptr::null_mut();
++                *(*self.text_input.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = ptr::null_mut();
++            }
++        }
+     }
+ }
+ 
+@@ -465,6 +496,7 @@
+                 view_controller,
+                 view,
+                 text_input,
++                accessibility: Accessibility::default(),
+                 bounds: Cell::new(screen_bounds),
+                 scale_factor: Cell::new(scale_factor),
+                 input_handler: RefCell::new(None),
+@@ -1082,6 +1114,14 @@
+ 
+     fn hide_soft_keyboard(&self) {
+         self.hide_keyboard();
++    }
++
++    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
++        self.accessibility.init(callbacks);
++    }
++
++    fn a11y_tree_update(&self, tree_update: gpui::accesskit::TreeUpdate) {
++        self.accessibility.update(self, tree_update);
+     }
+ 
+     fn bounds(&self) -> Bounds<Pixels> {

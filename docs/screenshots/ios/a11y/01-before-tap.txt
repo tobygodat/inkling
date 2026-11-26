@@ -1,0 +1,17 @@
+Page: com.tobygodat.inkling
+App: com.tobygodat.inkling
+Snapshot: 14 nodes
+@e1 [application] "Inkling"
+  @e2 [button] "‹ Documents"
+  @e3 [button] "Claude · add a key"
+  @e4 [button] "Find"
+  @e5 [other] "Start writing"
+  @e6 [text] "Formula E = mc^2"
+  @e7 [text] "the harbour"
+  @e8 [image] "Formula \sum_{k=1}^{n} k"
+  @e9 [image] "a gull"
+  @e10 [other] "Ask for fixes, words or a nudge"
+  @e11 [button] "Send"
+  @e12 [button] "Appearance"
+  @e13 [button] "Writing" [selected]
+  @e14 [button] "Reading"

@@ -1,0 +1,5 @@
+  Other    'Start writing'                            id=None                   rect=(14,113 374x291)
+  Other    'Ask for fixes, words or a nudge'          id=None                   rect=(41,479 259x18)
+  Button   'Send'                                     id=send                   rect=(320,466 61x44)
+  TextView None                                       id=None                   rect=(29,75 281x18) focused
+  Button   'Done'                                     id=find-done              rect=(338,62 60x44)

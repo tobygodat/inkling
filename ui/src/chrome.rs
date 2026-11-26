@@ -202,6 +202,8 @@ impl Inkling {
             let on = current == view;
             div()
                 .id(id)
+                .role(Role::Button)
+                .accessibility_id(id)
                 .size(segment)
                 .flex()
                 .items_center()
@@ -287,6 +289,8 @@ impl Inkling {
             let size = self.metrics().control;
             let cog = div()
                 .id("cog")
+                .role(Role::Button)
+                .accessibility_id("cog")
                 .size(size)
                 .flex()
                 .items_center()

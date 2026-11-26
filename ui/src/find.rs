@@ -305,7 +305,10 @@ impl Inkling {
             .items_center()
             .gap_2()
             .bg(c.ground)
+            // It covers the header, so accessibility leaves out what it covers.
             .occlude()
+            .role(Role::Dialog)
+            .aria_label("Find")
             .child(field)
             .test_support();
         let bar = match self.form {
@@ -341,6 +344,8 @@ impl Inkling {
         Some(
             div()
                 .id("open-find")
+                .role(Role::Button)
+                .accessibility_id("open-find")
                 .flex_none()
                 .size(size)
                 .flex()

@@ -1,0 +1,24 @@
+Page: com.tobygodat.inkling
+App: com.tobygodat.inkling
+Snapshot: 10 nodes
+@e1 [application] "Inkling"
+  @e2 [button] "‹ Documents"
+  @e3 [button] "Claude · add a key"
+  @e4 [button] "Find"
+  @e5 [other] "Start writing"
+  @e6 [button] "Done"
+  @e7 [button] "Same look for reading and writing" [selected]
+  @e8 [button] "Appearance"
+  @e9 [button] "Writing" [selected]
+  @e10 [button] "Reading"
+
+Frames:
+  Button   '‹ Documents'                              id=open-documents         rect=(142,62 94x44)
+  Button   'Claude · add a key'                       id=open-keys              rect=(243,62 104x44)
+  Button   'Find'                                     id=open-find              rect=(350,62 44x44)
+  Other    'Start writing'                            id=None                   rect=(14,113 374x260)
+  Button   'Done'                                     id=appearance-done        rect=(335,380 57x44)
+  Button   'Same look for reading and writing'        id=None                   rect=(336,448 36x20) selected
+  Button   'Appearance'                               id=cog                    rect=(4,62 44x44)
+  Button   'Writing'                                  id=show-writing           rect=(50,62 44x44) selected
+  Button   'Reading'                                  id=show-reading           rect=(94,62 44x44)
