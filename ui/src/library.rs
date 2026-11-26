@@ -704,6 +704,7 @@ impl Inkling {
         let kind = match entry.format {
             Format::Epub => "EPUB",
             Format::Pdf => "PDF",
+            Format::Article => "Article",
         };
         let mut detail = entry.author.clone().unwrap_or_else(|| kind.to_string());
         if progress > 0. {
@@ -787,6 +788,7 @@ fn found_row(candidate: &Candidate, c: &Colors, face: &'static str) -> Div {
     let kind = match f.format {
         Format::Epub => "EPUB",
         Format::Pdf => "PDF",
+        Format::Article => "Article",
     };
     let size = if f.bytes >= 1_000_000 { format!("{:.1} MB", f.bytes as f32 / 1e6) } else { format!("{} KB", (f.bytes / 1000).max(1)) };
     let detail: Vec<&str> = [Some(kind), f.author.as_deref(), (!f.folder.is_empty()).then_some(f.folder.as_str()), Some(size.as_str())].into_iter().flatten().collect();

@@ -14,6 +14,24 @@ pub struct BookId(pub String);
 pub enum Format {
     Epub,
     Pdf,
+    /// A web page saved by its address: one chapter, with [`Source`] saying where it came from.
+    Article,
+}
+
+/// Where an article came from, as the page said.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    /// The address it was saved from.
+    pub url: String,
+    /// The site's own name, such as "The Atlantic".
+    #[serde(default)]
+    pub site: Option<String>,
+    /// When it was published, as the page wrote it (usually ISO 8601).
+    #[serde(default)]
+    pub published: Option<String>,
+    /// The page's own summary of itself.
+    #[serde(default)]
+    pub excerpt: Option<String>,
 }
 
 /// One imported book, reduced to Markdown the reader reflows. EPUB and PDF both parse into this;
@@ -28,6 +46,9 @@ pub struct Book {
     #[serde(default)]
     pub parser: u32,
     pub chapters: Vec<Chapter>,
+    /// Where an article came from. `None` for a book, and left out of the stored file then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
 }
 
 /// One chapter. A place in it is a byte offset into `text`, on a char boundary.

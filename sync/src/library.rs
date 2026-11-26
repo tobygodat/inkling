@@ -243,7 +243,7 @@ mod tests {
     fn book(title: &str) -> Book {
         let id = import::book_id(title.as_bytes());
         let text = format!("{title}, page one.\n\n![The pond](images/{}/1.png \"In winter\")\n", id.0);
-        Book { id, title: title.into(), author: None, format: Format::Epub, parser: inkling_books::book::PARSER, chapters: vec![Chapter { title: None, text }] }
+        Book { id, title: title.into(), author: None, format: Format::Epub, parser: inkling_books::book::PARSER, chapters: vec![Chapter { title: None, text }], source: None }
     }
 
     #[test]

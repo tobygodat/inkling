@@ -112,6 +112,7 @@ mod tests {
                     text: "# Two\n\n## Morning\n\nThe sea was *indistinguishable* from the sky.\n\n> I see a ring,\\\n> said Bernard.\n".into(),
                 },
             ],
+            source: None,
         };
         library.insert(&book).unwrap();
         library.set_position(&book.id, Position { chapter: 1, fraction: 0.5 }).unwrap();
