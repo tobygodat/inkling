@@ -12,12 +12,21 @@ import type { Env, Owner } from "./env";
 import { BOOK_ID, COVER_NAME, DOCUMENT_ID, IMAGE_NAME, MAX_FILE_BYTES, Refused, json, readJson, whole } from "./http";
 import { connectReadwise, disconnectReadwise, readwiseStatus } from "./readwise";
 
+type Captures = [path: string, first: string, second: string];
+
 export async function serveSync(request: Request, env: Env, ctx: OAuthResourceContext<Owner>): Promise<Response> {
   if (!ctx.auth.scope.includes("sync")) return insufficientScope(ctx.auth, ["sync"]);
   const { pathname } = new URL(request.url);
   const method = request.method;
-  const at = (pattern: RegExp) => pathname.match(pattern);
-  let m: RegExpMatchArray | null;
+
+  // Every pattern below captures one or two segments, so a group it lacks is never read.
+  const at = (pattern: RegExp): Captures | null => {
+    const found = pathname.match(pattern);
+
+    return found && [found[0], found[1] ?? "", found[2] ?? ""];
+  };
+
+  let m: Captures | null;
 
   if (pathname === "/v1/library" && method === "GET") return library(env);
 
@@ -90,9 +99,9 @@ function bookId(id: string): string {
 }
 
 async function library(env: Env): Promise<Response> {
-  const [books, inbox] = await env.DB.batch([
-    env.DB.prepare("SELECT id, title, author, format, chapters, cover, added, chapter, fraction, position_at FROM books ORDER BY added DESC"),
-    env.DB.prepare("SELECT readwise_id, title, author, category, state, bytes, error, book_id, received_at FROM inbox ORDER BY received_at DESC"),
+  const [books, inbox] = await Promise.all([
+    env.DB.prepare("SELECT id, title, author, format, chapters, cover, added, chapter, fraction, position_at FROM books ORDER BY added DESC").all(),
+    env.DB.prepare("SELECT readwise_id, title, author, category, state, bytes, error, book_id, received_at FROM inbox ORDER BY received_at DESC").all(),
   ]);
 
   return json({ books: books.results, inbox: inbox.results });

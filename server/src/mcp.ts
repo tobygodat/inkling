@@ -64,6 +64,7 @@ const success = <Result>(id: Id, result: Result) => ({ jsonrpc: "2.0", id, resul
 const failure = (id: Id, code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
 const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
 const problem = (t: string): ToolResult => ({ content: [{ type: "text", text: t }], isError: true });
+const refuse = (error: z.ZodError) => problem(error.issues.map((issue) => issue.message).join(" "));
 
 export async function serveMcp(request: Request, env: Env, ctx: OAuthResourceContext<Owner>): Promise<Response> {
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
@@ -170,7 +171,7 @@ async function listBooks(env: Env): Promise<ToolResult> {
 async function readBook(env: Env, args: ToolArguments): Promise<ToolResult> {
   const parsed = ReadBook.safeParse(args);
 
-  if (!parsed.success) return problem(parsed.error.issues[0].message);
+  if (!parsed.success) return refuse(parsed.error);
   const { book_id, chapter: n } = parsed.data;
 
   const book = await env.DB.prepare("SELECT title, author, chapters FROM books WHERE id = ?")
@@ -274,7 +275,7 @@ async function listDocuments(env: Env): Promise<ToolResult> {
 async function readDocument(env: Env, args: ToolArguments): Promise<ToolResult> {
   const parsed = ReadDocument.safeParse(args);
 
-  if (!parsed.success) return problem(parsed.error.issues[0].message);
+  if (!parsed.success) return refuse(parsed.error);
   const { document_id } = parsed.data;
   const doc = await env.DB.prepare("SELECT text FROM documents WHERE id = ? AND deleted = 0").bind(document_id).first<{ text: string }>();
 

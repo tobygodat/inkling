@@ -10,6 +10,15 @@ export const REDIRECT = "https://claude.ai/api/mcp/auth_callback";
 
 export const call = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, { redirect: "manual", ...init });
 
+/** The first group `pattern` captures in `text`. */
+export function capture(text: string, pattern: RegExp): string {
+  const group = text.match(pattern)?.[1];
+
+  if (group === undefined) throw new Error(`${pattern} matched nothing in: ${text.slice(0, 300)}`);
+
+  return group;
+}
+
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /** The cookies a response set, as a Cookie header for the next request. */
@@ -87,7 +96,7 @@ export async function signIn(options: { scope: string; tick: string[]; resource?
   const consent = await call(`/authorize?${query}`);
 
   if (consent.status !== 200) throw new Error(`consent page: ${consent.status} ${await consent.text()}`);
-  const handle = (await consent.text()).match(/name="handle" value="([^"]+)"/)![1];
+  const handle = capture(await consent.text(), /name="handle" value="([^"]+)"/);
 
   const form = new URLSearchParams({ handle, decision: "allow" });
 
@@ -137,8 +146,10 @@ export async function rpc<Params>(token: string, method: string, params?: Params
   return response;
 }
 
+const Content = z.object({ text: z.string() });
+
 const ToolAnswer = z.object({
-  result: z.object({ content: z.array(z.object({ text: z.string() })).min(1), isError: z.boolean().optional() }),
+  result: z.object({ content: z.tuple([Content], Content), isError: z.boolean().optional() }),
 });
 
 /** A tool's text, from a tools/call that succeeded at the protocol level. */
