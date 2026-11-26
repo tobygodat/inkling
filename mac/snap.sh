@@ -1,10 +1,10 @@
 #!/bin/sh
-# Rebuilds docs/screenshots/mac headless and asserts the app's behaviour as it goes.
+# Rebuilds docs/screenshots/mac (or $INKLING_SNAP_OUT) headless and asserts the app's behaviour as it goes.
 # Offscreen render, input dispatched inside the app, fake AI, keys in memory, a temp data folder.
 set -eu
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 here=$(cd "$(dirname "$0")" && pwd)
-out="$here/../docs/screenshots/mac"
+out="${INKLING_SNAP_OUT:-$here/../docs/screenshots/mac}"
 export INKLING_FIXTURES="${INKLING_FIXTURES:-$here/../target/fixtures}"
 "$here/../books/fetch-fixtures.sh" >/dev/null
 cargo build --manifest-path "$here/../Cargo.toml" -p inkling-mac --features snap

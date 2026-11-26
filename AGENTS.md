@@ -50,7 +50,7 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo test --workspace` must pass before any PR.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` must pass before any PR.
 - `mac/snap.sh` rebuilds `docs/screenshots/mac/` headless and asserts the app's behaviour. Any change
-  under `ui/` or `mac/` reruns it.
+  under `ui/` or `mac/` reruns it. `INKLING_SNAP_OUT=<folder>` writes the screenshots there instead.
 - `cargo run --release -p inkling-mac` opens the Mac app. It takes focus, so only Toby runs it.
 - `mac/install.sh` builds `Inkling.app` in release, signs it with the Developer ID identity and
   installs it in `/Applications` (or the folder it is given) without opening it.
@@ -107,8 +107,9 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 
 ## Review
 
-- CI runs clippy and `cargo test --workspace` on every PR and on `main`, and the Worker's lint, types and
-  tests. Run what you changed before you push.
+- CI runs clippy, `cargo test --workspace` and `mac/snap.sh` on every PR and on `main`, clippy and
+  the Simulator build for `ios/`, and the Worker's lint, types and tests. Run what you changed before
+  you push.
   Nobody runs them again by hand after that.
 - The final check runs once per PR. It waits for CI to be green on the final head, then runs
   `mac/snap.sh` when `core/`, `ui/` or `mac/` changed and `ios/snap.sh` when `ui/` or `ios/` changed.

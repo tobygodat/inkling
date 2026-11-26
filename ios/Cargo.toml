@@ -1,5 +1,7 @@
 [workspace]
 resolver = "3"
+# gpui-mobile is checked out under target/. It is upstream code, not a member to lint.
+exclude = ["target"]
 
 [package]
 name = "inkling-ios"
