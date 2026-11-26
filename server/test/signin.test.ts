@@ -34,7 +34,8 @@ describe("signing in", () => {
     expect(draft.headers.get("www-authenticate")).toContain("draft:read");
 
     const sync = await call("/v1/library", { headers: { authorization: `Bearer ${signed.token}` } });
-    expect(sync.status).toBe(401); // An agent's token is for /mcp, not the devices' API.
+    // An agent's token is for /mcp, not the devices' API.
+    expect(sync.status).toBe(401);
   });
 
   it("sends anyone else back to the client refused", async () => {

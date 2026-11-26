@@ -140,6 +140,8 @@ final class InklingController: UIViewController {
     @objc private func tick() { gpui.drawFrame() }
 }
 
+// Rust calls the host's C entry points on the main thread, where GPUI runs. `assumeIsolated`
+// traps if that ever changes, and answers synchronously, as the caller waits for it.
 @_cdecl("inkling_host_set_ground")
 func inklingHostSetGround(_ rgb: UInt32, _ dark: Bool) {
     MainActor.assumeIsolated { InklingController.shown?.setGround(rgb, dark: dark) }

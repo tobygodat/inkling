@@ -29,7 +29,7 @@ const IdClaims = z.object({
   email_verified: claim(z.boolean()),
 });
 
-const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 
 /** A fresh PKCE verifier or nonce. */
 export const random = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -83,7 +83,7 @@ export function checkIdToken(config: GoogleConfig, idToken: string, nonce: strin
   const payload = idToken.split(".")[1];
 
   if (!payload) throw new Error("Google sent no ID token.");
-  const parsed = IdClaims.safeParse(JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))));
+  const parsed = IdClaims.safeParse(JSON.parse(atob(payload.replaceAll("-", "+").replaceAll("_", "/"))));
 
   if (!parsed.success) throw new Error("The ID token isn’t from Google.");
   const claims = parsed.data;

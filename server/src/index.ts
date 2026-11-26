@@ -24,6 +24,20 @@ interface Servers {
 
 let built: Servers | null = null;
 
+type ResourceHandler = (request: Request, env: Env, ctx: Parameters<typeof serveMcp>[2]) => Promise<Response>;
+
+/** A handler that answers a `Refused` with its status and message. */
+const errors = (handler: ResourceHandler) => ({
+  fetch: async (request: Request, env: Env, ctx: Parameters<typeof serveMcp>[2]) => {
+    try {
+      return await handler(request, env, ctx);
+    } catch (e) {
+      if (e instanceof Refused) return json({ error: e.message }, e.status);
+      throw e;
+    }
+  },
+});
+
 /** The issuer is the Worker's own address, which comes from its configuration. */
 function servers(env: Env): Servers {
   if (built?.url === env.PUBLIC_URL) return built;
@@ -44,18 +58,7 @@ function servers(env: Env): Servers {
     refreshTokenIdleTTL: 60 * 24 * 60 * 60,
   });
 
-  const validate = (env: Env) => (resource: string, token: string) => auth.validateToken<Owner>(resource, token, env);
-
-  const errors = (handler: (request: Request, env: Env, ctx: Parameters<typeof serveMcp>[2]) => Promise<Response>) => ({
-    fetch: async (request: Request, env: Env, ctx: Parameters<typeof serveMcp>[2]) => {
-      try {
-        return await handler(request, env, ctx);
-      } catch (e) {
-        if (e instanceof Refused) return json({ error: e.message }, e.status);
-        throw e;
-      }
-    },
-  });
+  const validate = (requestEnv: Env) => (resource: string, token: string) => auth.validateToken<Owner>(resource, token, requestEnv);
 
   built = {
     url,

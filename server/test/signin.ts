@@ -19,7 +19,7 @@ export function capture(text: string, pattern: RegExp): string {
   return group;
 }
 
-const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 
 /** The cookies a response set, as a Cookie header for the next request. */
 const cookies = (response: Response) =>
@@ -96,7 +96,7 @@ export async function signIn(options: { scope: string; tick: string[]; resource?
   const consent = await call(`/authorize?${query}`);
 
   if (consent.status !== 200) throw new Error(`consent page: ${consent.status} ${await consent.text()}`);
-  const handle = capture(await consent.text(), /name="handle" value="([^"]+)"/);
+  const handle = capture(await consent.text(), /name="handle" value="([^"]+)"/u);
 
   const form = new URLSearchParams({ handle, decision: "allow" });
 

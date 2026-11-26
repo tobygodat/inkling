@@ -30,11 +30,9 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
 
   if (pathname === "/v1/library" && method === "GET") return library(env);
 
-  if ((m = at(/^\/v1\/books\/([^/]+)$/))) {
-    if (method === "PUT") return putBook(request, env, bookId(m[1]));
-  }
+  if ((m = at(/^\/v1\/books\/([^/]+)$/u)) && method === "PUT") return putBook(request, env, bookId(m[1]));
 
-  if ((m = at(/^\/v1\/books\/([^/]+)\/file$/))) {
+  if ((m = at(/^\/v1\/books\/([^/]+)\/file$/u))) {
     const key = `book/${bookId(m[1])}`;
 
     if (method === "PUT") return putFile(request, env, key);
@@ -42,7 +40,7 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
     if (method === "GET") return getFile(env, key);
   }
 
-  if ((m = at(/^\/v1\/books\/([^/]+)\/images\/([^/]+)$/))) {
+  if ((m = at(/^\/v1\/books\/([^/]+)\/images\/([^/]+)$/u))) {
     if (!IMAGE_NAME.test(m[2])) throw new Refused(400, "That isn’t an image name.");
     const key = `image/${bookId(m[1])}/${m[2]}`;
 
@@ -51,15 +49,15 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
     if (method === "GET") return getFile(env, key);
   }
 
-  if ((m = at(/^\/v1\/books\/([^/]+)\/chapters\/(\d+)$/)) && method === "PUT") {
+  if ((m = at(/^\/v1\/books\/([^/]+)\/chapters\/(\d+)$/u)) && method === "PUT") {
     return putChapter(request, env, bookId(m[1]), Number(m[2]));
   }
 
-  if ((m = at(/^\/v1\/books\/([^/]+)\/position$/)) && method === "PUT") {
+  if ((m = at(/^\/v1\/books\/([^/]+)\/position$/u)) && method === "PUT") {
     return putPosition(request, env, bookId(m[1]));
   }
 
-  if ((m = at(/^\/v1\/covers\/([^/]+)$/))) {
+  if ((m = at(/^\/v1\/covers\/([^/]+)$/u))) {
     if (!COVER_NAME.test(m[1])) throw new Refused(400, "That isn’t a cover name.");
 
     if (method === "PUT") return putFile(request, env, `cover/${m[1]}`);
@@ -69,7 +67,7 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
 
   if (pathname === "/v1/documents" && method === "GET") return listDocuments(env);
 
-  if ((m = at(/^\/v1\/documents\/([^/]+)$/))) {
+  if ((m = at(/^\/v1\/documents\/([^/]+)$/u))) {
     if (!DOCUMENT_ID.test(m[1])) throw new Refused(400, "That isn’t a document id.");
 
     if (method === "GET") return getDocument(env, m[1]);
@@ -77,9 +75,9 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
     if (method === "PUT") return putDocument(request, env, m[1]);
   }
 
-  if ((m = at(/^\/v1\/inbox\/([^/]+)\/file$/)) && method === "GET") return getFile(env, `inbox/${m[1]}`);
+  if ((m = at(/^\/v1\/inbox\/([^/]+)\/file$/u)) && method === "GET") return getFile(env, `inbox/${m[1]}`);
 
-  if ((m = at(/^\/v1\/inbox\/([^/]+)$/)) && method === "POST") return settleInbox(request, env, m[1]);
+  if ((m = at(/^\/v1\/inbox\/([^/]+)$/u)) && method === "POST") return settleInbox(request, env, m[1]);
 
   if (pathname === "/v1/readwise") {
     if (method === "GET") return json(await readwiseStatus(env));
@@ -99,10 +97,13 @@ function bookId(id: string): string {
 }
 
 async function library(env: Env): Promise<Response> {
-  const [books, inbox] = await Promise.all([
-    env.DB.prepare("SELECT id, title, author, format, chapters, cover, added, chapter, fraction, position_at FROM books ORDER BY added DESC").all(),
-    env.DB.prepare("SELECT readwise_id, title, author, category, state, bytes, error, book_id, received_at FROM inbox ORDER BY received_at DESC").all(),
+  // One batch, so the books and the inbox come from the same moment.
+  const [books, inbox] = await env.DB.batch([
+    env.DB.prepare("SELECT id, title, author, format, chapters, cover, added, chapter, fraction, position_at FROM books ORDER BY added DESC"),
+    env.DB.prepare("SELECT readwise_id, title, author, category, state, bytes, error, book_id, received_at FROM inbox ORDER BY received_at DESC"),
   ]);
+
+  if (!books || !inbox) throw new Error("D1 answered a batch of two statements with fewer results.");
 
   return json({ books: books.results, inbox: inbox.results });
 }
@@ -203,7 +204,7 @@ const shown = (d: DocumentRow) => ({ ...d, deleted: d.deleted === 1 });
 async function listDocuments(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare("SELECT id, version, saved_at, device, deleted FROM documents ORDER BY id").all<DocumentRow>();
 
-  return json(results.map(shown));
+  return json(results.map((d) => shown(d)));
 }
 
 async function getDocument(env: Env, id: string): Promise<Response> {

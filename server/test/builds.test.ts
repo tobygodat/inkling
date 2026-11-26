@@ -17,11 +17,11 @@ async function upload(token = TOKEN, query = "version=0.1.0&build=20261121.0900"
 /** The install link's manifest URL, and the manifest's .ipa URL, as iOS reads them. */
 async function chain(pageUrl: string) {
   const html = await (await call(local(pageUrl))).text();
-  const href = capture(html, /href="(itms-services:[^"]+)"/).replaceAll("&amp;", "&");
+  const href = capture(html, /href="(itms-services:[^"]+)"/u).replaceAll("&amp;", "&");
   const manifest = new URL(href).searchParams.get("url")!;
   expect(href).toBe(`itms-services://?action=download-manifest&url=${encodeURIComponent(manifest)}`);
   const plist = await (await call(local(manifest))).text();
-  const ipa = capture(plist, /<key>url<\/key><string>([^<]+)<\/string>/);
+  const ipa = capture(plist, /<key>url<\/key><string>([^<]+)<\/string>/u);
   expect(ipa).toContain("&amp;signature=");
 
   return { manifest, ipa: ipa.replaceAll("&amp;", "&") };
@@ -49,8 +49,8 @@ describe("over-the-air builds", () => {
     const res = await upload();
     expect(res.status).toBe(201);
     const { id, url } = await res.json<{ id: string; url: string }>();
-    expect(id).toMatch(/^[0-9a-f]{32}$/);
-    expect(url).toMatch(new RegExp(`^${ORIGIN}/builds/${id}\\?expires=\\d+&signature=[0-9a-f]{64}$`));
+    expect(id).toMatch(/^[0-9a-f]{32}$/u);
+    expect(url).toMatch(new RegExp(`^${ORIGIN}/builds/${id}\\?expires=\\d+&signature=[0-9a-f]{64}$`, "u"));
 
     const page = await call(local(url));
     expect(page.status).toBe(200);
@@ -75,9 +75,9 @@ describe("over-the-air builds", () => {
 
     for (const link of [url, manifest, ipa]) {
       const edits: ((u: URL) => void)[] = [
-        (u) => (u.pathname = u.pathname.replace(/[0-9a-f]{32}/, other)),
+        (u) => (u.pathname = u.pathname.replace(/[0-9a-f]{32}/u, other)),
         (u) => u.searchParams.set("expires", String(Number(u.searchParams.get("expires")) + 3600)),
-        (u) => u.searchParams.set("signature", u.searchParams.get("signature")!.replace(/^./, (c) => (c === "0" ? "1" : "0"))),
+        (u) => u.searchParams.set("signature", u.searchParams.get("signature")!.replace(/^./u, (c) => (c === "0" ? "1" : "0"))),
         (u) => u.searchParams.delete("signature"),
       ];
 

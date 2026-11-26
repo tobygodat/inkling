@@ -12,13 +12,13 @@ import { fromBase64 } from "./secret";
 const LINK_HOURS = 24;
 const KEPT_BUILDS = 5;
 const BUNDLE_ID = "com.tobygodat.inkling";
-const ROUTE = /^\/builds\/([0-9a-f]{32})(\/manifest\.plist|\/Inkling\.ipa)?$/;
-const LABEL = z.string().regex(/^[0-9A-Za-z.-]{1,32}$/);
+const ROUTE = /^\/builds\/([0-9a-f]{32})(\/manifest\.plist|\/Inkling\.ipa)?$/u;
+const LABEL = z.string().regex(/^[0-9A-Za-z.-]{1,32}$/u);
 const Labels = z.object({ version: LABEL, build: LABEL });
 
 const objectKey = (id: string) => `builds/${id}.ipa`;
 const toHex = (bytes: ArrayBuffer | Uint8Array) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
-const fromHex = (hex: string) => Uint8Array.from(hex.match(/../g) ?? [], (b) => parseInt(b, 16));
+const fromHex = (hex: string) => Uint8Array.from(hex.match(/../gu) ?? [], (b) => parseInt(b, 16));
 const signed = (path: string, expires: number) => new TextEncoder().encode(`${path}\n${expires}`);
 
 /** The links' HMAC key, derived from SECRET_KEY so it is never the Readwise token's AES key. */
@@ -46,7 +46,7 @@ async function verify(env: Env, url: URL): Promise<number> {
   const expires = Number(url.searchParams.get("expires"));
   const signature = url.searchParams.get("signature") ?? "";
 
-  if (!Number.isSafeInteger(expires) || !/^[0-9a-f]{64}$/.test(signature)) throw new Refused(403, "That link isn’t signed.");
+  if (!Number.isSafeInteger(expires) || !/^[0-9a-f]{64}$/u.test(signature)) throw new Refused(403, "That link isn’t signed.");
 
   if (!(await crypto.subtle.verify("HMAC", await linkKey(env.SECRET_KEY), fromHex(signature), signed(url.pathname, expires)))) {
     throw new Refused(403, "That link was changed, so it doesn’t work.");
@@ -57,11 +57,12 @@ async function verify(env: Env, url: URL): Promise<number> {
   return expires;
 }
 
+const digest = (text: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+
 async function authorized(request: Request, env: Env): Promise<boolean> {
-  const given = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+  const given = request.headers.get("authorization")?.match(/^Bearer (.+)$/u)?.[1];
 
   if (!env.BUILD_UPLOAD_TOKEN || !given) return false;
-  const digest = (text: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
 
   return crypto.subtle.timingSafeEqual(await digest(given), await digest(env.BUILD_UPLOAD_TOKEN));
 }

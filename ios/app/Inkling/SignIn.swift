@@ -27,10 +27,8 @@ final class SignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
         #endif
         session?.cancel()
         let session = ASWebAuthenticationSession(url: url, callback: .customScheme("inkling")) { [weak self] came, _ in
-            MainActor.assumeIsolated {
-                self?.answer(token, came)
-                self?.session = nil
-            }
+            self?.answer(token, came)
+            self?.session = nil
         }
         session.presentationContextProvider = self
         self.session = session
@@ -45,11 +43,13 @@ final class SignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
         }
     }
 
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        MainActor.assumeIsolated { presenter?.view.window ?? ASPresentationAnchor() }
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        presenter?.view.window ?? ASPresentationAnchor()
     }
 }
 
+// Rust calls the host's C entry points on the main thread, where GPUI runs. `assumeIsolated`
+// traps if that ever changes, and answers synchronously, as the caller waits for it.
 @_cdecl("inkling_host_sign_in")
 func inklingHostSignIn(_ token: UInt64, _ url: UnsafePointer<CChar>) {
     let address = String(cString: url)

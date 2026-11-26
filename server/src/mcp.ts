@@ -20,7 +20,7 @@ const INSTRUCTIONS =
 const tools = allTools.filter((t) => t.name !== "list_highlights");
 
 /** Tools that read the writer's writing, which the `draft:read` box on the consent page allows. */
-const WRITING = ["read_draft", "list_documents", "read_document"];
+const WRITING = new Set(["read_draft", "list_documents", "read_document"]);
 
 const DEFAULT_HITS = 20;
 const MAX_HITS = 100;
@@ -106,7 +106,7 @@ export async function serveMcp(request: Request, env: Env, ctx: OAuthResourceCon
       if (!call.success) return json(failure(id, -32602, "A tool call needs the tool's name, and its arguments as an object."));
       const { name, arguments: args } = call.data;
 
-      if (WRITING.includes(name) && !ctx.auth.scope.includes("draft:read")) {
+      if (WRITING.has(name) && !ctx.auth.scope.includes("draft:read")) {
         return insufficientScope(ctx.auth, ["library:read", "draft:read"]);
       }
 
@@ -227,7 +227,7 @@ async function searchLibrary(env: Env, args: ToolArguments): Promise<ToolResult>
              snippet(chapters_search, 0, '', '', '…', 48) AS passage
            FROM chapters_search JOIN chapters ON chapters.rowid = chapters_search.rowid JOIN books ON ${scope}
            WHERE chapters_search MATCH ? ORDER BY books.added DESC, chapters.n LIMIT ?`,
-        ).bind(...(only ? [only] : []), `"${query.replace(/"/g, '""')}"`, limit)
+        ).bind(...(only ? [only] : []), `"${query.replaceAll('"', '""')}"`, limit)
       : env.DB.prepare(
           `SELECT chapters.book_id, books.title AS book_title, chapters.n, chapters.title,
              substr(chapters.text, max(1, instr(lower(chapters.text), lower(?)) - 120), 240 + length(?)) AS passage
@@ -258,7 +258,7 @@ async function readDraft(env: Env): Promise<ToolResult> {
 }
 
 /** A document's title: its first line with text, without a heading's `#`s, as `documents::title`. */
-const titleOf = (body: string) => (body.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "").replace(/^#+/, "").trim();
+const titleOf = (body: string) => (body.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "").replace(/^#+/u, "").trim();
 
 async function listDocuments(env: Env): Promise<ToolResult> {
   const { results } = await env.DB.prepare("SELECT id, text, saved_at FROM documents WHERE deleted = 0 ORDER BY saved_at DESC, id DESC").all<{
@@ -267,7 +267,7 @@ async function listDocuments(env: Env): Promise<ToolResult> {
     saved_at: number;
   }>();
 
-  const documents = results.map((d) => ({ id: d.id, title: titleOf(d.text), changed: new Date(d.saved_at).toISOString().replace(/\.\d{3}Z$/, "Z") }));
+  const documents = results.map((d) => ({ id: d.id, title: titleOf(d.text), changed: new Date(d.saved_at).toISOString().replace(/\.\d{3}Z$/u, "Z") }));
 
   return text(JSON.stringify(documents, null, 2));
 }

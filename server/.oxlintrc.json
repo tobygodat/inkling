@@ -18,6 +18,12 @@
   "jsPlugins": [
     { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }
   ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "error"
+  },
   "rules": {
     "oxc/no-accumulating-spread": "error",
     "anti-slop/no-array-filter-map": "error",
@@ -37,6 +43,22 @@
     "anti-slop/no-unsafe-dictionary-type": "error",
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-readable-spacing": "error",
-    "anti-slop/require-safety-comment-for-type-assertion": "error"
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+
+    // perf
+    // Sequential awaits are the intent: Readwise is listed and received one document at a time so its cursor only moves past what was handled, and tests run their steps in order.
+    "eslint/no-await-in-loop": "off",
+
+    // pedantic
+    // The route tables, the OAuth setup, the Readwise receive and each test's journey read top to bottom; splitting them isn't a lint fix.
+    "eslint/max-lines-per-function": "off",
+    // Dropping async turns a rejection into a synchronous throw, and Worker and vitest callbacks are async by contract.
+    "eslint/require-await": "off",
+    // Base64 here works on bytes: atob and btoa use one UTF-16 unit per byte, which charCodeAt and fromCharCode read directly.
+    "unicorn/prefer-code-point": "off",
+    // It reads zod's .catch(fallback) as a promise chain.
+    "unicorn/prefer-top-level-await": "off",
+    // zod's .catch(undefined) names a field's fallback and requires the argument, and .then(() => undefined) makes the purge's promise void.
+    "unicorn/no-useless-undefined": "off"
   }
 }
