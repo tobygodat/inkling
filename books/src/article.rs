@@ -47,7 +47,7 @@ pub fn parse(url: &str, html: &str, fetch: &mut dyn FnMut(&str) -> Option<Vec<u8
         excerpt: article.excerpt.as_deref().and_then(tidy),
     };
     let author = article.byline.as_deref().and_then(byline);
-    let book = Book { id, title, author, format: Format::Article, parser: PARSER, chapters: page.chapters, source: Some(source) };
+    let book = Book { id, title, author, format: Format::Article, parser: PARSER, chapters: page.chapters, source: Some(Box::new(source)) };
     Ok(Parsed { book, images: page.images })
 }
 

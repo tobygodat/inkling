@@ -46,9 +46,10 @@ pub struct Book {
     #[serde(default)]
     pub parser: u32,
     pub chapters: Vec<Chapter>,
-    /// Where an article came from. `None` for a book, and left out of the stored file then.
+    /// Where an article came from. `None` for a book, and left out of the stored file then. Boxed,
+    /// so a book carried around whole by the reading view doesn't grow for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<Source>,
+    pub source: Option<Box<Source>>,
 }
 
 /// One chapter. A place in it is a byte offset into `text`, on a char boundary.
