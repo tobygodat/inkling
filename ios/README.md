@@ -62,6 +62,28 @@ and prints the median and the worst time from a typed character to its painted f
 2026-11-12 the live page measured a 14.7 ms median over three runs, and the text area it
 replaced 13.6 ms. Both are Debug builds on the Simulator, so they are a floor for a real iPhone.
 
+## Optional e2e suite
+
+`ios/e2e/` uses the official `e2e` runner (`@e2e-dev/mobile`) against a Debug simulator build with
+canned AI, in-memory keys, and no e2e model provider or telemetry. It shadows `ios/snap.sh` across
+all 8 lanes (66 steps) and is not a CI gate yet.
+
+With Xcode and Node 22.22.3+, 24.8+, or 26+, boot a dedicated iPhone 18 Pro simulator
+with no Inkling install, then run from the repo root:
+
+```sh
+cd ios/e2e
+npm ci --ignore-scripts
+INKLING_E2E_SIMULATOR=<simulator-uuid> npm run smoke   # single editor smoke test (~6 s)
+INKLING_E2E_SIMULATOR=<simulator-uuid> npm test        # full 9-file (66-step) suite
+```
+
+The runner builds and installs Inkling only on that simulator, disables e2e telemetry, and fixes
+the status bar for screenshots. The install and test drafts remain there afterward; use a fresh
+disposable simulator for the next run. Run this only against a simulator set aside for testing, not
+a device or simulator you write on. Reports and traces are local under `ios/e2e/.e2e/` and are not
+committed.
+
 ## What the host does
 
 - The data folder is `Application Support/Inkling` inside the app's sandbox. Swift passes it to

@@ -1,0 +1,13 @@
+{
+  "name": "inkling-ios-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "./smoke.sh tests/editor.e2e.ts",
+    "test": "./smoke.sh"
+  },
+  "devDependencies": {
+    "@e2e-dev/mobile": "0.12.9",
+    "e2e": "0.25.0"
+  }
+}
