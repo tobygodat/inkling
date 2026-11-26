@@ -22,6 +22,8 @@ export async function seal(secretKey: string, plain: string): Promise<string> {
 
 export async function open(secretKey: string, sealed: string): Promise<string> {
   const [iv, data] = sealed.split(".");
+
+  if (iv === undefined || data === undefined) throw new Error("A sealed secret is `<iv>.<ciphertext>`.");
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(iv) }, await key(secretKey), fromBase64(data));
 
   return new TextDecoder().decode(plain);

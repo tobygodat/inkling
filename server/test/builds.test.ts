@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ORIGIN, call } from "./signin";
+import { ORIGIN, call, capture } from "./signin";
 
 const TOKEN = "test-upload-token";
 const IPA = new TextEncoder().encode("PK stand-in ipa bytes & more");
@@ -17,11 +17,11 @@ async function upload(token = TOKEN, query = "version=0.1.0&build=20261121.0900"
 /** The install link's manifest URL, and the manifest's .ipa URL, as iOS reads them. */
 async function chain(pageUrl: string) {
   const html = await (await call(local(pageUrl))).text();
-  const href = html.match(/href="(itms-services:[^"]+)"/)![1].replaceAll("&amp;", "&");
+  const href = capture(html, /href="(itms-services:[^"]+)"/).replaceAll("&amp;", "&");
   const manifest = new URL(href).searchParams.get("url")!;
   expect(href).toBe(`itms-services://?action=download-manifest&url=${encodeURIComponent(manifest)}`);
   const plist = await (await call(local(manifest))).text();
-  const ipa = plist.match(/<key>url<\/key><string>([^<]+)<\/string>/)![1];
+  const ipa = capture(plist, /<key>url<\/key><string>([^<]+)<\/string>/);
   expect(ipa).toContain("&amp;signature=");
 
   return { manifest, ipa: ipa.replaceAll("&amp;", "&") };

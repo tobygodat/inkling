@@ -139,11 +139,10 @@ async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
   if (url.pathname === "/builds" && request.method === "POST") return upload(request, env);
-  const m = url.pathname.match(ROUTE);
+  const [, id, file] = url.pathname.match(ROUTE) ?? [];
 
-  if (!m || (request.method !== "GET" && request.method !== "HEAD")) throw new Refused(404, "There’s nothing here.");
+  if (id === undefined || (request.method !== "GET" && request.method !== "HEAD")) throw new Refused(404, "There’s nothing here.");
   const expires = await verify(env, url);
-  const [, id, file] = m;
 
   if (file === "/Inkling.ipa") {
     const object = await env.BUILDS.get(objectKey(id));
