@@ -73,7 +73,7 @@ with no Inkling install, then run from the repo root:
 
 ```sh
 cd ios/e2e
-npm ci
+npm ci --ignore-scripts
 INKLING_E2E_SIMULATOR=<simulator-uuid> npm run smoke
 ```
 

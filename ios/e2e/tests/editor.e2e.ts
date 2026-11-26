@@ -13,8 +13,20 @@ test('pasting in the editor autosaves the draft', async ({ app, device, screen }
   const draft = 'the river held the light';
   // The GPUI editor is one native canvas, so focus it by position. The Paste control is UIKit.
   await screen.tapAt({ x: 200, y: 300 });
+  const paste = screen.getByLabel('Paste', { exact: true });
+  await expect(paste).toBeVisible();
+  // On a fresh simulator, iOS covers the keyboard with a first-time QuickPath intro sheet.
+  // @e2e-dev/mobile flags nodes inside the keyboard band as hidden, so locate by testId + text
+  // and tap its center directly when present.
+  const introContinue = screen.getByTestId('UIContinuousPathIntroductionView').getByText('Continue');
+  if ((await introContinue.count()) > 0) {
+    const box = await introContinue.boundingBox();
+    if (box) {
+      await screen.tapAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    }
+  }
   await device.setClipboard(draft);
-  await screen.getByLabel('Paste', { exact: true }).tap();
+  await paste.tap();
 
   await expect.poll(() => {
     try {
