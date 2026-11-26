@@ -48,8 +48,8 @@ final class SignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
     }
 }
 
-// Rust calls the host's C entry points on the main thread, where GPUI runs. `assumeIsolated`
-// traps if that ever changes, and answers synchronously, as the caller waits for it.
+// Rust calls this on the main thread, where GPUI runs, and `assumeIsolated` traps if that ever
+// changes. The sheet answers later through `inkling_ios_signed_in`.
 @_cdecl("inkling_host_sign_in")
 func inklingHostSignIn(_ token: UInt64, _ url: UnsafePointer<CChar>) {
     let address = String(cString: url)
