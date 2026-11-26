@@ -24,6 +24,12 @@ if [[ "$apps" == *com.tobygodat.inkling* ]]; then
   exit 2
 fi
 test -x node_modules/.bin/e2e || { echo 'Install the pinned e2e dependencies first.' >&2; exit 2; }
+if [ $# -eq 0 ] || [[ " $* " == *books* ]] || [[ " $* " == *appearance* ]]; then
+  ../../books/fetch-fixtures.sh >/dev/null
+fi
 ../run.sh
 xcrun simctl install "$simulator" "../target/xcode/Build/Products/Debug-iphonesimulator/Inkling.app"
-node_modules/.bin/e2e run --target ios
+xcrun simctl status_bar "$simulator" override --time 9:41 --batteryState charged --batteryLevel 100 \
+  --wifiBars 3 --cellularMode active --cellularBars 4 --operatorName "" --dataNetwork wifi
+trap 'xcrun simctl status_bar "$simulator" clear 2>/dev/null || true' EXIT
+node_modules/.bin/e2e run --target ios "$@"
