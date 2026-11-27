@@ -31,6 +31,9 @@ struct ReaderView: View {
                     .frame(maxHeight: .infinity)
             }
         }
+        #if os(iOS)
+        .overlay { EdgeFades(ground: Color(palette.ground), shown: model?.chromeHidden != true) }
+        #endif
         .overlay(alignment: .top) {
             if let model { ProgressLine(progress: model.progress, palette: palette) }
         }
@@ -173,6 +176,34 @@ private struct Place: View {
         return "Chapter \(model.chapter + 1) of \(model.rendered.chapters.count) · \(percent)"
     }
 }
+
+#if os(iOS)
+/// The text dims into the paper under the bars, so a line never reads through their glass. The
+/// fades go with the bars.
+private struct EdgeFades: View {
+    let ground: Color
+    let shown: Bool
+
+    var body: some View {
+        GeometryReader { space in
+            VStack(spacing: 0) {
+                fade(from: .top).frame(height: space.safeAreaInsets.top + 20)
+                Spacer(minLength: 0)
+                fade(from: .bottom).frame(height: space.safeAreaInsets.bottom + 100)
+            }
+        }
+        .ignoresSafeArea()
+        .opacity(shown ? 1 : 0)
+        .animation(.easeInOut(duration: 0.25), value: shown)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func fade(from edge: UnitPoint) -> LinearGradient {
+        LinearGradient(stops: [.init(color: ground, location: 0), .init(color: ground, location: 0.5), .init(color: ground.opacity(0), location: 1)], startPoint: edge, endPoint: edge == .top ? .bottom : .top)
+    }
+}
+#endif
 
 /// How far through, as a hairline across the top of the reader.
 private struct ProgressLine: View {
