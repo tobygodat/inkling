@@ -44,7 +44,25 @@ final class MacSnapshots {
                 try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
             }
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
-            try await shoot(SettingsView().environment(shelf), "\(name)-settings", appearance, size: CGSize(width: 520, height: 220))
+            try await shoot(SettingsView().environment(shelf), "\(name)-settings", appearance, size: CGSize(width: 440, height: 400))
+        }
+    }
+
+    @Test func aLookIsKeptAndRedrawsTheReader() async throws {
+        var look = shelf.look
+        look.tone = .sepia
+        look.face = "Charter"
+        look.textSize = 40
+        look.lineSpacing = 160
+        shelf.setLook(look)
+        #expect(shelf.look.textSize == 32, "core clamps the size")
+        #expect(try Shelf(folder: data).look == shelf.look, "the look is kept through a relaunch")
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let navigator = Navigator()
+            navigator.selection = shelf.queue[1].id
+            try await shoot(root(navigator), "\(name)-reader-sepia", appearance)
+            try await shoot(AppearancePanel().environment(shelf), "\(name)-appearance", appearance, size: CGSize(width: 380, height: 300), titled: false)
         }
     }
 

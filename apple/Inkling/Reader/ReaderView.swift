@@ -5,18 +5,21 @@ import SwiftUI
 /// how far through at the foot.
 struct ReaderView: View {
     @Environment(Shelf.self) private var shelf
+    @Environment(Navigator.self) private var navigator
     @Environment(\.colorScheme) private var scheme
     let item: Item
     @State private var model: ReaderModel?
     @State private var failed: String?
+    @State private var choosing = false
 
     var body: some View {
-        let look = shelf.looks.reading()
+        let look = shelf.look
         let palette = Self.palette(look.tone, shelf: shelf, scheme: scheme)
         ZStack(alignment: .bottom) {
             Color(palette.ground).ignoresSafeArea()
             if let model {
                 ReaderText(model: model, palette: palette, column: CGFloat(look.pageWidth))
+                    .id(ObjectIdentifier(model))
                     .ignoresSafeArea(edges: .bottom)
                     .transition(.opacity)
             } else if let failed {
@@ -27,10 +30,17 @@ struct ReaderView: View {
                     .frame(maxHeight: .infinity)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: model == nil)
+        .animation(.easeOut(duration: 0.2), value: model.map(ObjectIdentifier.init))
         .environment(\.palette, palette)
         .toolbar {
             if let model {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Appearance", systemImage: "textformat.size") { choosing = true }
+                        .accessibilityIdentifier("appearance")
+                        #if os(macOS)
+                        .popover(isPresented: $choosing, arrowEdge: .bottom) { AppearancePanel() }
+                        #endif
+                }
                 ReaderTools(model: model)
                 #if os(iOS)
                 ToolbarItem(placement: .principal) { Place(model: model, palette: palette) }
@@ -44,7 +54,17 @@ struct ReaderView: View {
         .navigationTitle(item.title)
         .navigationSubtitle(model.map(Place.words) ?? "")
         #endif
-        .task(id: item.id) { await load(look: look, palette: palette) }
+        #if os(iOS)
+        .sheet(isPresented: $choosing) {
+            AppearancePanel()
+                .presentationDetents([.height(330)])
+        }
+        #endif
+        .task(id: Setting(id: item.id, look: look, dark: palette.isDark)) { await load(look: look, palette: palette) }
+        #if os(iOS)
+        .onChange(of: palette.isDark, initial: true) { navigator.readerScheme = palette.isDark ? .dark : .light }
+        .onDisappear { navigator.readerScheme = nil }
+        #endif
         .onDisappear { shelf.flushPlaces() }
         #if os(macOS)
         .focusedSceneValue(\.reader, model)
@@ -76,10 +96,18 @@ struct ReaderView: View {
             let byline = item.kind == .article ? [item.author, item.site, item.minutes.map { "\($0) min" }].compactMap(\.self).joined(separator: "  ·  ") : nil
             let folder = URL(filePath: shelf.library.folder())
             let rendered = try await Shelf.offMain { Renderer.render(book, set: set, folder: folder, byline: byline) }
-            model = ReaderModel(item: item, rendered: rendered, shelf: shelf)
+            guard !Task.isCancelled else { return }
+            model = ReaderModel(item: shelf.item(item.id) ?? item, rendered: rendered, shelf: shelf)
         } catch {
             failed = Shelf.words(error)
         }
+    }
+
+    /// What the text is drawn from: a new look or Light and Dark changing redraws it at the place.
+    private struct Setting: Equatable {
+        let id: String
+        let look: Look
+        let dark: Bool
     }
 
     /// Reading's look: Light and Dark follow the system's appearance; a paper tone is its own.

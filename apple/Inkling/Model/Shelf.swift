@@ -13,6 +13,8 @@ final class Shelf {
     /// Fetches saved pages and their pictures.
     let session: URLSession
     private(set) var items: [Item]
+    /// How reading looks, kept in `settings.json` beside the GPUI app's.
+    private(set) var look: Look
     /// A failure to show the reader, in Rust's own words.
     var failure: String?
     @ObservationIgnored private var places: [String: (chapter: Int, fraction: Double)] = [:]
@@ -23,6 +25,7 @@ final class Shelf {
         self.session = session
         library = try Library.open(data: folder.path)
         looks = Looks.open(data: folder.path)
+        look = looks.reading()
         items = library.items()
     }
 
@@ -159,6 +162,12 @@ final class Shelf {
 
     func setHighlights(_ id: String, _ all: [Passage]) {
         attempt { try library.setHighlights(id: id, all: all) }
+    }
+
+    /// Keeps reading's look, as core clamps it.
+    func setLook(_ look: Look) {
+        attempt { try looks.setReading(look: look) }
+        self.look = looks.reading()
     }
 
     private func attempt(_ work: () throws -> Void) {

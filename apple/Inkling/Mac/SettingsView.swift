@@ -1,12 +1,17 @@
 #if os(macOS)
 import SwiftUI
 
-/// The Settings window: where the library lives.
+/// The Settings window: how reading looks, and where the library lives.
 struct SettingsView: View {
     @Environment(Shelf.self) private var shelf
 
     var body: some View {
         TabView {
+            Tab("Reading", systemImage: "textformat.size") {
+                AppearancePanel()
+                    .frame(width: 400)
+                    .padding(.vertical, 8)
+            }
             Tab("Library", systemImage: "books.vertical") {
                 Form {
                     LabeledContent("Folder") {
@@ -22,9 +27,9 @@ struct SettingsView: View {
                     LabeledContent("Items", value: "\(shelf.items.count)")
                 }
                 .formStyle(.grouped)
+                .frame(width: 520, height: 160)
             }
         }
-        .frame(width: 520, height: 220)
     }
 }
 #endif

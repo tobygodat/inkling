@@ -314,24 +314,7 @@ nonisolated struct Renderer {
     }
 
     private func font(size: CGFloat, weight: PlatformFont.Weight = .regular, italic: Bool = false) -> PlatformFont {
-        let family = set.face
-        if family == "Source Serif 4" {
-            let name = weight == .regular ? (italic ? Fonts.serifItalic : Fonts.serif) : Fonts.serifSemibold
-            return PlatformFont(name: name, size: size) ?? .systemFont(ofSize: size)
-        }
-        let plain = PlatformFontDescriptor(fontAttributes: [.family: family])
-        #if os(macOS)
-        var traits: NSFontDescriptor.SymbolicTraits = []
-        if italic { traits.insert(.italic) }
-        if weight != .regular { traits.insert(.bold) }
-        let descriptor = plain.withSymbolicTraits(traits)
-        return PlatformFont(descriptor: descriptor, size: size) ?? PlatformFont(name: Fonts.serif, size: size) ?? .systemFont(ofSize: size)
-        #else
-        var traits: UIFontDescriptor.SymbolicTraits = []
-        if italic { traits.insert(.traitItalic) }
-        if weight != .regular { traits.insert(.traitBold) }
-        return PlatformFont(descriptor: plain.withSymbolicTraits(traits) ?? plain, size: size)
-        #endif
+        Fonts.reading(set.face, size: size, bold: weight != .regular, italic: italic)
     }
 
     private func interface(size: CGFloat) -> PlatformFont {

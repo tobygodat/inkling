@@ -32,6 +32,13 @@ struct InklingCommands: Commands {
                 .keyboardShortcut("h", modifiers: [.command, .shift])
                 .disabled(reader == nil)
         }
+        CommandGroup(after: .toolbar) {
+            Button("Bigger Text") { resize(1) }
+                .keyboardShortcut("+")
+            Button("Smaller Text") { resize(-1) }
+                .keyboardShortcut("-")
+            Divider()
+        }
         CommandGroup(before: .sidebar) {
             ForEach(Array(Section.allCases.enumerated()), id: \.element) { index, section in
                 Button(section.title) { navigator.section = section }
@@ -39,6 +46,12 @@ struct InklingCommands: Commands {
             }
             Divider()
         }
+    }
+
+    private func resize(_ by: Int) {
+        var look = shelf.look
+        look.textSize = UInt16(clamping: Int(look.textSize) + by)
+        shelf.setLook(look)
     }
 }
 #endif

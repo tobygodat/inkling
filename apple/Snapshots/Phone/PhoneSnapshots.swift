@@ -30,6 +30,16 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             highlight(app, in: reader)
             shoot("\(name)-reader-highlight")
             XCTAssertEqual(highlights(app), 1, "the passage is highlighted")
+
+            app.buttons["appearance"].tap()
+            let sepia = app.buttons["tone-sepia"]
+            XCTAssertTrue(sepia.waitForExistence(timeout: 5))
+            sepia.tap()
+            sleep(1)
+            shoot("\(name)-reader-appearance")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+            sleep(1)
+            shoot("\(name)-reader-sepia")
             app.navigationBars.buttons.element(boundBy: 0).tap()
 
             row(app, "Self-Reliance").swipeLeft()
@@ -58,6 +68,9 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             row(again, "An Apology for Idlers").tap()
             XCTAssertTrue(again.textViews["reader"].waitForExistence(timeout: 10))
             XCTAssertEqual(highlights(again), 1, "the highlight is kept through a relaunch")
+            again.buttons["appearance"].tap()
+            XCTAssertTrue(again.buttons["tone-sepia"].waitForExistence(timeout: 5))
+            XCTAssertTrue(again.buttons["tone-sepia"].isSelected, "the paper is kept through a relaunch")
             again.terminate()
         }
     }
