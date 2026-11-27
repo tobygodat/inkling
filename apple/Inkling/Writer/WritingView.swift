@@ -175,17 +175,25 @@ struct WritingView: View {
         }
         #endif
         .task(id: documentId) {
-            if model?.id == documentId { return }
+            if let existing = model, existing.id == documentId {
+                shelf.activeWriter = existing
+                return
+            }
             model?.saveNow()
             let loaded = shelf.readDocument(documentId)
             shelf.setLastOpenDocument(documentId)
-            model = WritingModel(id: documentId, text: loaded, shelf: shelf)
+            let created = WritingModel(id: documentId, text: loaded, shelf: shelf)
+            model = created
+            shelf.activeWriter = created
         }
         .onChange(of: phase) {
             if phase != .active { model?.saveNow() }
         }
         .onDisappear {
             model?.saveNow()
+            if shelf.activeWriter === model {
+                shelf.activeWriter = nil
+            }
         }
     }
 

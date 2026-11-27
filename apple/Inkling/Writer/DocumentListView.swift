@@ -75,8 +75,20 @@ struct DocumentListView: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: shelf.canUndoDeleteDocument)
+        #if os(iOS)
+        .refreshable {
+            if shelf.account.signedIn {
+                await shelf.account.syncNowAsync()
+            }
+        }
+        #endif
         .navigationTitle("Writing")
         .toolbar {
+            #if os(iOS)
+            ToolbarItem(placement: .topBarLeading) {
+                PhoneSettingsButton()
+            }
+            #endif
             ToolbarItem(placement: .primaryAction) {
                 Button("New Document", systemImage: "square.and.pencil") { createAndOpen() }
                     .accessibilityIdentifier("new-document")

@@ -53,7 +53,7 @@ final class MacSnapshots {
                 try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
             }
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
-            try await shoot(SettingsView().environment(shelf), "\(name)-settings", appearance, size: CGSize(width: 440, height: 400))
+            try await shoot(SettingsView(initialTab: .reading).environment(shelf), "\(name)-settings", appearance, size: CGSize(width: 440, height: 400))
         }
     }
 
@@ -349,6 +349,130 @@ final class MacSnapshots {
         }
         fputs(String(format: "MAC_TYPING_BENCH samples=%d fastest=%.2fms median=%.2fms worst=%.2fms\n", samples.count, fastestMs, medianMs, worstMs), stderr)
         #expect(medianMs < 16.6, "median keystroke-to-painted time stays under one 60fps frame: \(medianMs) ms")
+    }
+
+    @Test func signInSyncInboxFeedsAndReadwise() async throws {
+        let syncRoot = data.appending(path: "sync-proof")
+        let serverFile = syncRoot.appending(path: "fake-server.json")
+        let macDir = syncRoot.appending(path: "mac")
+        let phoneDir = syncRoot.appending(path: "phone")
+        try FileManager.default.createDirectory(at: syncRoot, withIntermediateDirectories: true)
+
+        let macShelf = try Shelf(folder: macDir, fakeServer: serverFile)
+        let phoneShelf = try Shelf(folder: phoneDir, fakeServer: serverFile)
+        #expect(!macShelf.account.signedIn, "starts signed out")
+
+        // 1. Render signed-out Account settings in Light and Dark.
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            try await shoot(SettingsView(initialTab: .account).environment(macShelf), "\(name)-sign-in", appearance, size: CGSize(width: 560, height: 420))
+        }
+
+        // 2. Stage Worker articles (feeds -> Inbox, newsletter -> Inbox, saved link -> Queue).
+        let body = String(repeating: "Software that keeps your data on your own device remains fast offline and respects the reader's attention. ", count: 8)
+        let feedOne = """
+        <!doctype html><html><head><title>Notes on Local-First Software</title>
+        <meta property="og:site_name" content="Ink &amp; Switch"><meta name="author" content="Martin Kleppmann">
+        <meta name="description" content="Keeping your writing and reading library on your own devices while syncing quietly."></head>
+        <body><article><h1>Notes on Local-First Software</h1><p>\(body)</p><p>\(body)</p></article></body></html>
+        """
+        let feedTwo = """
+        <!doctype html><html><head><title>On Keeping a Commonplace Book</title>
+        <meta property="og:site_name" content="The Marginalian"><meta name="author" content="Maria Popova">
+        <meta name="description" content="Collecting passages and reflections over years of attentive reading."></head>
+        <body><article><h1>On Keeping a Commonplace Book</h1><p>\(body)</p></article></body></html>
+        """
+        let newsletter = """
+        <!doctype html><html><head><title>Sunday Reading Dispatch</title>
+        <meta property="og:site_name" content="Weekly Letters"><meta name="author" content="Weekly Letters">
+        <meta name="description" content="Three essays from the week worth reading without hurry."></head>
+        <body><article><h1>Sunday Reading Dispatch</h1><p>\(body)</p></article></body></html>
+        """
+        let saved = """
+        <!doctype html><html><head><title>A Field Guide to Quiet Tools</title>
+        <meta property="og:site_name" content="Craft Notes"><meta name="author" content="Toby">
+        <meta name="description" content="Why restrained interfaces leave room for thought."></head>
+        <body><article><h1>A Field Guide to Quiet Tools</h1><p>\(body)</p></article></body></html>
+        """
+        _ = stageFakeIncoming(serverFile: serverFile.path, source: "feed", destination: "inbox", url: "https://inkandswitch.example/local-first", title: "Notes on Local-First Software", html: feedOne)
+        _ = stageFakeIncoming(serverFile: serverFile.path, source: "feed", destination: "inbox", url: "https://marginalian.example/commonplace", title: "On Keeping a Commonplace Book", html: feedTwo)
+        _ = stageFakeIncoming(serverFile: serverFile.path, source: "newsletter", destination: "inbox", url: "https://tobygodat.com/newsletters/sunday", title: "Sunday Reading Dispatch", html: newsletter)
+        _ = stageFakeIncoming(serverFile: serverFile.path, source: "save", destination: "queue", url: "https://craft.example/quiet-tools", title: "A Field Guide to Quiet Tools", html: saved)
+
+        // 3. Sign in against the fake server; sync parses staged articles into Inbox and Queue.
+        let signedIn = await macShelf.account.signInAsync()
+        #expect(signedIn && macShelf.account.signedIn, "Mac signs in with Google via fake server")
+        #expect(macShelf.inbox.count == 3, "feed items and newsletter land in Inbox: \(macShelf.inbox.map(\.title))")
+        #expect(macShelf.queue.map(\.title) == ["A Field Guide to Quiet Tools"], "saved link lands in Queue")
+
+        // 4. Render Inbox with feed items in Light and Dark.
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let navigator = Navigator()
+            navigator.section = .inbox
+            navigator.selection = macShelf.inbox.first { $0.title == "Notes on Local-First Software" }?.id
+            try await shoot(RootView().environment(macShelf).environment(navigator), "\(name)-inbox-feeds", appearance)
+        }
+
+        // 5. Follow/unfollow feeds and connect Readwise (never storing the Readwise token on device).
+        #expect(await macShelf.account.followFeed(url: "https://daringfireball.net/feeds/main"))
+        #expect(await macShelf.account.followFeed(url: "https://stratechery.com/feed/"))
+        #expect(await macShelf.account.followFeed(url: "https://temporary.example/rss.xml"))
+        #expect(macShelf.account.feeds.count == 3)
+        let tempFeed = try #require(macShelf.account.feeds.first { $0.title == "temporary.example" })
+        await macShelf.account.unfollowFeed(tempFeed)
+        #expect(macShelf.account.feeds.count == 2 && !macShelf.account.feeds.contains { $0.id == tempFeed.id })
+
+        let secretToken = "rw-mac-secret-token-never-stored-locally"
+        #expect(await macShelf.account.connectReadwise(token: secretToken))
+        #expect(macShelf.account.readwiseConnected)
+        for file in Self.allFiles(under: macDir) {
+            let bytes = (try? Data(contentsOf: file)) ?? Data()
+            #expect(!String(decoding: bytes, as: UTF8.self).contains(secretToken), "Readwise token must never be stored on device: \(file.path)")
+        }
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            try await shoot(SettingsView(initialTab: .account).environment(macShelf), "\(name)-settings-account", appearance, size: CGSize(width: 560, height: 440))
+            try await shoot(SettingsView(initialTab: .feeds).environment(macShelf), "\(name)-settings-feeds", appearance, size: CGSize(width: 560, height: 440))
+        }
+
+        // 6. Round-trip a document, article, reading position and highlight to a second device via the fake server.
+        let docId = macShelf.createDocument()
+        let firstDraft = "# Synced Essay\n\nWritten on Mac and delivered to iPhone."
+        try macShelf.saveDocument(id: docId, text: firstDraft, triggerSync: false)
+        let savedArticle = try #require(macShelf.queue.first { $0.title == "A Field Guide to Quiet Tools" })
+        macShelf.keepPlace(savedArticle.id, chapter: 0, fraction: 0.45)
+        macShelf.flushPlaces(triggerSync: false)
+        let passage = Passage(chapter: 0, start: 2, end: 29, words: "A Field Guide to Quiet Tools", made: 1_700_000_000_000)
+        macShelf.setHighlights(savedArticle.id, [passage])
+        _ = await macShelf.account.syncNowAsync()
+
+        #expect(await phoneShelf.account.signInAsync())
+        #expect(phoneShelf.readDocument(docId) == firstDraft, "document written on device A arrives on device B")
+        #expect(phoneShelf.inbox.count == 3, "Inbox articles sync across devices with inbox flag intact")
+        let phoneArticle = try #require(phoneShelf.queue.first { $0.id == savedArticle.id })
+        #expect(abs(phoneArticle.fraction - 0.45) < 0.01, "reading position syncs across devices")
+        #expect(phoneShelf.highlights(savedArticle.id) == [passage], "highlights sync across devices")
+        #expect(phoneShelf.account.readwiseConnected, "Readwise connection status syncs")
+
+        // Edit on device B and round-trip back to device A.
+        let editedDraft = "# Synced Essay\n\nUpdated on iPhone and synced back to Mac."
+        try phoneShelf.saveDocument(id: docId, text: editedDraft, triggerSync: false)
+        _ = await phoneShelf.account.syncNowAsync()
+        _ = await macShelf.account.syncNowAsync()
+        #expect(macShelf.readDocument(docId) == editedDraft, "document edit round-trips back to device A")
+
+        // Move an Inbox item to Queue, disconnect Readwise, and sign out.
+        let feedItem = try #require(macShelf.inbox.first { $0.title == "Notes on Local-First Software" })
+        macShelf.setInbox(feedItem, false)
+        #expect(!macShelf.inbox.contains { $0.id == feedItem.id } && macShelf.queue.contains { $0.id == feedItem.id })
+        await macShelf.account.disconnectReadwise()
+        #expect(!macShelf.account.readwiseConnected)
+        macShelf.account.signOut()
+        #expect(!macShelf.account.signedIn)
+    }
+
+    private static func allFiles(under folder: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        return enumerator.compactMap { $0 as? URL }.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
     }
 
     private func root(_ navigator: Navigator) -> some View {

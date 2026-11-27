@@ -16,6 +16,7 @@ path = "uniffi-bindgen.rs"
 [dependencies]
 inkling-books = { workspace = true }
 inkling-core = { workspace = true }
+inkling-sync = { workspace = true }
 uniffi = { version = "0.33", features = ["cli"] }
 
 [dev-dependencies]

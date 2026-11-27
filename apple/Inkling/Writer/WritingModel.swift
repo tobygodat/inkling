@@ -111,17 +111,27 @@ final class WritingModel {
     }
 
     /// Writes pending edits immediately (on close, document switch, or app backgrounding).
-    func saveNow() {
+    func saveNow(triggerSync: Bool = true) {
         saveTask?.cancel()
         saveTask = nil
         guard saved != .saved else { return }
         syncFromEditor()
         do {
-            try shelf.saveDocument(id: id, text: text)
+            try shelf.saveDocument(id: id, text: text, triggerSync: triggerSync)
             saved = .saved
         } catch {
             saved = .failed(Shelf.words(error))
         }
+    }
+
+    /// Replaces the open document's text when sync brought a newer version from another device.
+    func reloadFromSync(_ newText: String) {
+        guard saved == .saved, !isAsking, !isReviewing, newText != text else { return }
+        text = newText
+        let t = documentTitle(text: newText)
+        title = t.isEmpty ? "Untitled" : t
+        wordCount = Self.countWords(newText)
+        externalRevision += 1
     }
 
     /// Replaces `text` programmatically (e.g. applying accepted review edits) and saves it.

@@ -208,6 +208,176 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
     }
 
+    /// Headless proof of Google sign-in, fake-server sync, Inbox with feed items, follow/unfollow
+    /// feeds, Readwise connection (token never stored on device) and document round-trip in Light and Dark.
+    @MainActor func testSignInSyncInboxFeedsAndReadwise() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        for name in ["light", "dark"] {
+            appearance = name
+            let dir = "\(base)/sync-\(name)"
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let serverPath = "\(dir)/fake-server.json"
+            try seedFakeServer(at: serverPath)
+
+            let app = launch(data: dir, demo: false)
+            let settingsButton = app.buttons["settings"].firstMatch
+            XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "Settings button is reachable")
+            settingsButton.tap()
+
+            // 1. Signed-out state.
+            let signIn = app.buttons["sign-in-google"]
+            XCTAssertTrue(signIn.waitForExistence(timeout: 5), "Sign in with Google button shows when signed out")
+            sleep(1)
+            shoot("\(name)-sign-in")
+
+            // 2. Sign in against the fake server (auto-syncs staged articles and remote doc).
+            signIn.tap()
+            let signOut = app.buttons["sign-out"]
+            XCTAssertTrue(signOut.waitForExistence(timeout: 10), "Sign in succeeds and shows signed-in settings")
+
+            // 3. Connect Readwise (token goes only to the server).
+            let rwToken = "rw-iphone-test-token-never-local"
+            app.buttons["readwise-connect"].tap()
+            let tokenField = app.secureTextFields["readwise-token-field"]
+            XCTAssertTrue(tokenField.waitForExistence(timeout: 5))
+            tokenField.tap()
+            tokenField.typeText(rwToken)
+            app.buttons["readwise-submit"].tap()
+            XCTAssertTrue(app.buttons["readwise-disconnect"].waitForExistence(timeout: 5), "Readwise connects")
+
+            // 4. Follow two feeds and unfollow one.
+            let feedField = app.textFields["feed-url-field"]
+            XCTAssertTrue(feedField.waitForExistence(timeout: 5))
+            feedField.tap()
+            feedField.typeText("https://daringfireball.net/feeds/main")
+            app.buttons["follow-feed"].tap()
+            XCTAssertTrue(app.buttons["unfollow-feed-daringfireball.net"].waitForExistence(timeout: 5), "first feed appears")
+
+            feedField.tap()
+            feedField.typeText("https://temp-feed.example/rss.xml")
+            app.buttons["follow-feed"].tap()
+            let unfollowTemp = app.buttons["unfollow-feed-temp-feed.example"]
+            XCTAssertTrue(unfollowTemp.waitForExistence(timeout: 5), "second feed appears")
+            unfollowTemp.tap()
+            XCTAssertFalse(unfollowTemp.waitForExistence(timeout: 2), "unfollowed feed is removed")
+
+            app.collectionViews.firstMatch.swipeDown()
+            sleep(1)
+            shoot("\(name)-settings-account")
+
+            // Verify Readwise token is not stored anywhere in the app's data folder.
+            let files = FileManager.default.enumerator(atPath: dir)?.compactMap { $0 as? String } ?? []
+            for rel in files where rel != "fake-server.json" {
+                let path = "\(dir)/\(rel)"
+                if let data = FileManager.default.contents(atPath: path) {
+                    XCTAssertFalse(String(decoding: data, as: UTF8.self).contains(rwToken), "Readwise token must never be stored in \(rel)")
+                }
+            }
+
+            app.buttons["settings-done"].tap()
+            sleep(1)
+
+            // 5. Verify feed items landed in Inbox and render Inbox in Light and Dark.
+            app.tabBars.buttons["Inbox"].tap()
+            XCTAssertTrue(row(app, "Notes on Local-First Software").waitForExistence(timeout: 10), "feed item lands in Inbox")
+            XCTAssertTrue(row(app, "Sunday Reading Dispatch").exists, "newsletter lands in Inbox")
+            sleep(1)
+            shoot("\(name)-inbox-feeds")
+
+            // 6. Verify saved link landed in Queue.
+            app.tabBars.buttons["Queue"].tap()
+            XCTAssertTrue(row(app, "A Field Guide to Quiet Tools").waitForExistence(timeout: 5), "saved link lands in Queue")
+
+            // 7. Verify remote document arrived in Writing, then write a new document and sync it back to fake-server.json.
+            app.tabBars.buttons["Writing"].tap()
+            XCTAssertTrue(app.buttons["doc-Synced from Mac"].firstMatch.waitForExistence(timeout: 5), "remote document arrives on iPhone")
+            app.buttons["new-document"].tap()
+            let editor = app.textViews["editor"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 10))
+            editor.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)).tap()
+            editor.typeText("# Written on iPhone\n\nRound-trip through the fake server.")
+            sleep(2)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            sleep(1)
+            app.buttons["settings"].firstMatch.tap()
+            let syncNow = app.buttons["sync-now"]
+            XCTAssertTrue(syncNow.waitForExistence(timeout: 5))
+            syncNow.tap()
+            sleep(2)
+
+            let serverJSON = try String(contentsOfFile: serverPath, encoding: .utf8)
+            XCTAssertTrue(serverJSON.contains("Written on iPhone"), "document written on iPhone round-trips to fake-server.json")
+
+            app.terminate()
+        }
+    }
+
+    private func seedFakeServer(at path: String) throws {
+        let body = String(repeating: "Software that keeps your data on your own device remains fast offline and respects the reader's attention. ", count: 8)
+        let feedHTML = """
+        <!doctype html><html><head><title>Notes on Local-First Software</title>
+        <meta property="og:site_name" content="Ink &amp; Switch"><meta name="author" content="Martin Kleppmann">
+        <meta name="description" content="Keeping your writing and reading library on your own devices while syncing quietly."></head>
+        <body><article><h1>Notes on Local-First Software</h1><p>\(body)</p></article></body></html>
+        """
+        let newsletterHTML = """
+        <!doctype html><html><head><title>Sunday Reading Dispatch</title>
+        <meta property="og:site_name" content="Weekly Letters"><meta name="author" content="Weekly Letters">
+        <meta name="description" content="Three essays from the week worth reading without hurry."></head>
+        <body><article><h1>Sunday Reading Dispatch</h1><p>\(body)</p></article></body></html>
+        """
+        let savedHTML = """
+        <!doctype html><html><head><title>A Field Guide to Quiet Tools</title>
+        <meta property="og:site_name" content="Craft Notes"><meta name="author" content="Toby">
+        <meta name="description" content="Why restrained interfaces leave room for thought."></head>
+        <body><article><h1>A Field Guide to Quiet Tools</h1><p>\(body)</p></article></body></html>
+        """
+        let payload: [String: Any] = [
+            "documents": [
+                "remote-mac-note": [
+                    "text": "# Synced from Mac\n\nThis draft crossed the fake server.",
+                    "saved_at": 1_700_000_000_000,
+                    "device": "mac-demo",
+                    "version": 1,
+                    "deleted": false,
+                ],
+            ],
+            "files": [
+                "incoming/feed-local-first": Data(feedHTML.utf8).base64EncodedString(),
+                "incoming/newsletter-sunday": Data(newsletterHTML.utf8).base64EncodedString(),
+                "incoming/save-quiet-tools": Data(savedHTML.utf8).base64EncodedString(),
+            ],
+            "incoming": [
+                [
+                    "id": "feed-local-first",
+                    "source": "feed",
+                    "destination": "inbox",
+                    "url": "https://inkandswitch.example/local-first",
+                    "title": "Notes on Local-First Software",
+                    "state": "waiting",
+                ],
+                [
+                    "id": "newsletter-sunday",
+                    "source": "newsletter",
+                    "destination": "inbox",
+                    "url": "https://tobygodat.com/newsletters/sunday",
+                    "title": "Sunday Reading Dispatch",
+                    "state": "waiting",
+                ],
+                [
+                    "id": "save-quiet-tools",
+                    "source": "save",
+                    "destination": "queue",
+                    "url": "https://craft.example/quiet-tools",
+                    "title": "A Field Guide to Quiet Tools",
+                    "state": "waiting",
+                ],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+        try data.write(to: URL(filePath: path))
+    }
+
     /// Measures keystroke-to-painted-frame latency typing 50 characters into a 5,000-word draft on
     /// the Simulator (apples-to-apples with `ios/bench.sh`). Driven by `apple/bench.sh`.
     @MainActor func testTypingBenchmark5000Words() throws {

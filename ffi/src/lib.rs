@@ -14,6 +14,7 @@ use inkling_books::{self as books, BookId, Entry, Format, Highlight, Position};
 mod documents;
 mod look;
 mod review;
+mod sync;
 
 pub use documents::{DocInfo, DocumentStore, document_title};
 pub use look::{Colors, Look, Looks, Tone, faces};
@@ -22,6 +23,7 @@ pub use review::{
     ReviewStats, RevisionListener, RevisionSnapshot, RevisionState, TextEdit,
     provider_default_model, provider_label,
 };
+pub use sync::{FeedInfo, PendingSync, SignInSession, SyncClient, SyncReport, stage_fake_incoming};
 
 uniffi::setup_scaffolding!();
 
@@ -40,6 +42,12 @@ pub enum InklingError {
     MissingKey { provider: String },
     /// The Keychain refused to save or remove a secret.
     Keychain { message: String },
+    /// Sync or an account request failed.
+    Sync { message: String },
+    /// The server sign-in has ended or was revoked.
+    SignedOut,
+    /// Sign-in was cancelled before finishing.
+    Cancelled,
 }
 
 impl std::fmt::Display for InklingError {
@@ -48,11 +56,14 @@ impl std::fmt::Display for InklingError {
             InklingError::Storage { message }
             | InklingError::Import { message }
             | InklingError::InvalidRequest { message }
-            | InklingError::Keychain { message } => f.write_str(message),
+            | InklingError::Keychain { message }
+            | InklingError::Sync { message } => f.write_str(message),
             InklingError::NotFound { id } => write!(f, "Nothing in Inkling has the id {id}."),
             InklingError::MissingKey { provider } => {
                 write!(f, "Add your {provider} API key in Settings before asking.")
             }
+            InklingError::SignedOut => write!(f, "The sign-in has ended. Sign in again."),
+            InklingError::Cancelled => write!(f, "The sign-in wasn’t finished."),
         }
     }
 }
@@ -117,6 +128,8 @@ pub struct Item {
     pub excerpt: Option<String>,
     /// An article's first picture's full path, for one that has a picture.
     pub picture: Option<String>,
+    /// Whether this item sits in the Inbox (from a feed or newsletter) rather than the Queue.
+    pub inbox: bool,
 }
 
 /// Where an article came from.
@@ -266,6 +279,14 @@ impl Library {
         Ok(())
     }
 
+    /// Marks an item as in the Inbox, or moves it out to the Queue when `inbox` is false.
+    pub fn set_inbox(&self, id: String, inbox: bool) -> Result<(), InklingError> {
+        let mut library = self.lock();
+        let id = known(&library, id)?;
+        library.set_inbox(&id, inbox)?;
+        Ok(())
+    }
+
     /// Notes that a book was just opened, for Keep reading.
     pub fn opened(&self, id: String) -> Result<(), InklingError> {
         let mut library = self.lock();
@@ -290,7 +311,7 @@ impl Library {
 }
 
 impl Library {
-    fn lock(&self) -> MutexGuard<'_, books::Library> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, books::Library> {
         // A panic while the lock was held leaves the index as last saved, which is still whole.
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -322,6 +343,7 @@ fn item(library: &books::Library, e: &Entry) -> Item {
         words: e.words as u64,
         excerpt: e.excerpt.clone(),
         picture: library.picture_path(e).map(|p| p.to_string_lossy().into_owned()),
+        inbox: e.inbox,
     }
 }
 

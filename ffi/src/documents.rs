@@ -115,8 +115,12 @@ impl DocumentStore {
 }
 
 impl DocumentStore {
-    fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
+    pub(crate) fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
         self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn store(&self) -> &Documents {
+        &self.docs
     }
 }
 

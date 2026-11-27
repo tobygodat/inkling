@@ -342,11 +342,20 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
             let Some(url) = input["url"].as_str().map(str::trim).filter(|u| !u.is_empty()) else {
                 return status(400, json!({ "error": "Send a JSON body with the feed’s `url`." }));
             };
+            let Some((scheme, rest)) = url.split_once("://").filter(|(s, _)| *s == "http" || *s == "https") else {
+                return status(400, json!({ "error": "Send a full http(s) feed address." }));
+            };
+            let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+            if host.is_empty() || !host.contains('.') {
+                return status(400, json!({ "error": "That doesn’t look like a web address." }));
+            }
             let id = inkling_books::import::book_id(url.as_bytes()).0[..32].to_string();
             if let Some(existing) = s.feeds.iter().find(|f| f.id == id) {
                 return ok(serde_json::to_value(existing).unwrap_or_default());
             }
-            let row = FeedRow { id, url: url.into(), title: url.into(), site_url: None, added_at: 1, checked_at: 0, last_error: None };
+            let title = host.strip_prefix("www.").unwrap_or(host).to_string();
+            let site_url = Some(format!("{scheme}://{host}"));
+            let row = FeedRow { id, url: url.into(), title, site_url, added_at: crate::now_millis(), checked_at: 0, last_error: None };
             s.feeds.push(row.clone());
             status(201, serde_json::to_value(row).unwrap_or_default())
         }
