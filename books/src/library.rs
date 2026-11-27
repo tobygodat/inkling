@@ -60,6 +60,9 @@ pub struct Entry {
     /// An article's first picture, its path relative to the library's folder, for its row.
     #[serde(default)]
     pub picture: Option<String>,
+    /// Whether this item landed in the Inbox (from a feed or newsletter) rather than the Queue.
+    #[serde(default)]
+    pub inbox: bool,
 }
 
 impl Entry {
@@ -172,6 +175,7 @@ impl Library {
                     words: book.words,
                     excerpt: book.excerpt.clone(),
                     picture: book.picture.clone(),
+                    inbox: book.inbox,
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -292,6 +296,16 @@ impl Library {
         self.save()
     }
 
+    /// Marks an item as in the Inbox, or moves it out to the Queue when `inbox` is false.
+    pub fn set_inbox(&mut self, id: &BookId, inbox: bool) -> io::Result<()> {
+        let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(()) };
+        if entry.inbox == inbox {
+            return Ok(());
+        }
+        entry.inbox = inbox;
+        self.save()
+    }
+
     /// Records a book another device added, whose parsed file is already stored here. A book
     /// already in the library is left as it is.
     pub fn record(&mut self, entry: Entry) -> io::Result<()> {
@@ -358,6 +372,7 @@ pub struct Prepared {
     pub words: usize,
     pub excerpt: Option<String>,
     pub picture: Option<String>,
+    pub inbox: bool,
 }
 
 /// Reads, parses and stores the book at `path` under `dir`, without touching the index, so it
@@ -485,7 +500,7 @@ fn store_cover(dir: &Path, id: &BookId, bytes: &[u8]) -> Option<String> {
 }
 
 impl Prepared {
-    fn of(book: &Book) -> Prepared {
+    pub fn of(book: &Book) -> Prepared {
         Prepared {
             id: book.id.clone(),
             title: book.title.clone(),
@@ -499,6 +514,7 @@ impl Prepared {
             words: book.chapters.iter().map(|c| c.text.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count()).sum(),
             excerpt: book.source.as_ref().and_then(|s| s.excerpt.clone()),
             picture: (book.format == Format::Article).then(|| book.chapters.iter().find_map(|c| first_picture(&c.text))).flatten(),
+            inbox: false,
         }
     }
 }

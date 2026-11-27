@@ -11,7 +11,9 @@
   "preview_urls": false,
   "vars": {
     // The Worker's own address, the OAuth issuer. Set to the deployed workers.dev URL.
-    "PUBLIC_URL": "https://inkling-server.tobygodat.workers.dev"
+    "PUBLIC_URL": "https://inkling-server.tobygodat.workers.dev",
+    // The address Cloudflare Email Routing delivers newsletters to (TOB-554).
+    "NEWSLETTER_ADDRESS": "read@tobygodat.com"
   },
   "d1_databases": [
     {

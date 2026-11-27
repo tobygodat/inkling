@@ -21,6 +21,10 @@ impl<'a> Api<'a> {
         Api { transport, base: server.trim_end_matches('/').to_string(), token }
     }
 
+    pub(crate) fn transport(&self) -> &'a dyn Transport {
+        self.transport
+    }
+
     /// Whatever the server answered, 401 aside, which means the sign-in has ended.
     pub fn answer(&self, method: Method, path: &str, body: Body) -> Result<Response, Error> {
         let bearer = format!("Bearer {}", self.token);

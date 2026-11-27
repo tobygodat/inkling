@@ -1,20 +1,23 @@
-//! The books and reading positions in step, and Readwise uploads into the library.
+//! The books, articles, reading positions, highlights and incoming items in step with the server.
 //!
-//! A book's id is the hash of its file and books are only added, so books never conflict: each
-//! device sends up what the server lacks and brings down what it lacks. A position carries when
-//! it moved, and the later one wins in both directions, so it follows the device read last.
+//! A book's id is the hash of its file (or canonical URL for an article) and books are only added,
+//! so books never conflict: each device sends up what the server lacks and brings down what it
+//! lacks. A position carries when it moved, and the later one wins in both directions, so it
+//! follows the device read last. Incoming raw HTML pages (saved URLs, feed items and newsletters)
+//! are parsed here with `inkling-books` (`prepare_article`, TOB-534) so there is only one parser.
 //!
 //! [`sync`] runs off the UI thread. It stores the parsed files and covers it brings down (they
 //! are named by their hash, so writing them is safe from any thread) and leaves the index,
-//! `library.json`, to the app, which records [`Outcome`] on the UI thread.
+//! `library.json`, and highlights files to the app, which records [`Outcome`] on the UI thread.
 
 use crate::api::{Api, Body};
 use crate::transport::MAX_FILE_BYTES;
 use crate::{Error, Method};
 use inkling_books::library::{book_path, write_atomic};
-use inkling_books::{Book, BookId, Entry, Format, Library, Position, Prepared, import};
+use inkling_books::{Book, BookId, Entry, Format, Highlight, Library, Position, Prepared, highlights, import};
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -23,6 +26,8 @@ struct Listing {
     books: Vec<Row>,
     #[serde(default)]
     inbox: Vec<InboxItem>,
+    #[serde(default)]
+    incoming: Vec<IncomingItem>,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +45,8 @@ struct Row {
     fraction: f32,
     #[serde(default)]
     position_at: u64,
+    #[serde(default)]
+    inbox: bool,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +56,35 @@ struct InboxItem {
     state: String,
 }
 
+#[derive(Deserialize)]
+struct IncomingItem {
+    id: String,
+    destination: String,
+    url: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    site: Option<String>,
+    state: String,
+}
+
+#[derive(Deserialize)]
+struct HighlightsListing {
+    highlights: Vec<ServerHighlight>,
+}
+
+#[derive(Deserialize)]
+struct ServerHighlight {
+    book_id: String,
+    chapter: usize,
+    start: usize,
+    end: usize,
+    words: String,
+    made: u64,
+}
+
 /// What the app records in its library on the UI thread.
 #[derive(Debug, Default, PartialEq)]
 pub struct Outcome {
@@ -56,8 +92,10 @@ pub struct Outcome {
     pub books: Vec<Entry>,
     /// Places read on another device after this one, and when.
     pub positions: Vec<(BookId, Position, u64)>,
-    /// Readwise uploads, parsed and stored.
+    /// Readwise uploads, saved URLs, feed items and newsletters, parsed and stored.
     pub imported: Vec<Prepared>,
+    /// Merged highlights to save for books that received highlights from another device.
+    pub highlights: Vec<(BookId, Vec<Highlight>)>,
     /// Books that couldn't go up or come down, with why. The rest carry on.
     pub problems: Vec<String>,
 }
@@ -74,7 +112,7 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
         let there = listing.books.iter().find(|b| b.id == entry.id.0);
         let sent = match there {
             None => upload(api, dir, entry),
-            Some(b) if b.cover.is_none() && entry.cover.is_some() => send_cover(api, dir, entry).and_then(|()| send_row(api, entry)),
+            Some(b) if b.cover.is_none() && entry.cover.is_some() => send_cover(api, dir, entry).and_then(|()| send_row(api, dir, entry, None)),
             Some(_) => Ok(()),
         };
         match sent {
@@ -122,6 +160,26 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
         };
         api.send(Method::Post, &format!("/v1/inbox/{}", item.readwise_id), Body::Json(settled))?;
     }
+
+    for item in listing.incoming.iter().filter(|i| i.state == "waiting") {
+        let bytes = match api.send(Method::Get, &format!("/v1/incoming/{}/file", item.id), Body::None) {
+            Ok(bytes) => bytes,
+            // Another device settled it first.
+            Err(Error::Refused { status: 404, .. }) => continue,
+            Err(e) => return Err(e),
+        };
+        let settled = match import_incoming(api, dir, item, &bytes) {
+            Ok(prepared) => {
+                let settled = json!({ "state": "imported", "book_id": prepared.id.0 });
+                out.imported.push(prepared);
+                settled
+            }
+            Err(why) => json!({ "state": "failed", "error": why }),
+        };
+        api.send(Method::Post, &format!("/v1/incoming/{}", item.id), Body::Json(settled))?;
+    }
+
+    sync_highlights(api, dir, &entries, &out.books, &mut out.highlights)?;
     Ok(out)
 }
 
@@ -135,6 +193,91 @@ fn import_upload(dir: &Path, item: &InboxItem, bytes: &[u8]) -> Result<Prepared,
     let prepared = inkling_books::prepare(dir, &file).map_err(|e| e.to_string());
     let _ = fs::remove_file(&file);
     prepared
+}
+
+/// Parses a staged HTML article (from `/save`, a feed, or a newsletter) with `inkling-books`.
+fn import_incoming(api: &Api, dir: &Path, item: &IncomingItem, bytes: &[u8]) -> Result<Prepared, String> {
+    let html = String::from_utf8_lossy(bytes);
+    let transport = api.transport();
+    let mut fetch_picture = |url: &str| {
+        if !url.starts_with("https://") && !url.starts_with("http://") {
+            return None;
+        }
+        let response = transport.send(Method::Get, url, &[], None).ok()?;
+        (200..300).contains(&response.status).then_some(response.body)
+    };
+    let mut prepared = inkling_books::prepare_article(dir, &item.url, &html, &mut fetch_picture).map_err(|e| e.to_string())?;
+    if prepared.author.is_none() {
+        prepared.author = item.author.clone();
+    }
+    if prepared.site.is_none() {
+        prepared.site = item.site.clone();
+    }
+    if prepared.title.is_empty()
+        && let Some(title) = &item.title
+    {
+        prepared.title = title.clone();
+    }
+    prepared.inbox = item.destination == "inbox";
+    Ok(prepared)
+}
+
+fn highlight_key(h: &Highlight) -> (usize, usize, usize, &str) {
+    (h.chapter, h.start, h.end, h.words.as_str())
+}
+
+/// Syncs highlights in both directions for every book on this device. Uploading pushes unsent
+/// highlights to Readwise on the server when connected.
+fn sync_highlights(
+    api: &Api,
+    dir: &Path,
+    local_entries: &[Entry],
+    downloaded: &[Entry],
+    out: &mut Vec<(BookId, Vec<Highlight>)>,
+) -> Result<(), Error> {
+    let listed: HighlightsListing = match api.json(Method::Get, "/v1/highlights", Body::None) {
+        Ok(listed) => listed,
+        // Older server without highlights sync: leave local highlights untouched.
+        Err(Error::Refused { status: 404, .. }) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let mut remote_by_book: BTreeMap<String, Vec<Highlight>> = BTreeMap::new();
+    for h in listed.highlights {
+        remote_by_book.entry(h.book_id).or_default().push(Highlight {
+            chapter: h.chapter,
+            start: h.start,
+            end: h.end,
+            words: h.words,
+            made: h.made,
+        });
+    }
+
+    for entry in local_entries.iter().chain(downloaded.iter()) {
+        let local = highlights::load(dir, &entry.id);
+        let remote = remote_by_book.get(&entry.id.0).map(Vec::as_slice).unwrap_or(&[]);
+
+        let to_upload: Vec<serde_json::Value> = local
+            .iter()
+            .filter(|h| !remote.iter().any(|r| highlight_key(r) == highlight_key(h)))
+            .map(|h| json!({ "chapter": h.chapter, "start": h.start, "end": h.end, "words": h.words, "made": h.made }))
+            .collect();
+        if !to_upload.is_empty() {
+            api.send(Method::Post, &format!("/v1/books/{}/highlights", entry.id.0), Body::Json(json!({ "highlights": to_upload })))?;
+        }
+
+        let mut merged = local;
+        let before = merged.len();
+        for r in remote {
+            if !merged.iter().any(|h| highlight_key(h) == highlight_key(r)) {
+                merged.push(r.clone());
+            }
+        }
+        if merged.len() > before {
+            merged.sort_by_key(|h| (h.chapter, h.start, h.made));
+            out.push((entry.id.clone(), merged));
+        }
+    }
+    Ok(())
 }
 
 /// The parsed file, every chapter, its images, the cover, then the row: the server refuses the
@@ -157,7 +300,7 @@ fn upload(api: &Api, dir: &Path, entry: &Entry) -> Result<(), Error> {
         api.send(Method::Put, &format!("/v1/books/{}/images/{name}", entry.id.0), Body::Bytes(&bytes))?;
     }
     send_cover(api, dir, entry)?;
-    send_row(api, entry)
+    send_row(api, dir, entry, book.source.as_ref().map(|s| s.url.as_str()))
 }
 
 fn send_cover(api: &Api, dir: &Path, entry: &Entry) -> Result<(), Error> {
@@ -166,7 +309,15 @@ fn send_cover(api: &Api, dir: &Path, entry: &Entry) -> Result<(), Error> {
     api.send(Method::Put, &format!("/v1/covers/{name}"), Body::Bytes(&bytes)).map(drop)
 }
 
-fn send_row(api: &Api, entry: &Entry) -> Result<(), Error> {
+fn send_row(api: &Api, dir: &Path, entry: &Entry, source_url: Option<&str>) -> Result<(), Error> {
+    let loaded_url;
+    let source_url = match source_url {
+        Some(url) => Some(url),
+        None => {
+            loaded_url = inkling_books::load(dir, &entry.id).ok().and_then(|b| b.source.map(|s| s.url));
+            loaded_url.as_deref()
+        }
+    };
     let row = json!({
         "title": entry.title,
         "author": entry.author,
@@ -174,6 +325,8 @@ fn send_row(api: &Api, entry: &Entry) -> Result<(), Error> {
         "chapters": entry.chapters,
         "cover": entry.cover,
         "added": entry.added,
+        "source_url": source_url,
+        "inbox": entry.inbox,
     });
     api.send(Method::Put, &format!("/v1/books/{}", entry.id.0), Body::Json(row)).map(drop)
 }
@@ -203,6 +356,7 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
         }
         _ => None,
     };
+    let meta = Prepared::of(&book);
     Ok(Entry {
         id,
         title: row.title.clone(),
@@ -215,10 +369,11 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
         opened: 0,
         position_at: row.position_at,
         archived: 0,
-        site: None,
-        words: 0,
-        excerpt: None,
-        picture: None,
+        site: meta.site,
+        words: meta.words,
+        excerpt: meta.excerpt,
+        picture: meta.picture,
+        inbox: row.inbox,
     })
 }
 
@@ -251,12 +406,16 @@ mod tests {
         Book { id, title: title.into(), author: None, format: Format::Epub, parser: inkling_books::book::PARSER, chapters: vec![Chapter { title: None, text }], source: None }
     }
 
+    fn signed_api(fake: &Fake) -> Api<'_> {
+        let begun = crate::account::begin(fake, crate::FAKE_SERVER, "inkling://callback", "test").unwrap();
+        let token = begun.finish(fake, &crate::fake_way_back(&begun.url).unwrap()).unwrap().token(fake).unwrap();
+        Api::new(fake, crate::FAKE_SERVER, token)
+    }
+
     #[test]
     fn a_book_crosses_once_and_the_place_read_last_wins_both_ways() {
         let fake = Fake::memory();
-        let begun = crate::account::begin(&fake, crate::FAKE_SERVER, "inkling://callback", "test").unwrap();
-        let token = begun.finish(&fake, &crate::fake_way_back(&begun.url).unwrap()).unwrap().token(&fake).unwrap();
-        let api = Api::new(&fake, crate::FAKE_SERVER, token);
+        let api = signed_api(&fake);
         let (mac, phone) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let walden = book("Walden");
 
@@ -285,5 +444,68 @@ mod tests {
         assert!(library.take_position(&walden.id, Position { chapter: 0, fraction: 0.75 }, later).unwrap());
         assert!(!library.take_position(&walden.id, Position { chapter: 0, fraction: 0.1 }, later).unwrap());
         assert_eq!(sync(&api, mac.path()).unwrap(), Outcome::default());
+    }
+
+    #[test]
+    fn incoming_saves_feeds_newsletters_and_highlights_sync_across_devices() {
+        let fake = Fake::memory();
+        let api = signed_api(&fake);
+        let (mac, phone) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+
+        let words = "The tide came in slowly over the flats, and the birds lifted as it reached them. ".repeat(8);
+        let article_html = format!(
+            "<!doctype html><html><head><title>Notes on the tide</title><meta property=\"og:site_name\" content=\"The Shore\">\
+             <meta name=\"author\" content=\"Ana Lima\"><meta name=\"description\" content=\"Flats at dawn.\"></head>\
+             <body><article><h1>Notes on the tide</h1><p>{words}</p><p>{words}</p></article></body></html>"
+        );
+        let newsletter_html = format!(
+            "<!doctype html><html><head><title>Sunday Dispatch</title><meta property=\"og:site_name\" content=\"Weekly Letters\">\
+             <meta name=\"author\" content=\"Weekly Letters\"></head>\
+             <body><article><h1>Sunday Dispatch</h1><p>{words}</p><p>{words}</p></article></body></html>"
+        );
+
+        fake.stage_incoming("save", "queue", "https://shore.example/tide", Some("Notes on the tide"), article_html.as_bytes());
+        fake.stage_incoming("newsletter", "inbox", "https://tobygodat.com/newsletters/abc", Some("Sunday Dispatch"), newsletter_html.as_bytes());
+
+        // Mac syncs first: parses both with inkling-books, settles incoming, and adds them locally.
+        let mut mac_lib = Library::open(mac.path()).unwrap();
+        let first = sync(&api, mac.path()).unwrap();
+        assert_eq!(first.imported.len(), 2);
+        for prepared in first.imported {
+            mac_lib.add(&prepared).unwrap();
+        }
+        let saved = mac_lib.entries().iter().find(|e| e.title == "Notes on the tide").unwrap().clone();
+        let letter = mac_lib.entries().iter().find(|e| e.title == "Sunday Dispatch").unwrap().clone();
+        assert_eq!((saved.format, saved.inbox, saved.site.as_deref()), (Format::Article, false, Some("The Shore")));
+        assert_eq!((letter.format, letter.inbox, letter.site.as_deref()), (Format::Article, true, Some("Weekly Letters")));
+
+        // Mac highlights a passage, then syncs up the parsed articles and highlight.
+        let h_mac = Highlight { chapter: 0, start: 2, end: 19, words: "Notes on the tide".into(), made: 1_700_000_000_000 };
+        mac_lib.set_highlights(&saved.id, std::slice::from_ref(&h_mac)).unwrap();
+        assert_eq!(sync(&api, mac.path()).unwrap(), Outcome::default());
+
+        // Phone syncs: downloads both articles without re-parsing and receives the highlight.
+        let mut phone_lib = Library::open(phone.path()).unwrap();
+        let on_phone = sync(&api, phone.path()).unwrap();
+        assert!(on_phone.imported.is_empty(), "incoming items were already settled");
+        assert_eq!(on_phone.books.len(), 2);
+        for entry in on_phone.books {
+            phone_lib.record(entry).unwrap();
+        }
+        for (id, hs) in on_phone.highlights {
+            phone_lib.set_highlights(&id, &hs).unwrap();
+        }
+        let phone_saved = phone_lib.entry(&saved.id).unwrap();
+        assert_eq!((phone_saved.inbox, phone_saved.site.as_deref(), phone_saved.excerpt.as_deref()), (false, Some("The Shore"), Some("Flats at dawn.")));
+        assert!(phone_saved.words > 100);
+        assert!(phone_lib.entry(&letter.id).unwrap().inbox, "newsletter stays in Inbox on the second device");
+        assert_eq!(phone_lib.highlights(&saved.id), vec![h_mac.clone()]);
+
+        // Phone adds a second highlight; Mac receives the merged list without duplicating h_mac.
+        let h_phone = Highlight { chapter: 0, start: 25, end: 45, words: "The tide came in".into(), made: 1_700_000_005_000 };
+        phone_lib.set_highlights(&saved.id, &[h_mac.clone(), h_phone.clone()]).unwrap();
+        assert_eq!(sync(&api, phone.path()).unwrap(), Outcome::default());
+        let back = sync(&api, mac.path()).unwrap();
+        assert_eq!(back.highlights, vec![(saved.id.clone(), vec![h_mac, h_phone])]);
     }
 }

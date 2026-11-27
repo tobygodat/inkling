@@ -16,6 +16,10 @@ export interface Env extends GoogleConfig {
   OWNER_EMAIL?: string;
   /** What `ios/ota.sh` sends as its bearer token to upload a build. Unset, no upload is taken. */
   BUILD_UPLOAD_TOKEN?: string;
+  /** Bearer or form token for `POST /save` from a bookmarklet or Shortcut. Unset, `/save` refuses every request. */
+  SAVE_TOKEN?: string;
+  /** The address Cloudflare Email Routing delivers newsletters to. Defaults to `read@tobygodat.com`. */
+  NEWSLETTER_ADDRESS?: string;
 }
 
 /** What every grant carries. There is one writer, so this is the same for every token. */

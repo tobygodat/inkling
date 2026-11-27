@@ -113,6 +113,63 @@ pub fn readwise(transport: &dyn Transport, sign_in: &mut SignIn, token: Option<&
     Ok(answer["connected"].as_bool().unwrap_or(false))
 }
 
+/// A followed RSS or Atom feed on the server.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct Feed {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub site_url: Option<String>,
+    pub added_at: u64,
+    pub checked_at: u64,
+    pub last_error: Option<String>,
+}
+
+/// The server's answer after staging a saved web address for sync.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct SavedUrl {
+    pub id: String,
+    pub url: String,
+    pub status: String,
+}
+
+/// Saves a web address (and optionally the page's HTML) on the server so it reaches every device.
+pub fn save_url(transport: &dyn Transport, sign_in: &mut SignIn, url: &str, html: Option<&str>) -> Result<SavedUrl, Error> {
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    let mut body = serde_json::json!({ "url": url.trim() });
+    if let Some(html) = html {
+        body["html"] = serde_json::Value::String(html.to_string());
+    }
+    api.json(Method::Post, "/v1/save", api::Body::Json(body))
+}
+
+/// Lists the RSS and Atom feeds followed on the server.
+pub fn feeds(transport: &dyn Transport, sign_in: &mut SignIn) -> Result<Vec<Feed>, Error> {
+    #[derive(serde::Deserialize)]
+    struct FeedList {
+        feeds: Vec<Feed>,
+    }
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    let list: FeedList = api.json(Method::Get, "/v1/feeds", api::Body::None)?;
+    Ok(list.feeds)
+}
+
+/// Follows an RSS or Atom feed by its feed URL or site URL.
+pub fn follow_feed(transport: &dyn Transport, sign_in: &mut SignIn, url: &str) -> Result<Feed, Error> {
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    api.json(Method::Post, "/v1/feeds", api::Body::Json(serde_json::json!({ "url": url.trim() })))
+}
+
+/// Unfollows a feed on the server. Articles already in the library stay.
+pub fn unfollow_feed(transport: &dyn Transport, sign_in: &mut SignIn, id: &str) -> Result<(), Error> {
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    api.send(Method::Delete, &format!("/v1/feeds/{id}"), api::Body::None).map(drop)
+}
+
 /// A name for this install, as the server records which device saved a document: the kind of
 /// device and a few random letters.
 pub fn new_device(kind: &str) -> String {

@@ -272,6 +272,9 @@ impl Inkling {
         for (id, position, at) in outcome.positions {
             let _ = library.take_position(&id, position, at);
         }
+        for (id, highlights) in outcome.highlights {
+            let _ = library.set_highlights(&id, &highlights);
+        }
         let added = !outcome.imported.is_empty();
         for prepared in outcome.imported {
             let _ = library.add(&prepared);

@@ -143,11 +143,13 @@ interface BookRow {
   id: string;
   title: string;
   author: string | null;
-  format: "Epub" | "Pdf";
+  format: "Epub" | "Pdf" | "Article";
   chapters: number;
   chapter: number;
   fraction: number;
 }
+
+const FORMAT_LABELS: Record<BookRow["format"], string> = { Epub: "epub", Pdf: "pdf", Article: "article" };
 
 async function listBooks(env: Env): Promise<ToolResult> {
   const { results } = await env.DB.prepare(
@@ -158,7 +160,7 @@ async function listBooks(env: Env): Promise<ToolResult> {
     id: b.id,
     title: b.title,
     author: b.author,
-    format: b.format === "Epub" ? "epub" : "pdf",
+    format: FORMAT_LABELS[b.format],
     chapters: b.chapters,
     position: { chapter: b.chapter, fraction: b.fraction },
     // As `Entry::progress` works it out on the device.

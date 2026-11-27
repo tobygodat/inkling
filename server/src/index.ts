@@ -7,9 +7,12 @@ import { OAuthAuthorizationServer, OAuthResourceServer } from "@cloudflare/worke
 import { authorize, googleCallback } from "./authorize";
 import { serveBuilds } from "./builds";
 import type { Env, Owner } from "./env";
+import { pollFeeds } from "./feeds";
 import { Refused, json } from "./http";
 import { serveMcp } from "./mcp";
+import { receiveNewsletter } from "./newsletter";
 import { poll } from "./readwise";
+import { serveSave } from "./save";
 import { serveSync } from "./sync";
 
 /** Everything a client can be granted. `offline_access` lets a client stay signed in. */
@@ -98,6 +101,8 @@ export default {
 
       if (under(pathname, "/builds")) return await serveBuilds(request, env);
 
+      if (pathname === "/save") return await serveSave(request, env);
+
       if (pathname === "/authorize") return await authorize(request, env, s.auth.getOAuthApi(env));
 
       if (pathname === "/google/callback") return await googleCallback(request, env, s.auth.getOAuthApi(env));
@@ -115,6 +120,11 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(poll(env));
+    ctx.waitUntil(pollFeeds(env));
     ctx.waitUntil(servers(env).auth.purgeExpiredData(env).then(() => undefined));
+  },
+
+  async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(receiveNewsletter(message, env));
   },
 } satisfies ExportedHandler<Env>;
