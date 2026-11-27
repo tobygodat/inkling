@@ -107,6 +107,8 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
     let entries = Library::open(dir).map_err(|e| Error::Local(format!("The library couldn't be read ({e}).")))?.entries().to_vec();
     let mut out = Outcome::default();
 
+    let mut on_server: Vec<String> = listing.books.iter().map(|b| b.id.clone()).collect();
+
     // Oldest first, so the server lists them in the order they were added.
     for entry in entries.iter().rev() {
         let there = listing.books.iter().find(|b| b.id == entry.id.0);
@@ -116,7 +118,11 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
             Some(_) => Ok(()),
         };
         match sent {
-            Ok(()) => {}
+            Ok(()) => {
+                if there.is_none() {
+                    on_server.push(entry.id.0.clone());
+                }
+            }
             Err(Error::Refused { message, .. } | Error::Local(message)) => {
                 out.problems.push(format!("{} didn't go up: {message}", entry.title));
                 continue;
@@ -143,11 +149,21 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
         }
     }
 
+    // Sync highlights before settling any inbox or incoming items, and only for books already on
+    // the server so Readwise always has the book's title, author and source URL.
+    sync_highlights(api, dir, &entries, &out.books, &on_server, &mut out.highlights)?;
+
+    // Once any item has been settled on the server, never drop `out` on a later network error:
+    // the server already deleted its staged file, so the app must still record `out.imported`.
     for item in listing.inbox.iter().filter(|i| i.state == "waiting") {
         let bytes = match api.send(Method::Get, &format!("/v1/inbox/{}/file", item.readwise_id), Body::None) {
             Ok(bytes) => bytes,
             // Another device took it first.
             Err(Error::Refused { status: 404, .. }) => continue,
+            Err(e) if !out.imported.is_empty() => {
+                out.problems.push(format!("Inbox sync stopped early: {e}"));
+                return Ok(out);
+            }
             Err(e) => return Err(e),
         };
         let settled = match import_upload(dir, item, &bytes) {
@@ -158,7 +174,13 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
             }
             Err(why) => json!({ "state": "failed", "error": why }),
         };
-        api.send(Method::Post, &format!("/v1/inbox/{}", item.readwise_id), Body::Json(settled))?;
+        if let Err(e) = api.send(Method::Post, &format!("/v1/inbox/{}", item.readwise_id), Body::Json(settled)) {
+            if !out.imported.is_empty() {
+                out.problems.push(format!("Inbox item couldn't be settled: {e}"));
+                return Ok(out);
+            }
+            return Err(e);
+        }
     }
 
     for item in listing.incoming.iter().filter(|i| i.state == "waiting") {
@@ -166,6 +188,10 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
             Ok(bytes) => bytes,
             // Another device settled it first.
             Err(Error::Refused { status: 404, .. }) => continue,
+            Err(e) if !out.imported.is_empty() => {
+                out.problems.push(format!("Incoming sync stopped early: {e}"));
+                return Ok(out);
+            }
             Err(e) => return Err(e),
         };
         let settled = match import_incoming(api, dir, item, &bytes) {
@@ -176,10 +202,15 @@ pub fn sync(api: &Api, dir: &Path) -> Result<Outcome, Error> {
             }
             Err(why) => json!({ "state": "failed", "error": why }),
         };
-        api.send(Method::Post, &format!("/v1/incoming/{}", item.id), Body::Json(settled))?;
+        if let Err(e) = api.send(Method::Post, &format!("/v1/incoming/{}", item.id), Body::Json(settled)) {
+            if !out.imported.is_empty() {
+                out.problems.push(format!("Incoming item couldn't be settled: {e}"));
+                return Ok(out);
+            }
+            return Err(e);
+        }
     }
 
-    sync_highlights(api, dir, &entries, &out.books, &mut out.highlights)?;
     Ok(out)
 }
 
@@ -233,6 +264,7 @@ fn sync_highlights(
     dir: &Path,
     local_entries: &[Entry],
     downloaded: &[Entry],
+    on_server: &[String],
     out: &mut Vec<(BookId, Vec<Highlight>)>,
 ) -> Result<(), Error> {
     let listed: HighlightsListing = match api.json(Method::Get, "/v1/highlights", Body::None) {
@@ -256,13 +288,15 @@ fn sync_highlights(
         let local = highlights::load(dir, &entry.id);
         let remote = remote_by_book.get(&entry.id.0).map(Vec::as_slice).unwrap_or(&[]);
 
-        let to_upload: Vec<serde_json::Value> = local
-            .iter()
-            .filter(|h| !remote.iter().any(|r| highlight_key(r) == highlight_key(h)))
-            .map(|h| json!({ "chapter": h.chapter, "start": h.start, "end": h.end, "words": h.words, "made": h.made }))
-            .collect();
-        if !to_upload.is_empty() {
-            api.send(Method::Post, &format!("/v1/books/{}/highlights", entry.id.0), Body::Json(json!({ "highlights": to_upload })))?;
+        if on_server.iter().any(|id| id == &entry.id.0) {
+            let to_upload: Vec<serde_json::Value> = local
+                .iter()
+                .filter(|h| !remote.iter().any(|r| highlight_key(r) == highlight_key(h)))
+                .map(|h| json!({ "chapter": h.chapter, "start": h.start, "end": h.end, "words": h.words, "made": h.made }))
+                .collect();
+            if !to_upload.is_empty() {
+                api.send(Method::Post, &format!("/v1/books/{}/highlights", entry.id.0), Body::Json(json!({ "highlights": to_upload })))?;
+            }
         }
 
         let mut merged = local;
@@ -507,5 +541,54 @@ mod tests {
         assert_eq!(sync(&api, phone.path()).unwrap(), Outcome::default());
         let back = sync(&api, mac.path()).unwrap();
         assert_eq!(back.highlights, vec![(saved.id.clone(), vec![h_mac, h_phone])]);
+    }
+
+    #[test]
+    fn network_failure_after_settling_an_incoming_item_never_loses_it() {
+        use crate::transport::{Response, Transport};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct DropSecondIncoming<'a> {
+            inner: &'a Fake,
+            second_id: String,
+            dropped: AtomicBool,
+        }
+
+        impl Transport for DropSecondIncoming<'_> {
+            fn send(&self, method: Method, url: &str, headers: &[(&str, &str)], body: Option<(&str, &[u8])>) -> Result<Response, Error> {
+                if method == Method::Get && url.contains(&format!("/v1/incoming/{}/file", self.second_id)) && !self.dropped.swap(true, Ordering::Relaxed) {
+                    return Err(Error::Offline);
+                }
+                self.inner.send(method, url, headers, body)
+            }
+        }
+
+        let fake = Fake::memory();
+        let words = "The tide came in slowly over the flats, and the birds lifted as it reached them. ".repeat(8);
+        let html = |title: &str| format!("<!doctype html><html><head><title>{title}</title></head><body><article><h1>{title}</h1><p>{words}</p></article></body></html>");
+        let _first_id = fake.stage_incoming("save", "queue", "https://shore.example/one", Some("First"), html("First").as_bytes());
+        let second_id = fake.stage_incoming("save", "queue", "https://shore.example/two", Some("Second"), html("Second").as_bytes());
+
+        let begun = crate::account::begin(&fake, crate::FAKE_SERVER, "inkling://callback", "test").unwrap();
+        let token = begun.finish(&fake, &crate::fake_way_back(&begun.url).unwrap()).unwrap().token(&fake).unwrap();
+        let flaky = DropSecondIncoming { inner: &fake, second_id, dropped: AtomicBool::new(false) };
+        let api = Api::new(&flaky, crate::FAKE_SERVER, token);
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut library = Library::open(dir.path()).unwrap();
+
+        // First sync settles First, then goes offline on Second: First is STILL returned and recorded.
+        let partial = sync(&api, dir.path()).unwrap();
+        assert_eq!(partial.imported.len(), 1);
+        assert_eq!(partial.imported[0].title, "First");
+        assert!(!partial.problems.is_empty());
+        library.add(&partial.imported[0]).unwrap();
+
+        // Second sync recovers and imports Second as well; neither article is lost.
+        let rest = sync(&api, dir.path()).unwrap();
+        assert_eq!(rest.imported.len(), 1);
+        assert_eq!(rest.imported[0].title, "Second");
+        library.add(&rest.imported[0]).unwrap();
+        assert_eq!(library.entries().len(), 2);
     }
 }

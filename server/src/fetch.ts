@@ -33,6 +33,8 @@ export function requirePublicUrl(raw: string): URL {
 
   const host = parsed.hostname.toLowerCase().replaceAll(/^\[|\]$/gu, "");
 
+  const isIpv6 = host.includes(":");
+
   if (
     !host ||
     host === "localhost" ||
@@ -40,11 +42,7 @@ export function requirePublicUrl(raw: string): URL {
     host.endsWith(".local") ||
     host.endsWith(".internal") ||
     PRIVATE_IPV4.test(host) ||
-    host === "::1" ||
-    host === "::" ||
-    host.startsWith("fc") ||
-    host.startsWith("fd") ||
-    host.startsWith("fe80:")
+    (isIpv6 && (host === "::1" || host === "::" || /^(fc|fd|fe80:|::ffff:)/iu.test(host)))
   ) {
     throw new Refused(400, "Private or local addresses can’t be fetched by the server.");
   }

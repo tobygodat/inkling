@@ -41,7 +41,7 @@ describe("save from anywhere", () => {
 
     expect(wrong.status).toBe(401);
 
-    for (const bad of ["http://127.0.0.1/secret", "http://localhost:8787/", "http://169.254.169.254/latest", "file:///etc/passwd"]) {
+    for (const bad of ["http://127.0.0.1/secret", "http://localhost:8787/", "http://169.254.169.254/latest", "http://[::ffff:127.0.0.1]/", "file:///etc/passwd"]) {
       const res = await call("/save", {
         method: "POST",
         headers: { authorization: `Bearer ${SAVE_TOKEN}`, "content-type": "application/json" },
@@ -52,8 +52,18 @@ describe("save from anywhere", () => {
     }
 
     fakePages({
+      "https://fda.gov/news": () => new Response(ARTICLE_HTML, { headers: { "content-type": "text/html" } }),
       "https://shore.example/pic.png": () => new Response("png", { headers: { "content-type": "image/png" } }),
     });
+
+    // Public domains starting with `fc`/`fd` (such as fda.gov) must not be mistaken for IPv6 ULA.
+    const fda = await call("/save", {
+      method: "POST",
+      headers: { authorization: `Bearer ${SAVE_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://fda.gov/news" }),
+    });
+
+    expect(fda.status).toBe(201);
 
     const binary = await call("/save", {
       method: "POST",
@@ -106,8 +116,8 @@ describe("save from anywhere", () => {
     // Sync pulls the raw HTML, parses it on the device, settles incoming, and uploads the Article.
     const token = await syncToken();
     const library = await (await call("/v1/library", bearer(token))).json<{ incoming: { id: string; source: string; destination: string; state: string; url: string }[] }>();
-    expect(library.incoming).toHaveLength(1);
-    expect(library.incoming[0]).toMatchObject({ id: first.id, source: "save", destination: "queue", state: "waiting", url: "https://shore.example/2026/tide" });
+    const staged = library.incoming.find((item) => item.id === first.id);
+    expect(staged).toMatchObject({ id: first.id, source: "save", destination: "queue", state: "waiting", url: "https://shore.example/2026/tide" });
 
     const raw = await call(`/v1/incoming/${first.id}/file`, bearer(token));
     expect(raw.status).toBe(200);
