@@ -15,6 +15,8 @@ pub enum ImportError {
     Unreadable(String),
     BadEpub(String),
     BadPdf(String),
+    /// A web page with no article in it that could be read.
+    BadArticle(String),
     /// A PDF whose pages are pictures of text, with no text layer to reflow.
     Scanned,
 }
@@ -26,6 +28,7 @@ impl fmt::Display for ImportError {
             ImportError::Unreadable(why) => write!(f, "The file couldn’t be read: {why}."),
             ImportError::BadEpub(why) => write!(f, "This EPUB couldn’t be opened: {why}."),
             ImportError::BadPdf(why) => write!(f, "This PDF couldn’t be opened: {why}."),
+            ImportError::BadArticle(why) => write!(f, "This page couldn’t be saved as an article: {why}."),
             ImportError::Scanned => write!(f, "This PDF has no text to reflow. It looks scanned, and Inkling only opens PDFs with selectable text."),
         }
     }
@@ -76,9 +79,10 @@ pub fn parse(path: &Path, bytes: &[u8]) -> Result<Parsed, ImportError> {
             })?;
             (p.title, p.author, p.chapters, vec![])
         }
+        Format::Article => return Err(ImportError::Unsupported(title_from_file(path))),
     };
     let title = title.unwrap_or_else(|| title_from_file(path));
-    Ok(Parsed { book: Book { id, title, author, format, parser: PARSER, chapters }, images })
+    Ok(Parsed { book: Book { id, title, author, format, parser: PARSER, chapters, source: None }, images })
 }
 
 /// Where a book's images are, relative to the library: what its chapters' image links start with.

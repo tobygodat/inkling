@@ -90,6 +90,7 @@ fn inspect(path: &Path) -> Option<Found> {
             }
             (name, None)
         }
+        Format::Article => return None,
     };
     let folder = path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Some(Found { path: path.to_path_buf(), id: import::book_id(&contents), title, author, format, bytes, folder })

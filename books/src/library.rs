@@ -332,6 +332,21 @@ pub fn prepare(dir: &Path, path: &Path) -> Result<Prepared, ImportError> {
     Ok(prepared)
 }
 
+/// Parses and stores the web page `html`, saved from `url`, under `dir`, as [`prepare`] does for
+/// a file: without touching the index, so it runs on any thread. The page's HTML is kept in
+/// `originals/` and its pictures, fetched through `fetch`, in `images/<id>/`. An article already
+/// stored by this parser is read back, and nothing is fetched.
+pub fn prepare_article(dir: &Path, url: &str, html: &str, fetch: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> Result<Prepared, ImportError> {
+    let id = crate::article::article_id(url);
+    if let Ok(book) = load(dir, &id)
+        && book.parser >= PARSER
+    {
+        return Ok(Prepared::of(&book));
+    }
+    let book = store_parsed(dir, crate::article::parse(url, html, fetch)?, html.as_bytes())?;
+    Ok(Prepared::of(&book))
+}
+
 /// Reads a stored book from the library in `dir`, without the index and without writing, so it
 /// runs on any thread and in a reader that must not change the library. A book stored before
 /// chapters were Markdown reads as Markdown.
@@ -345,7 +360,9 @@ pub fn load(dir: &Path, id: &BookId) -> io::Result<Book> {
 /// chapter. A book with no original kept (one added before originals were) loads as it is.
 pub fn open(dir: &Path, id: &BookId) -> io::Result<(Book, Option<Prepared>)> {
     let book = load(dir, id)?;
-    if book.parser >= PARSER {
+    // An article's pictures were fetched when it was saved, and parsing it again would fetch them
+    // again, so it reads as it was stored.
+    if book.parser >= PARSER || book.format == Format::Article {
         return Ok((book, None));
     }
     let original = original_path(dir, id, book.format);
@@ -368,6 +385,7 @@ pub fn original_path(dir: &Path, id: &BookId, format: Format) -> PathBuf {
     let extension = match format {
         Format::Epub => "epub",
         Format::Pdf => "pdf",
+        Format::Article => "html",
     };
     dir.join("originals").join(format!("{}.{extension}", id.0))
 }
@@ -378,8 +396,12 @@ fn titles(book: &Book) -> Vec<Option<String>> {
 
 /// Parses the file and stores everything it needs: the original, its images, then the book.
 fn parse_and_store(dir: &Path, path: &Path, bytes: &[u8]) -> Result<Book, ImportError> {
+    store_parsed(dir, import::parse(path, bytes)?, bytes)
+}
+
+/// Keeps a parse on disk: the original it came from, its pictures, then the book itself.
+fn store_parsed(dir: &Path, parsed: import::Parsed, bytes: &[u8]) -> Result<Book, ImportError> {
     let unreadable = |e: io::Error| ImportError::Unreadable(e.to_string().to_lowercase());
-    let parsed = import::parse(path, bytes)?;
     keep_original(dir, &parsed.book, bytes).map_err(unreadable)?;
     if !parsed.images.is_empty() {
         let images = dir.join(import::image_dir(&parsed.book.id));
@@ -494,13 +516,32 @@ mod tests {
         let mut reopened = reopened;
         reopened.opened(&id).unwrap();
         assert_eq!(Library::open(dir.path().join("data")).unwrap().last_opened().map(|e| &e.id), Some(&id), "the last book opened is kept");
-        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![] };
+        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![], source: None };
         reopened.insert(&other).unwrap();
         for _ in 0..3 {
             reopened.opened(&id).unwrap();
         }
         reopened.opened(&other.id).unwrap();
         assert_eq!(reopened.last_opened().map(|e| &e.id), Some(&other.id), "the book opened last wins, however often another was opened in the same second");
+
+        // An article saved twice, the second time from the same address with another fragment.
+        let html = crate::article::tests::page();
+        let mut fetches = 0;
+        let mut fetch = |_: &str| {
+            fetches += 1;
+            Some(crate::article::tests::PNG.to_vec())
+        };
+        let saved = prepare_article(lib.dir(), "https://shore.example/2026/tide", &html, &mut fetch).unwrap();
+        let again = prepare_article(lib.dir(), "https://shore.example/2026/tide#top", &html, &mut fetch).unwrap();
+        assert_eq!((again, fetches), (saved.clone(), 1), "found again by its address, and its picture not fetched again");
+        lib.add(&saved).unwrap();
+        let article = lib.entry(&saved.id).unwrap();
+        assert_eq!((article.format, article.title.as_str(), article.chapters), (Format::Article, "Notes on the tide", 1));
+        assert_eq!(fs::read(original_path(lib.dir(), &saved.id, Format::Article)).unwrap(), html.as_bytes(), "the page is kept");
+        assert!(lib.dir().join(import::image_dir(&saved.id)).join("1.png").is_file());
+        let stored = load(lib.dir(), &saved.id).unwrap();
+        assert_eq!(stored.source.as_ref().map(|s| s.url.as_str()), Some("https://shore.example/2026/tide"));
+        assert_eq!(open(lib.dir(), &saved.id).unwrap(), (stored, None));
 
         let leftovers = fs::read_dir(lib.dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
         assert_eq!(leftovers, 0);
@@ -559,7 +600,7 @@ mod tests {
         let file = dir.path().join("small.epub");
         fs::write(&file, crate::epub::tests::sample()).unwrap();
         let mut lib = Library::open(dir.path().join("data")).unwrap();
-        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![] };
+        let other = crate::book::Book { id: BookId("b".repeat(64)), title: "Other".into(), author: None, format: Format::Epub, parser: PARSER, chapters: vec![], source: None };
         lib.insert(&other).unwrap();
         let id = lib.add(&prepare(lib.dir(), &file).unwrap()).unwrap().id.clone();
         lib.set_position(&id, Position { chapter: 1, fraction: 0.5 }).unwrap();

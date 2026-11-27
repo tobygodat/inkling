@@ -7,6 +7,7 @@ edition = "2024"
 doctest = false
 
 [dependencies]
+dom_smoothie = "0.20"
 html-escape = "0.3"
 pdf-extract = "0.12"
 quick-xml = "0.42"

@@ -11,7 +11,9 @@ app.
 - `books/` is `inkling-books`, ported from the reader's `reader-core` (ADR 0003). It has no UI
   dependency. It parses an EPUB (chapters from the navigation document, the cover it names) or a
   PDF with a text layer (pages in sections of ten, running headers and footers dropped) into one
-  `Book` whose chapters are Markdown (ADR 0006). `Library` keeps `library.json`, each parsed book
+  `Book` whose chapters are Markdown (ADR 0006). A web page saved by its address becomes a `Book`
+  too (`article`, ADR 0007): Readability (`dom_smoothie`) finds the article, the EPUB walker writes
+  it as one chapter, and `Book::source` keeps its address, site, date and excerpt. `Library` keeps `library.json`, each parsed book
   as `books/<sha-256>.json`, the file it came from in `originals/`, its images in `images/<id>/`,
   covers in `covers/` and highlights in `highlights/<id>.json`, writing each file atomically, with each book's reading position.
   `scan` finds books in folders that the library doesn't have yet. The Library and Reading
@@ -168,6 +170,13 @@ library has no Add and no Find books.
   back as itself, which a property checks against the parser GPUI Kit draws with. A place in a
   chapter is a byte offset into its text. `read_book` returns the text as stored, and sync sends
   the same.
+- **Articles.** `prepare_article` takes a page's HTML, the address it came from and a way to
+  fetch pictures, and stores it like `prepare` stores a file: the HTML in `originals/<id>.html`,
+  each picture once in `images/<id>/` (a picture that can't be fetched is left out, so reading
+  never sends a request), then the book. Its id is the hash of the address without its fragment,
+  so saving a page twice finds it. Readability keeps only the classes that mark footnotes, which
+  the walker needs. An article is never parsed again on open, because that would fetch its
+  pictures again. Fetching the page itself is the caller's.
 - **Upgrades.** `Book::parser` names the parser that wrote a book. `prepare`, when a file is
   added, and `library::open`, when a book is opened, parse a book from an older parser again from
   its original, and `Library::add` moves the place to the chapter with the same title. A book

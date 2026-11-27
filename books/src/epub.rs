@@ -85,6 +85,39 @@ pub fn parse(bytes: &[u8], image_dir: &str) -> Result<Parsed, String> {
     Ok(Parsed { title: package.title, author: package.author, chapters, images })
 }
 
+/// A web page's article, already cleaned to HTML, as chapters: one document and no contents
+/// list, so usually one chapter. Each picture is fetched once, through `fetch`, by its absolute
+/// address, and kept by its file name under the article's image folder.
+pub(crate) fn page(src: &str, image_dir: &str, fetch: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> Parsed {
+    const DOC: &str = "page.html";
+    let docs = [(DOC.to_string(), src.to_string())];
+    let refs = References::scan(&docs);
+    let mut notes = Walker::new(true, &refs);
+    notes.web = true;
+    notes.walk(DOC, src, &HashMap::new(), &mut |_| None);
+    let notes = notes.notes;
+
+    let mut images: Vec<(String, Vec<u8>)> = vec![];
+    let mut named: HashMap<String, Option<String>> = HashMap::new();
+    let mut image = |url: &str| -> Option<String> {
+        named
+            .entry(url.to_string())
+            .or_insert_with(|| {
+                let bytes = fetch(url)?;
+                let name = format!("{}.{}", images.len() + 1, image_extension(&bytes)?);
+                images.push((name.clone(), bytes));
+                Some(format!("{image_dir}{name}"))
+            })
+            .clone()
+    };
+    let mut walker = Walker::new(false, &refs).with_notes(notes);
+    walker.web = true;
+    walker.start_chapter(None);
+    walker.walk(DOC, src, &HashMap::new(), &mut image);
+    let chapters = walker.finish();
+    Parsed { title: None, author: None, chapters, images }
+}
+
 /// The title and author an EPUB's package file names, without reading its text. `None` for a
 /// file that isn't an EPUB.
 pub fn metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>)> {
@@ -485,6 +518,8 @@ struct Notes {
 struct Walker<'r> {
     /// The first pass, which only reads the notes.
     collect: bool,
+    /// A web page rather than a book: a picture's address is already absolute.
+    web: bool,
     refs: &'r References,
     notes: Notes,
     file: String,
@@ -517,6 +552,7 @@ impl<'r> Walker<'r> {
     fn new(collect: bool, refs: &'r References) -> Self {
         Walker {
             collect,
+            web: false,
             refs,
             notes: Notes::default(),
             file: String::new(),
@@ -824,7 +860,8 @@ impl<'r> Walker<'r> {
                     return self.text(&alt);
                 }
                 let Some(src) = attr(attrs, "src").or_else(|| attr(attrs, "href")) else { return };
-                let Some(path) = image(&resolve(&self.base, src).0) else { return };
+                let at = if self.web { src.to_string() } else { resolve(&self.base, src).0 };
+                let Some(path) = image(&at) else { return };
                 match &mut self.figure {
                     Some((images, _)) => images.push((alt, path)),
                     None => self.images.push((alt, path)),

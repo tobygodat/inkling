@@ -48,7 +48,7 @@ fn describe(entry: &Entry) -> Value {
         "id": entry.id.0,
         "title": entry.title,
         "author": entry.author,
-        "format": match entry.format { Format::Epub => "epub", Format::Pdf => "pdf" },
+        "format": match entry.format { Format::Epub => "epub", Format::Pdf => "pdf", Format::Article => "article" },
         "chapters": entry.chapters,
         "position": { "chapter": entry.position.chapter, "fraction": entry.position.fraction },
         "progress": entry.progress(),
