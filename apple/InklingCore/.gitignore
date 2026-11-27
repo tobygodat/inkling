@@ -1,0 +1,5 @@
+# Written by apple/core.sh.
+/InklingFFI.xcframework/
+/Sources/InklingCore/InklingFFI.swift
+/.build/
+/.swiftpm/

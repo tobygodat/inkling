@@ -1,0 +1,21 @@
+[package]
+name = "inkling-ffi"
+version = "0.1.0"
+edition = "2024"
+description = "Inkling's Rust crates as a Swift package, through UniFFI (ADR 0007)."
+
+[lib]
+# A static library for the XCFramework, a dynamic one for uniffi-bindgen to read the interface from.
+crate-type = ["lib", "staticlib", "cdylib"]
+doctest = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+inkling-books = { workspace = true }
+uniffi = { version = "0.33", features = ["cli"] }
+
+[dev-dependencies]
+tempfile = "3"

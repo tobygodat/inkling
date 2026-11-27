@@ -1,7 +1,7 @@
 # Architecture
 
 ## Crates
-One Cargo workspace at the root holds six crates. `ios/` is a separate workspace for the iPhone
+One Cargo workspace at the root holds seven crates. `ios/` is a separate workspace for the iPhone
 app.
 
 - `core/` is `inkling-core`. It has no UI dependency. It holds the requests (`Ask`, `Request`), the
@@ -34,6 +34,14 @@ app.
   app records on the UI thread (below). Everything goes through a `Transport`: `Net` (HTTPS) in
   the app, `Fake` (the server in memory, with the Worker's rules and no Google) in tests and in
   every headless run, kept in `fake-server.json` in the data folder.
+- `ffi/` is `inkling-ffi`, the boundary of ADR 0007's native app. It has no UI dependency. Its
+  `Library` object wraps `inkling_books::Library` behind a mutex: `items`, `book` (which upgrades
+  an old parse, as opening a book does), `add_file`, `save_article` (with a `Fetcher` that Swift
+  implements for the pictures), `set_position`, `opened` and the highlights. Records and
+  `InklingError` are plain values, so UniFFI stays in this crate. `apple/core.sh` builds it into
+  `apple/InklingCore`: an XCFramework of the static library for the Mac, the iPhone and the
+  Simulator, the Swift that `uniffi-bindgen` writes from the Mac library, and the package's own
+  Swift (`PictureFetcher`, over URLSession).
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
   `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and nine

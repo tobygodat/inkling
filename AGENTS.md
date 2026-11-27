@@ -12,7 +12,7 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 
 ## Layout
 
-- The root `Cargo.toml` is a workspace of `core`, `books`, `mcp`, `sync`, `ui` and `mac`.
+- The root `Cargo.toml` is a workspace of `core`, `books`, `mcp`, `sync`, `ffi`, `ui` and `mac`.
 - `core/` is `inkling-core`: the requests, the providers, the review model, settings and key storage.
   No UI framework may be a dependency of it.
 - `books/` is `inkling-books`: EPUBs and text PDFs parsed into one `Book`, the library on disk and
@@ -25,6 +25,10 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
   reading positions in step with it (ADR 0004, TOB-490). Every headless run talks to its fake
   server, kept in `fake-server.json` in the data folder, never to the real one. No UI framework
   may be a dependency of it.
+- `ffi/` is `inkling-ffi`: the Rust crates as the native Swift app sees them, through UniFFI
+  (ADR 0007). Plain records and one error type, so no crate under it depends on UniFFI.
+- `apple/` is the native SwiftUI app of ADR 0007, which replaces `ui/`, `mac/` and the GPUI host in
+  `ios/` screen by screen. `apple/InklingCore` is the Swift package over `inkling-ffi`.
 - `server/` is `inkling-server`, the Cloudflare Worker of ADR 0004: OAuth with Sign in with Google,
   the remote MCP endpoint, the devices' sync API, the Readwise inbox and the iPhone builds' signed
   install links (TOB-518). TypeScript on Bun, not in
@@ -54,6 +58,10 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo run --release -p inkling-mac` opens the Mac app. It takes focus, so only Toby runs it.
 - `mac/install.sh` builds `Inkling.app` in release, signs it with the Developer ID identity and
   installs it in `/Applications` (or the folder it is given) without opening it.
+- `apple/core.sh` builds `inkling-ffi` for the Mac, the iPhone and the Simulator and writes
+  `apple/InklingCore` (the XCFramework and its generated Swift, neither committed). Then
+  `swift test --package-path apple/InklingCore` runs the package's tests. Any change under `ffi/`
+  or `apple/` runs both. Mac only.
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
