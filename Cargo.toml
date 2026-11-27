@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "books", "mcp", "sync", "ui", "mac"]
+members = ["core", "books", "mcp", "sync", "ffi", "ui", "mac"]
 resolver = "3"
 
 [workspace.dependencies]

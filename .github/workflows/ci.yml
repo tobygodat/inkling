@@ -78,6 +78,26 @@ jobs:
       - name: Build the Simulator app
         run: ios/run.sh
 
+  swift-core:
+    name: Swift core package
+    # inkling-ffi as the native app sees it (ADR 0007): the XCFramework, its Swift side and the
+    # package's tests, run from Swift on the Mac.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build InklingCore
+        run: PROFILE=dev apple/core.sh
+
+      - name: Swift tests
+        run: swift test --package-path apple/InklingCore
+
   server:
     name: Server types and tests
     # The Worker in server/ (ADR 0004). Its tests run in workerd with local D1 and KV.
