@@ -7,6 +7,9 @@ struct ItemList<Empty: View>: View {
     @Environment(Shelf.self) private var shelf
     @Environment(Navigator.self) private var navigator
     @Environment(\.palette) private var palette
+    #if os(macOS)
+    @Environment(\.appearsActive) private var active
+    #endif
     let groups: [(title: String, items: [Item])]
     let section: Section
     @ViewBuilder let empty: () -> Empty
@@ -53,6 +56,8 @@ struct ItemList<Empty: View>: View {
             .tag(item.id)
             .contextMenu { actions(item) }
             .listRowSeparatorTint(Color(palette.hairline))
+            .listRowBackground(selection(item))
+            .background(QuietSelection())
         #else
         NavigationLink(value: item.id) {
             ItemRow(item: item)
@@ -75,6 +80,20 @@ struct ItemList<Empty: View>: View {
         #endif
     }
 
+    #if os(macOS)
+    /// The chosen row in Inkling's own colours, so the reader stays the loudest thing on screen:
+    /// a faint wash of Ink while the window is active, Segment while it isn't.
+    @ViewBuilder private func selection(_ item: Item) -> some View {
+        if navigator.selection == item.id {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(active ? Color(palette.ink).opacity(0.08) : Color(palette.segment))
+                .padding(.horizontal, 8)
+        } else {
+            Color.clear
+        }
+    }
+    #endif
+
     @ViewBuilder private func actions(_ item: Item) -> some View {
         if item.archived == 0 {
             Button("Archive", systemImage: "archivebox") { shelf.setArchived(item, true) }
@@ -83,3 +102,21 @@ struct ItemList<Empty: View>: View {
         }
     }
 }
+
+#if os(macOS)
+/// Turns off the system's accent-coloured selection on the table under a List, which keeps
+/// the List's selection and its arrow keys; the row draws its own.
+private struct QuietSelection: NSViewRepresentable {
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {}
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            var view = superview
+            while let next = view, !(next is NSTableView) { view = next.superview }
+            (view as? NSTableView)?.selectionHighlightStyle = .none
+        }
+    }
+}
+#endif

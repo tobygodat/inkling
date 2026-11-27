@@ -39,14 +39,8 @@ struct ItemRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    #if os(macOS)
-    /// The Mac's label colours, which turn white on a selected row.
-    private var ink: Color { .primary }
-    private var muted: Color { .secondary }
-    #else
     private var ink: Color { Color(palette.ink) }
     private var muted: Color { Color(palette.muted) }
-    #endif
 
     private var details: String {
         var parts: [String] = []

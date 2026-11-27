@@ -266,8 +266,14 @@ final class ColumnTextView: NSTextView {
     var pending: Int?
     var onLaidOut: (() -> Void)?
 
+    /// The column starts at the inset. AppKit otherwise keeps an origin it worked out before a long
+    /// text's first layout, which shifts every line right of the column.
+    override var textContainerOrigin: NSPoint {
+        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+    }
+
     override func setFrameSize(_ size: NSSize) {
-        let side = max(40, ((size.width - column) / 2).rounded())
+        let side = max(56, ((size.width - column) / 2).rounded())
         let inset = NSSize(width: side, height: 40)
         if textContainerInset != inset { textContainerInset = inset }
         super.setFrameSize(size)
