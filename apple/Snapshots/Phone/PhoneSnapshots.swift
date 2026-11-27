@@ -75,6 +75,43 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
     }
 
+    /// On Auto paper, choosing Light or Dark in Appearance recolours the reader that is open.
+    @MainActor func testAutoPaperFollowsTheAppearanceChosenWhileReading() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        appearance = ""
+        let app = launch(data: "\(base)/picker", demo: true)
+        row(app, "An Apology for Idlers").tap()
+        XCTAssertTrue(app.textViews["reader"].waitForExistence(timeout: 10))
+        choose(app, "Light")
+        XCTAssertGreaterThan(ground(), 0.8, "Light draws the paper light")
+        choose(app, "Dark")
+        XCTAssertLessThan(ground(), 0.2, "Dark recolours the open reader")
+        choose(app, "System")
+        app.terminate()
+    }
+
+    /// Opens Appearance, picks Auto paper and `mode` for the app, and closes it again.
+    @MainActor private func choose(_ app: XCUIApplication, _ mode: String) {
+        app.buttons["appearance"].tap()
+        XCTAssertTrue(app.buttons["tone-auto"].waitForExistence(timeout: 5))
+        app.buttons["tone-auto"].tap()
+        app.segmentedControls.buttons[mode].tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        sleep(2)
+    }
+
+    /// How light the reader's paper is, from 0 to 1, sampled in the margin beside the column.
+    @MainActor private func ground() -> CGFloat {
+        let image = XCUIScreen.main.screenshot().image
+        guard let cg = image.cgImage else { return -1 }
+        let x = Int(CGFloat(cg.width) * 0.02), y = cg.height / 2
+        guard let pixel = cg.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { return -1 }
+        var rgba = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        context?.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return (0.299 * CGFloat(rgba[0]) + 0.587 * CGFloat(rgba[1]) + 0.114 * CGFloat(rgba[2])) / 255
+    }
+
     @MainActor private func launch(data: String, demo: Bool) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = ["INKLING_DATA_DIR": data, "INKLING_FAKE_AI": "1", "INKLING_APPEARANCE": appearance]
