@@ -49,16 +49,11 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// The transport a run should use: [`Fake`], kept in `INKLING_FAKE_SERVER` when set or
-/// `fake-server.json` in the data folder, for a headless run, so it never reaches the real server;
-/// else the network.
+/// The transport a run should use: [`Fake`], kept in `fake-server.json` in the data folder, for a
+/// headless run, so it never reaches the real server; else the network.
 pub fn transport_for(paths: &inkling_core::Paths) -> (Box<dyn Transport>, &'static str) {
     if inkling_core::headless() {
-        let server_file = std::env::var_os("INKLING_FAKE_SERVER")
-            .filter(|v| !v.is_empty())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| paths.dir.join("fake-server.json"));
-        (Box::new(Fake::at(server_file)), FAKE_SERVER)
+        (Box::new(Fake::at(paths.dir.join("fake-server.json"))), FAKE_SERVER)
     } else {
         (Box::new(Net::new()), SERVER)
     }
