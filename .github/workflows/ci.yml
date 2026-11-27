@@ -79,11 +79,11 @@ jobs:
         run: ios/run.sh
 
   swift-core:
-    name: Swift core package
+    name: Swift core package and native app
     # inkling-ffi as the native app sees it (ADR 0007): the XCFramework, its Swift side and the
-    # package's tests, run from Swift on the Mac.
+    # package's tests, then the native app's snapshot tests offscreen on the Mac and on a Simulator.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -92,11 +92,38 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - uses: actions/cache@v4
+        with:
+          path: target/fixtures
+          key: book-fixtures-${{ hashFiles('books/fetch-fixtures.sh') }}
+          restore-keys: book-fixtures-
+
       - name: Build InklingCore
         run: PROFILE=dev apple/core.sh
 
       - name: Swift tests
         run: swift test --package-path apple/InklingCore
+
+      - name: Mac snapshots
+        run: INKLING_SNAP_OUT="$RUNNER_TEMP/snap" apple/snap.sh mac
+
+      - name: iPhone snapshots
+        run: |
+          runtime=$(xcrun simctl list runtimes iOS --json | jq -r '[.runtimes[] | select(.isAvailable)] | last | .identifier')
+          model=$(xcrun simctl list devicetypes --json | jq -r '[.devicetypes[] | select(.name | test("^iPhone [0-9]+ Pro$"))] | last | .identifier')
+          udid=$(xcrun simctl create snapshots "$model" "$runtime")
+          xcrun simctl boot "$udid"
+          INKLING_SNAP_OUT="$RUNNER_TEMP/snap" apple/snap.sh iphone "$udid"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-app-screenshots
+          path: ${{ runner.temp }}/snap
+          if-no-files-found: ignore
 
   server:
     name: Server types and tests

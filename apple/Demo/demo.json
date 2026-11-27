@@ -1,0 +1,13 @@
+{
+  "articles": [
+    { "url": "https://en.wikisource.org/wiki/The_Atlantic_Monthly/Volume_9/Number_56/Walking", "file": "walking.html" },
+    { "url": "https://en.wikisource.org/wiki/Virginibus_Puerisque_and_Other_Papers/An_Apology_for_Idlers", "file": "idlers.html", "fraction": 0.42 },
+    { "url": "https://en.wikisource.org/wiki/Essays:_First_Series/Self-Reliance", "file": "selfreliance.html", "fraction": 0.12 },
+    { "url": "https://en.wikisource.org/wiki/Resistance_to_Civil_Government", "file": "civil.html", "fraction": 1.0, "archived": true }
+  ],
+  "books": {
+    "pride-and-prejudice.epub": 0.3,
+    "walden.epub": 0.0,
+    "rfc2616.pdf": 0.0
+  }
+}

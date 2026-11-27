@@ -214,6 +214,9 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
         cover,
         opened: 0,
         position_at: row.position_at,
+        archived: 0,
+        site: None,
+        words: 0,
     })
 }
 
