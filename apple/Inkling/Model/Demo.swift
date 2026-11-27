@@ -25,9 +25,10 @@ enum Demo {
         guard let data = try? Data(contentsOf: folder.appending(path: "demo.json")),
               let shelf = try? JSONDecoder().decode(Shelf.self, from: data) else { return }
         for (name, fraction) in shelf.books.sorted(by: { $0.key < $1.key }) {
-            guard let books, let item = try? library.addFile(path: books.appending(path: name).path) else { continue }
-            let chapter = UInt32(Float(item.chapters) * fraction)
-            try? library.setPosition(id: item.id, chapter: min(chapter, max(item.chapters, 1) - 1), fraction: 0.3)
+            guard let books, let item = try? library.addFile(path: books.appending(path: name).path), fraction > 0 else { continue }
+            let through = Float(item.chapters) * fraction
+            let chapter = min(UInt32(through), max(item.chapters, 1) - 1)
+            try? library.setPosition(id: item.id, chapter: chapter, fraction: through - Float(chapter))
         }
         for article in shelf.articles.reversed() {
             guard let html = try? String(contentsOf: folder.appending(path: article.file), encoding: .utf8),

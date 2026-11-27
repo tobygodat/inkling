@@ -34,13 +34,15 @@ final class MacSnapshots {
         #expect(shelf.queue.map(\.title) == ["Walking", "An Apology for Idlers", "Self-Reliance"], "the Queue is the articles still to read, newest first")
         #expect(shelf.archive.map(\.title) == ["Resistance to Civil Government"])
         #expect(shelf.books.count == 3)
+        let walden = try #require(shelf.books.first { $0.title == "Walden" })
+        #expect(walden.progress == 0, "a book not yet read opens at its start")
 
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             for section in Section.allCases {
                 let navigator = Navigator()
                 navigator.section = section
                 if section == .queue { navigator.selection = shelf.queue[0].id }
-                if section == .library { navigator.selection = shelf.books.first { $0.title.hasPrefix("Pride") }?.id }
+                if section == .library { navigator.selection = shelf.books.first { $0.title.hasPrefix(name == "light" ? "Walden" : "Pride") }?.id }
                 try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
             }
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
