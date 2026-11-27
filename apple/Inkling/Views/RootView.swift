@@ -147,7 +147,7 @@ private struct SearchView: View {
             ContentUnavailableView.search(text: words)
         }
         .navigationTitle("Search")
-        .searchable(text: $query, prompt: "Titles, authors and sites")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Titles, authors and sites")
     }
 }
 

@@ -32,6 +32,14 @@ struct InklingCommands: Commands {
                 .keyboardShortcut("h", modifiers: [.command, .shift])
                 .disabled(reader == nil)
         }
+        CommandMenu("Go") {
+            Button("Previous Chapter") { if let reader { reader.go(toChapter: reader.chapter - 1, .instant) } }
+                .keyboardShortcut("[")
+                .disabled((reader?.chapter ?? 0) == 0)
+            Button("Next Chapter") { if let reader { reader.go(toChapter: reader.chapter + 1, .instant) } }
+                .keyboardShortcut("]")
+                .disabled(reader.map { $0.chapter + 1 >= $0.chapters } ?? true)
+        }
         CommandGroup(after: .toolbar) {
             Button("Bigger Text") { resize(1) }
                 .keyboardShortcut("+")

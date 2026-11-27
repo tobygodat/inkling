@@ -156,6 +156,14 @@ pub trait Fetcher: Send + Sync {
     fn fetch(&self, url: String) -> Option<Vec<u8>>;
 }
 
+/// The data folder the GPUI app keeps, so the native app opens the same library and look:
+/// `INKLING_DATA_DIR` when set, else `~/Library/Application Support/Inkling`. On iPhone `HOME` is
+/// the app's own container, so the folder is too.
+#[uniffi::export]
+pub fn data_folder() -> String {
+    inkling_core::Paths::mac().dir.to_string_lossy().into_owned()
+}
+
 /// The library in a data folder: `<data>/library/`, the same folder the GPUI app keeps.
 #[derive(uniffi::Object)]
 pub struct Library {

@@ -29,12 +29,11 @@ final class Shelf {
         items = library.items()
     }
 
-    /// The data folder: `INKLING_DATA_DIR` when set, as every headless run sets it, else the
-    /// folder the GPUI app keeps on the Mac, or the app's own on iPhone.
+    /// The data folder core names: `INKLING_DATA_DIR` when set, as every headless run sets it, else
+    /// the folder the GPUI app keeps on the Mac, or the app's own on iPhone.
     static func launch() -> Shelf {
         let environment = ProcessInfo.processInfo.environment
-        let folder = environment["INKLING_DATA_DIR"].map { URL(filePath: $0) }
-            ?? URL.applicationSupportDirectory.appending(path: "Inkling")
+        let folder = URL(filePath: dataFolder(), directoryHint: .isDirectory)
         do {
             let shelf = try Shelf(folder: folder)
             if let demo = environment["INKLING_DEMO"], shelf.items.isEmpty {

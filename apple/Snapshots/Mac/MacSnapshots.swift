@@ -104,6 +104,60 @@ final class MacSnapshots {
         #expect(again.jump.map { abs($0 - middle) <= 1 } == true, "the reader opens at the place, to the character a stored f32 fraction keeps")
     }
 
+    @Test func chaptersAndFootnotes() async throws {
+        let walden = try #require(shelf.books.first { $0.title == "Walden" })
+        let book = try await shelf.open(walden.id)
+        let set = Typesetting(face: "Source Serif 4", size: 21, lineHeight: 1.75, titleSize: 36, palette: palette(.aqua), column: 700)
+        let rendered = Renderer.render(book, set: set, folder: URL(filePath: shelf.library.folder()), byline: nil)
+        let text = rendered.text.string as NSString
+        #expect(rendered.titles == ["Where I Lived, and What I Lived For", "Economy"])
+
+        #expect(!text.contains("[^") && !text.contains("\u{1}"), "no footnote mark shows its Markdown")
+        let mark = text.range(of: "teach.1").location + "teach.".count
+        let offset = { (at: Int) in rendered.text.attribute(.baselineOffset, at: at, effectiveRange: nil) as? CGFloat ?? 0 }
+        #expect(offset(mark) > offset(mark - 1) + 5, "the mark is raised")
+        #expect(rendered.text.attribute(.foregroundColor, at: mark, effectiveRange: nil) as? NSColor == set.palette.link, "the mark is in Link")
+        #expect(text.range(of: "1\tWritten at the pond in the spring of 1846.").location != NSNotFound, "the note hangs from its label")
+
+        let model = ReaderModel(item: walden, rendered: rendered, shelf: shelf)
+        let markdown = book.chapters[0].text.utf8
+        for words in ["Written at the pond", "see if I could not learn what it had to teach"] {
+            model.highlight(text.range(of: words))
+            let passage = try #require(model.highlights.first { $0.words == words })
+            let start = markdown.index(markdown.startIndex, offsetBy: Int(passage.start))
+            let end = markdown.index(markdown.startIndex, offsetBy: Int(passage.end))
+            #expect(String(markdown[start..<end]) == words, "a passage near a mark is kept as its chapter's own bytes")
+            model.remove(passage)
+        }
+
+        let next = text.range(of: "Next: Economy")
+        #expect(NSLocationInRange(next.location, rendered.chapters[0]), "\"Next: …\" ends the chapter before")
+        let link = try #require(rendered.text.attribute(.link, at: next.location, effectiveRange: nil) as? URL)
+        #expect(Renderer.chapter(of: link) == 1)
+        #expect(text.range(of: "Next:", options: [], range: rendered.chapters[1]).location == NSNotFound, "the last chapter leads nowhere")
+        model.go(toChapter: 1, .glide)
+        #expect(model.jump == rendered.chapters[1].location && model.motion == .glide)
+        model.jump = nil
+        model.go(toChapter: 2, .fade)
+        #expect(model.jump == nil, "there is no chapter after the last")
+
+        #expect(ProcessInfo.processInfo.environment["INKLING_DATA_DIR"] != nil || dataFolder() == NSHomeDirectory() + "/Library/Application Support/Inkling", "the app opens the GPUI app's data folder")
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            try shelf.library.setPosition(id: walden.id, chapter: 0, fraction: 0)
+            shelf.reload()
+            let navigator = Navigator()
+            navigator.section = .library
+            navigator.selection = walden.id
+            try await shoot(root(navigator), "\(name)-reader-footnotes", appearance)
+            try shelf.library.setPosition(id: walden.id, chapter: 0, fraction: 0.62)
+            shelf.reload()
+            try await shoot(root(navigator), "\(name)-reader-chapters", appearance)
+        }
+        try shelf.library.setPosition(id: walden.id, chapter: 0, fraction: 0)
+        shelf.reload()
+    }
+
     @Test func aBookFileAndALinkAreAddedThroughTheBridge() async throws {
         let fixtures = URL(filePath: ProcessInfo.processInfo.environment["INKLING_FIXTURES"] ?? "")
         let folder = data.appending(path: "added")
