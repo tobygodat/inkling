@@ -96,8 +96,10 @@ pub fn run(transport: &dyn Transport, sign_in: &mut SignIn, state: &documents::S
         }
         n.to_string()
     })?;
-    let library = library::sync(&api, &paths.dir.join("library"))?;
+    // Readwise status goes before `library::sync` so no network call follows settling inbox or
+    // incoming items (which deletes their staged files on the server).
     let readwise = api.json::<serde_json::Value>(Method::Get, "/v1/readwise", api::Body::None)?["connected"].as_bool().unwrap_or(false);
+    let library = library::sync(&api, &paths.dir.join("library"))?;
     Ok(Synced { documents, library, readwise })
 }
 
@@ -188,4 +190,46 @@ pub fn load_state(paths: &inkling_core::Paths, kind: &str) -> documents::State {
 
 pub fn save_state(paths: &inkling_core::Paths, state: &documents::State) -> std::io::Result<()> {
     inkling_books::library::write_atomic(&paths.dir.join("sync.json"), &serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn readwise_status_offline_in_run_never_loses_an_incoming_article() {
+        struct DropReadwiseOnce<'a> {
+            inner: &'a Fake,
+            dropped: AtomicBool,
+        }
+
+        impl Transport for DropReadwiseOnce<'_> {
+            fn send(&self, method: Method, url: &str, headers: &[(&str, &str)], body: Option<(&str, &[u8])>) -> Result<Response, Error> {
+                if method == Method::Get && url.ends_with("/v1/readwise") && !self.dropped.swap(true, Ordering::Relaxed) {
+                    return Err(Error::Offline);
+                }
+                self.inner.send(method, url, headers, body)
+            }
+        }
+
+        let fake = Fake::memory();
+        let words = "The tide came in slowly over the flats, and the birds lifted as it reached them. ".repeat(8);
+        let html = format!("<!doctype html><html><head><title>Safe Save</title></head><body><article><h1>Safe Save</h1><p>{words}</p></article></body></html>");
+        fake.stage_incoming("save", "queue", "https://shore.example/safe", Some("Safe Save"), html.as_bytes());
+
+        let begun = account::begin(&fake, FAKE_SERVER, "inkling://callback", "test").unwrap();
+        let mut sign_in = begun.finish(&fake, &fake_way_back(&begun.url).unwrap()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = inkling_core::Paths { dir: dir.path().to_path_buf() };
+        let state = load_state(&paths, "mac");
+
+        let flaky = DropReadwiseOnce { inner: &fake, dropped: AtomicBool::new(false) };
+        assert!(matches!(run(&flaky, &mut sign_in, &state, &paths), Err(Error::Offline)));
+
+        // Because `/v1/readwise` ran before `library::sync`, the staged item wasn't settled yet and imports on retry.
+        let recovered = run(&flaky, &mut sign_in, &state, &paths).unwrap();
+        assert_eq!(recovered.library.imported.len(), 1);
+        assert_eq!(recovered.library.imported[0].title, "Safe Save");
+    }
 }
