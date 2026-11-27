@@ -1,7 +1,7 @@
 #!/bin/bash
-# Archives Inkling for a real iPhone in Release, exports it ad hoc (release-testing) for the devices
-# registered on team Q6NAWA42Y2, uploads it to inkling-server and prints the install link, good for
-# 24 hours. Usage: ota.sh [build number]
+# Archives Inkling Dev (com.tobygodat.inkling.dev) for a real iPhone in Release, exports it ad hoc
+# (release-testing) for the devices registered on team Q6NAWA42Y2, uploads it to inkling-server and
+# prints the install link, good for 24 hours. Usage: ota.sh [build number]
 # The build number defaults to the UTC time, as in testflight.sh. Xcode's signed-in account signs
 # the build. The upload token is read from the login Keychain (service inkling-ota, account
 # upload-token) and goes to curl on stdin, so it is never in a file, an argument or the log.
@@ -13,19 +13,24 @@ build="${1:-$(date -u +%Y%m%d.%H%M)}"
 server="${INKLING_SERVER:-https://inkling-server.tobygodat.workers.dev}"
 archive="$root/target/Inkling-ota.xcarchive"
 export_dir="$root/target/ota"
+bundle_id="com.tobygodat.inkling.dev"
+display_name="Inkling Dev"
 
 security find-generic-password -s inkling-ota -a upload-token >/dev/null 2>&1 \
   || { echo "error: no upload-token in the login Keychain under inkling-ota; see ios/README.md" >&2; exit 1; }
 
-# The same Release archive as testflight.sh.
+# Own bundle ID and display name so OTA installs sit beside TestFlight (com.tobygodat.inkling).
 ./fetch-mobile.sh
 PLATFORM_NAME=iphoneos CONFIGURATION=Release ./cargo-ios.sh
 xcodegen generate --spec app/project.yml --project app --quiet
 rm -rf "$archive" "$export_dir"
 mkdir -p "$export_dir"
 xcodebuild -project app/Inkling.xcodeproj -scheme Inkling -configuration Release \
-  -destination 'generic/platform=iOS' -archivePath "$archive" -derivedDataPath "$root/target/xcode-release" \
-  -allowProvisioningUpdates CURRENT_PROJECT_VERSION="$build" -quiet archive
+  -destination 'generic/platform=iOS' -archivePath "$archive" -derivedDataPath "$root/target/xcode-ota" \
+  -allowProvisioningUpdates CURRENT_PROJECT_VERSION="$build" \
+  PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
+  INFOPLIST_KEY_CFBundleDisplayName="$display_name" \
+  -quiet archive
 
 cat >"$export_dir/ExportOptions.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,5 +53,5 @@ response="$(security find-generic-password -s inkling-ota -a upload-token -w \
   | sed 's/^/Authorization: Bearer /' \
   | curl --silent --show-error --fail-with-body -H @- -H 'content-type: application/octet-stream' \
     --data-binary @"$export_dir/Inkling.ipa" "$server/builds?version=$version&build=$build")"
-echo "uploaded Inkling $version ($build). Open this on the iPhone within 24 hours:"
+echo "uploaded $display_name $version ($build). Open this on the iPhone within 24 hours:"
 plutil -extract url raw -o - - <<<"$response"

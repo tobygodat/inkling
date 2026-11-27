@@ -83,12 +83,15 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   `ios/README.md` lists what is still driven by hand.
 - `ios/bench.sh <agent-device>` types 50 characters into a 5,000-word draft in the installed Debug
   build and prints the median and worst time from a typed character to its painted frame.
-- `ios/testflight.sh` archives the iPhone app in Release for a real device, signs it for the App
-  Store (team Q6NAWA42Y2), refuses any build that imports a symbol missing from the public SDK
-  headers, and uploads it to TestFlight. Xcode's signed-in account signs it, and `altool` uploads it
-  with the App Store Connect API key in the login Keychain (service `inkling-app-store-connect`). It
-  sends a build to Apple, so run it only when Toby asks for a TestFlight build.
-- `ios/ota.sh` archives the iPhone app in Release for a real device, exports it ad hoc
+- `ios/testflight.sh` archives the iPhone app in Release for a real device under bundle ID
+  `com.tobygodat.inkling` ("Inkling"), signs it for the App Store (team Q6NAWA42Y2), refuses any
+  build that imports a symbol missing from the public SDK headers, and uploads it to TestFlight.
+  Xcode's signed-in account signs it, and `altool` uploads it with the App Store Connect API key in
+  the login Keychain (service `inkling-app-store-connect`). It sends a build to Apple, so run it
+  only when Toby asks for a TestFlight build.
+- `ios/ota.sh` archives the iPhone app in Release for a real device under bundle ID
+  `com.tobygodat.inkling.dev` ("Inkling Dev") so it installs beside the TestFlight app
+  (`com.tobygodat.inkling`) with its own sandbox data and sign-in, exports it ad hoc
   (`release-testing`) for the iPhones registered on team Q6NAWA42Y2, uploads it to `inkling-server`
   and prints an install link that works for 24 hours. It sends nothing to Apple, so any thread
   working on Toby's Mac may run it without asking, and hands Toby the link. The upload token is
