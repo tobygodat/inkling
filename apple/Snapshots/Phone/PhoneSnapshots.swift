@@ -73,6 +73,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
                 shoot("\(name)-\(tab.lowercased())")
             }
             XCTAssertTrue(row(app, "Walking").exists, "Search starts from everything in the library")
+            leaveSearch(app)
             app.tabBars.buttons["Queue"].tap()
 
             app.terminate()
@@ -101,6 +102,14 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         XCTAssertLessThan(ground(), 0.2, "Dark recolours the open reader")
         choose(app, "System")
         app.terminate()
+    }
+
+    /// On some iOS versions the Search tab folds the other tabs into one button; tapping it brings
+    /// them back.
+    @MainActor private func leaveSearch(_ app: XCUIApplication) {
+        guard !app.tabBars.buttons["Queue"].waitForExistence(timeout: 1) else { return }
+        app.tabBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.tabBars.buttons["Queue"].waitForExistence(timeout: 5), "the tabs come back from Search")
     }
 
     /// Brings the reader's bars back with a tap if reading put them away.
