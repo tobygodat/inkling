@@ -31,6 +31,12 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-reader-highlight")
             XCTAssertEqual(highlights(app), 1, "the passage is highlighted")
 
+            reader.swipeUp(velocity: .slow)
+            sleep(1)
+            XCTAssertFalse(app.buttons["appearance"].isHittable, "the bars get out of the way as the reader reads on")
+            shoot("\(name)-reader-immersed")
+            showChrome(app)
+
             app.buttons["appearance"].tap()
             let sepia = app.buttons["tone-sepia"]
             XCTAssertTrue(sepia.waitForExistence(timeout: 5))
@@ -40,6 +46,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
             sleep(1)
             shoot("\(name)-reader-sepia")
+            showChrome(app)
             app.navigationBars.buttons.element(boundBy: 0).tap()
 
             row(app, "Self-Reliance").swipeLeft()
@@ -55,12 +62,17 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-save-link")
             app.buttons["Cancel"].tap()
 
-            for tab in ["Library", "Archive", "Inbox", "Notebook"] {
+            app.buttons["archive"].tap()
+            XCTAssertTrue(row(app, "Self-Reliance").waitForExistence(timeout: 5), "what was archived is in the Archive, a step inside the Queue")
+            shoot("\(name)-archive")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+
+            for tab in ["Library", "Inbox", "Notebook", "Search"] {
                 app.tabBars.buttons[tab].tap()
                 sleep(1)
                 shoot("\(name)-\(tab.lowercased())")
-                if tab == "Archive" { XCTAssertTrue(row(app, "Self-Reliance").exists, "what was archived is in the Archive") }
             }
+            XCTAssertTrue(row(app, "Walking").exists, "Search starts from everything in the library")
             app.tabBars.buttons["Queue"].tap()
 
             app.terminate()
@@ -68,6 +80,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             row(again, "An Apology for Idlers").tap()
             XCTAssertTrue(again.textViews["reader"].waitForExistence(timeout: 10))
             XCTAssertEqual(highlights(again), 1, "the highlight is kept through a relaunch")
+            showChrome(again)
             again.buttons["appearance"].tap()
             XCTAssertTrue(again.buttons["tone-sepia"].waitForExistence(timeout: 5))
             XCTAssertTrue(again.buttons["tone-sepia"].isSelected, "the paper is kept through a relaunch")
@@ -88,6 +101,13 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         XCTAssertLessThan(ground(), 0.2, "Dark recolours the open reader")
         choose(app, "System")
         app.terminate()
+    }
+
+    /// Brings the reader's bars back with a tap if reading put them away.
+    @MainActor private func showChrome(_ app: XCUIApplication) {
+        guard !app.buttons["appearance"].isHittable else { return }
+        app.textViews["reader"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        sleep(1)
     }
 
     /// Opens Appearance, picks Auto paper and `mode` for the app, and closes it again.
@@ -139,6 +159,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
     /// Opens the reader's Highlights menu, counts the passages in it and closes it.
     @MainActor private func highlights(_ app: XCUIApplication) -> Int {
         sleep(1)
+        showChrome(app)
         app.buttons["highlights"].tap()
         _ = app.buttons["passage"].waitForExistence(timeout: 3)
         let count = app.buttons.matching(identifier: "passage").count

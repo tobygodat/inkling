@@ -54,6 +54,12 @@ pub struct Entry {
     /// How many words it has, for how long it takes to read. 0 for one added before this was kept.
     #[serde(default)]
     pub words: usize,
+    /// An article's summary of itself, for its row.
+    #[serde(default)]
+    pub excerpt: Option<String>,
+    /// An article's first picture, its path relative to the library's folder, for its row.
+    #[serde(default)]
+    pub picture: Option<String>,
 }
 
 impl Entry {
@@ -105,6 +111,11 @@ impl Library {
         entry.cover.as_ref().map(|name| self.dir.join("covers").join(name))
     }
 
+    /// Where an article's first picture is on disk, if it has one.
+    pub fn picture_path(&self, entry: &Entry) -> Option<PathBuf> {
+        entry.picture.as_ref().map(|path| self.dir.join(path))
+    }
+
     pub fn entry(&self, id: &BookId) -> Option<&Entry> {
         self.entries.iter().find(|e| &e.id == id)
     }
@@ -124,6 +135,12 @@ impl Library {
                 }
                 if entry.words == 0 {
                     entry.words = book.words;
+                }
+                if entry.excerpt.is_none() {
+                    entry.excerpt = book.excerpt.clone();
+                }
+                if entry.picture.is_none() {
+                    entry.picture = book.picture.clone();
                 }
                 if let Some(old) = &book.before {
                     (entry.title, entry.author, entry.chapters) = (book.title.clone(), book.author.clone(), book.chapters);
@@ -153,6 +170,8 @@ impl Library {
                     archived: 0,
                     site: book.site.clone(),
                     words: book.words,
+                    excerpt: book.excerpt.clone(),
+                    picture: book.picture.clone(),
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -337,6 +356,8 @@ pub struct Prepared {
     pub before: Option<Vec<Option<String>>>,
     pub site: Option<String>,
     pub words: usize,
+    pub excerpt: Option<String>,
+    pub picture: Option<String>,
 }
 
 /// Reads, parses and stores the book at `path` under `dir`, without touching the index, so it
@@ -476,8 +497,21 @@ impl Prepared {
             before: None,
             site: book.source.as_ref().and_then(|s| s.site.clone().or_else(|| host(&s.url))),
             words: book.chapters.iter().map(|c| c.text.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count()).sum(),
+            excerpt: book.source.as_ref().and_then(|s| s.excerpt.clone()),
+            picture: (book.format == Format::Article).then(|| book.chapters.iter().find_map(|c| first_picture(&c.text))).flatten(),
         }
     }
+}
+
+/// The path of the first picture a chapter's Markdown shows from the library's folder: the
+/// `![alt](path)` of a picture that was fetched, not the address of one that wasn't.
+fn first_picture(markdown: &str) -> Option<String> {
+    markdown.match_indices("![").find_map(|(at, _)| {
+        let rest = &markdown[at + 2..];
+        let target = &rest[rest.find("](")? + 2..];
+        let path = target.split([')', ' ']).next()?;
+        (!path.is_empty() && !path.contains("://")).then(|| path.to_string())
+    })
 }
 
 /// The host of a web address, without `www.`.

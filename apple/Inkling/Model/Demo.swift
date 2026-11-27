@@ -17,8 +17,16 @@ enum Demo {
         let books: [String: Float]
     }
 
-    private final class Offline: Fetcher {
-        func fetch(url: String) -> Data? { nil }
+    /// Serves the demo's pictures from `pictures/` for `https://demo.inkling/<name>`, and nothing else,
+    /// so seeding never reaches the network.
+    private final class Pictures: Fetcher {
+        let folder: URL
+        init(_ folder: URL) { self.folder = folder }
+
+        func fetch(url: String) -> Data? {
+            guard let url = URL(string: url), url.host() == "demo.inkling" else { return nil }
+            return try? Data(contentsOf: folder.appending(path: "pictures").appending(path: url.lastPathComponent))
+        }
     }
 
     static func seed(_ library: Library, from folder: URL, books: URL?) {
@@ -32,7 +40,7 @@ enum Demo {
         }
         for article in shelf.articles.reversed() {
             guard let html = try? String(contentsOf: folder.appending(path: article.file), encoding: .utf8),
-                  let item = try? library.saveArticle(url: article.url, html: html, fetcher: Offline()) else { continue }
+                  let item = try? library.saveArticle(url: article.url, html: html, fetcher: Pictures(folder)) else { continue }
             if let fraction = article.fraction { try? library.setPosition(id: item.id, chapter: 0, fraction: fraction) }
             if article.archived == true { try? library.setArchived(id: item.id, archived: true) }
         }

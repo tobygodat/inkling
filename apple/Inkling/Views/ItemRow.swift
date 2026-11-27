@@ -1,58 +1,92 @@
+import ImageIO
 import InklingCore
 import SwiftUI
 
-/// One item: its title in the reading face, where it is from and how long it takes, how far
-/// through it the reader is, and a book's cover.
+/// One item as a card: where it is from, its title in the reading face, a line or two of what it
+/// says, how long it takes and how far through it the reader is, and its picture: an article's
+/// first one, a book's cover. Each part that's missing leaves no gap.
 struct ItemRow: View {
     @Environment(\.palette) private var palette
     let item: Item
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 0) {
+                if let from {
+                    Text(from)
+                        .font(.inter(12, weight: .medium, relativeTo: .caption))
+                        .foregroundStyle(Color(palette.muted))
+                        .lineLimit(1)
+                        .padding(.bottom, 5)
+                }
                 Text(item.title)
-                    .font(.serif(17, weight: .semibold, relativeTo: .headline))
-                    .foregroundStyle(ink)
+                    .font(.serif(18, weight: .semibold, relativeTo: .headline))
+                    .foregroundStyle(Color(palette.ink))
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
-                HStack(spacing: 8) {
-                    Text(details)
-                        .font(.inter(13, relativeTo: .subheadline))
-                        .foregroundStyle(muted)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Progress(item: item, ink: ink, track: muted.opacity(0.3))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let excerpt {
+                    Text(excerpt)
+                        .font(.inter(14, relativeTo: .subheadline))
+                        .foregroundStyle(Color(palette.muted))
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .padding(.top, 6)
                 }
+                HStack(spacing: 10) {
+                    Text(details)
+                        .font(.inter(12, relativeTo: .caption))
+                        .foregroundStyle(Color(palette.muted))
+                        .lineLimit(1)
+                    Progress(item: item, ink: Color(palette.ink), track: Color(palette.muted).opacity(0.25))
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 10)
             }
-            if let cover = item.cover, let image = Covers.image(cover) {
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 42, height: 62)
-                    .clipShape(.rect(cornerRadius: 3))
-                    .overlay { RoundedRectangle(cornerRadius: 3).strokeBorder(Color(palette.hairline), lineWidth: 0.5) }
-                    .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            picture
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 16)
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
     }
 
-    private var ink: Color { Color(palette.ink) }
-    private var muted: Color { Color(palette.muted) }
+    @ViewBuilder private var picture: some View {
+        if item.kind == .article, let path = item.picture, let image = Thumbnails.image(path) {
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 84, height: 84)
+                .clipShape(.rect(cornerRadius: 10))
+                .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Color(palette.hairline), lineWidth: 0.5) }
+        } else if let path = item.cover, let image = Thumbnails.image(path) {
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 56, height: 84)
+                .clipShape(.rect(cornerRadius: 3))
+                .overlay { RoundedRectangle(cornerRadius: 3).strokeBorder(Color(palette.hairline), lineWidth: 0.5) }
+                .shadow(color: .black.opacity(0.1), radius: 3, y: 1)
+        }
+    }
+
+    /// The site an article is from, or a book's author.
+    private var from: String? {
+        item.kind == .article ? item.site : item.author
+    }
+
+    private var excerpt: String? {
+        guard let excerpt = item.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines), !excerpt.isEmpty else { return nil }
+        return excerpt
+    }
 
     private var details: String {
-        var parts: [String] = []
         switch item.kind {
         case .article:
-            if let site = item.site { parts.append(site) }
-            if let minutes = item.minutes { parts.append("\(minutes) min") }
-        case .epub, .pdf:
-            if let author = item.author { parts.append(author) }
-            parts.append(item.kind == .pdf ? "PDF" : "Book")
+            [item.author, item.minutes.map { "\($0) min" }].compactMap(\.self).joined(separator: " · ")
+        case .epub: "Book"
+        case .pdf: "PDF"
         }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -80,19 +114,16 @@ private struct Progress: View {
     }
 }
 
-/// Book covers, read from disk once.
-enum Covers {
+/// Pictures for the rows, decoded once at the size a row draws them, off the full-size files.
+enum Thumbnails {
     private static var cache: [String: Image] = [:]
 
     static func image(_ path: String) -> Image? {
         if let image = cache[path] { return image }
-        #if os(macOS)
-        guard let platform = NSImage(contentsOfFile: path) else { return nil }
-        let image = Image(nsImage: platform)
-        #else
-        guard let platform = UIImage(contentsOfFile: path) else { return nil }
-        let image = Image(uiImage: platform)
-        #endif
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 300] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(URL(filePath: path) as CFURL, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        let image = Image(decorative: thumbnail, scale: 1)
         cache[path] = image
         return image
     }

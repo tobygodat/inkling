@@ -16,6 +16,9 @@ final class ReaderModel {
     var jump: Int?
     /// The text selected on the Mac, for Highlight in the menu bar.
     var selection = NSRange()
+    /// Whether the bars are out of the way: on iPhone they hide as the reader scrolls on and come
+    /// back on a scroll back or a tap.
+    var chromeHidden = false
     private let shelf: Shelf
 
     init(item: Item, rendered: Rendered, shelf: Shelf) {

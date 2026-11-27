@@ -11,7 +11,21 @@ struct SectionView: View {
         content
             .navigationTitle(section.title)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) { AddMenu() }
+                #if os(iOS)
+                if section == .queue || section == .library {
+                    ToolbarItem(placement: .topBarLeading) {
+                        NavigationLink {
+                            SectionView(section: .archive)
+                        } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
+                        .accessibilityIdentifier("archive")
+                    }
+                }
+                #endif
+                if section != .archive {
+                    ToolbarItem(placement: .primaryAction) { AddMenu() }
+                }
             }
     }
 

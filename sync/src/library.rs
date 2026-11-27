@@ -217,6 +217,8 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
         archived: 0,
         site: None,
         words: 0,
+        excerpt: None,
+        picture: None,
     })
 }
 
