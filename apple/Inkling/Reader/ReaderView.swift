@@ -12,6 +12,8 @@ struct ReaderView: View {
     @State private var model: ReaderModel?
     @State private var failed: String?
     @State private var choosing = false
+    /// The reader's width on iPhone, which a picture is fitted to.
+    @State private var width: CGFloat = 0
 
     var body: some View {
         let look = shelf.look
@@ -32,7 +34,8 @@ struct ReaderView: View {
             }
         }
         #if os(iOS)
-        .overlay { EdgeFades(ground: Color(palette.ground), shown: model?.chromeHidden != true) }
+        .overlay { EdgeFades(ground: Color(palette.ground), bottomShown: model?.chromeHidden != true) }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         #endif
         .overlay(alignment: .top) {
             if let model { ProgressLine(progress: model.progress, palette: palette) }
@@ -44,6 +47,7 @@ struct ReaderView: View {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) { Place(model: model, palette: palette) }
                 ToolbarItemGroup(placement: .bottomBar) {
+                    if model.chapters > 1 { Contents(model: model) }
                     Highlights(model: model)
                     Spacer()
                     Button("Archive", systemImage: "archivebox") {
@@ -54,6 +58,9 @@ struct ReaderView: View {
                     appearanceButton
                 }
                 #else
+                if model.chapters > 1 {
+                    ToolbarItem(placement: .primaryAction) { Contents(model: model) }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     appearanceButton
                         .popover(isPresented: $choosing, arrowEdge: .bottom) { AppearancePanel() }
@@ -78,7 +85,7 @@ struct ReaderView: View {
                 .presentationDetents([.height(330)])
         }
         #endif
-        .task(id: Setting(id: item.id, look: look, dark: palette.isDark)) { await load(look: look, palette: palette) }
+        .task(id: Setting(id: item.id, look: look, dark: palette.isDark, width: width)) { await load(look: look, palette: palette) }
         #if os(iOS)
         .onChange(of: look.tone, initial: true) { navigator.readerScheme = Self.scheme(of: look.tone, palette: palette) }
         .onDisappear { navigator.readerScheme = nil }
@@ -95,6 +102,9 @@ struct ReaderView: View {
     }
 
     private func load(look: Look, palette: Palette) async {
+        #if os(iOS)
+        guard width > 0 else { return }
+        #endif
         do {
             let book = try await shelf.open(item.id)
             #if os(macOS)
@@ -105,7 +115,7 @@ struct ReaderView: View {
             #else
             let scale: CGFloat = 19 / 21
             let lineScale: CGFloat = 1.65 / 1.75
-            let column = min(CGFloat(look.pageWidth), UIScreen.main.bounds.width - 48)
+            let column = min(CGFloat(look.pageWidth), width - 48)
             let title: CGFloat = 28
             #endif
             let set = Typesetting(
@@ -126,11 +136,13 @@ struct ReaderView: View {
         }
     }
 
-    /// What the text is drawn from: a new look or Light and Dark changing redraws it at the place.
+    /// What the text is drawn from: a new look, Light and Dark changing, or on iPhone the reader's
+    /// width, redraws it at the place.
     private struct Setting: Equatable {
         let id: String
         let look: Look
         let dark: Bool
+        let width: CGFloat
     }
 
     /// The Light or Dark a paper tone asks of the bars around it. Auto asks nothing: its paper
@@ -178,32 +190,80 @@ private struct Place: View {
 }
 
 #if os(iOS)
-/// The text dims into the paper under the bars, so a line never reads through their glass. The
-/// fades go with the bars.
+/// The text dims into the paper at the edges, so a line never reads through the bars' glass. At
+/// the top the text stops under the progress hairline, and the fade takes the line passing under it
+/// over the inset the column keeps above its first line, so nothing at rest is dimmed. The fade at
+/// the bottom goes with the bars.
 private struct EdgeFades: View {
     let ground: Color
-    let shown: Bool
+    let bottomShown: Bool
 
     var body: some View {
-        GeometryReader { space in
-            VStack(spacing: 0) {
-                fade(from: .top).frame(height: space.safeAreaInsets.top + 20)
-                Spacer(minLength: 0)
-                fade(from: .bottom).frame(height: space.safeAreaInsets.bottom + 100)
+        VStack(spacing: 0) {
+            fade(from: .top).frame(height: 26)
+            Spacer(minLength: 0)
+            GeometryReader { space in
+                fade(from: .bottom)
+                    .frame(height: space.safeAreaInsets.bottom + 100)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
             }
+            .ignoresSafeArea()
+            .opacity(bottomShown ? 1 : 0)
+            .animation(.easeInOut(duration: 0.25), value: bottomShown)
         }
-        .ignoresSafeArea()
-        .opacity(shown ? 1 : 0)
-        .animation(.easeInOut(duration: 0.25), value: shown)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
     private func fade(from edge: UnitPoint) -> LinearGradient {
-        LinearGradient(stops: [.init(color: ground, location: 0), .init(color: ground, location: 0.5), .init(color: ground.opacity(0), location: 1)], startPoint: edge, endPoint: edge == .top ? .bottom : .top)
+        let stops: [Gradient.Stop] = edge == .top
+            ? [.init(color: ground, location: 0), .init(color: ground.opacity(0), location: 1)]
+            : [.init(color: ground, location: 0), .init(color: ground, location: 0.5), .init(color: ground.opacity(0), location: 1)]
+        return LinearGradient(stops: stops, startPoint: edge, endPoint: edge == .top ? .bottom : .top)
     }
 }
 #endif
+
+/// The chapters in order, and the chapter before and after this one on the side nearest the
+/// button: below the list on iPhone, where the menu rises from the bottom bar, and above it on the
+/// Mac.
+private struct Contents: View {
+    let model: ReaderModel
+
+    var body: some View {
+        Menu {
+            #if os(iOS)
+            chapters
+            Divider()
+            steps
+            #else
+            steps
+            Divider()
+            chapters
+            #endif
+        } label: {
+            Label("Contents", systemImage: "list.bullet")
+        }
+        .menuOrder(.fixed)
+        .accessibilityIdentifier("contents")
+    }
+
+    private var chapters: some View {
+        Picker("Chapters", selection: Binding(get: { model.chapter }, set: { model.go(toChapter: $0, .fade) })) {
+            ForEach(model.rendered.titles.indices, id: \.self) { index in
+                Text(model.rendered.titles[index]).tag(index)
+            }
+        }
+        .pickerStyle(.inline)
+    }
+
+    @ViewBuilder private var steps: some View {
+        Button("Previous Chapter", systemImage: "chevron.backward") { model.go(toChapter: model.chapter - 1, .fade) }
+            .disabled(model.chapter == 0)
+        Button("Next Chapter", systemImage: "chevron.forward") { model.go(toChapter: model.chapter + 1, .fade) }
+            .disabled(model.chapter + 1 >= model.chapters)
+    }
+}
 
 /// How far through, as a hairline across the top of the reader.
 private struct ProgressLine: View {

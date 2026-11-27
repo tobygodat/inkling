@@ -15,6 +15,8 @@ nonisolated struct Rendered: @unchecked Sendable {
     let text: NSAttributedString
     /// Each chapter's characters in `text`, in UTF-16 units.
     let chapters: [NSRange]
+    /// Each chapter's title: the book's, else its first heading, else its number.
+    let titles: [String]
     /// The runs of text that come straight from the Markdown, in order.
     let runs: [Run]
 
@@ -96,6 +98,10 @@ nonisolated struct Renderer {
     private var chapter = 0
     private var lines: [Int] = [0]
     private var titled = false
+    /// The footnote definitions drawn so far in this chapter.
+    private var notes = 0
+    /// Bytes the next run of text leaves out: a footnote definition's `[^n]: `.
+    private var dropping = 0
 
     init(set: Typesetting, folder: URL, byline: String?) {
         self.set = set
@@ -105,28 +111,71 @@ nonisolated struct Renderer {
 
     static func render(_ book: Book, set: Typesetting, folder: URL, byline: String?) -> Rendered {
         var renderer = Renderer(set: set, folder: folder, byline: byline)
+        let titles = book.chapters.enumerated().map { title(of: $1, at: $0) }
         var spans: [NSRange] = []
         for (index, chapter) in book.chapters.enumerated() {
             let start = renderer.out.length
-            renderer.chapter(index, chapter, in: book)
+            renderer.chapter(index, chapter, in: book, next: titles.indices.contains(index + 1) ? titles[index + 1] : nil)
             spans.append(NSRange(location: start, length: renderer.out.length - start))
         }
-        return Rendered(text: renderer.out, chapters: spans, runs: renderer.runs)
+        return Rendered(text: renderer.out, chapters: spans, titles: titles, runs: renderer.runs)
     }
 
-    private mutating func chapter(_ index: Int, _ chapter: Chapter, in book: Book) {
-        self.chapter = index
-        lines = [0]
-        for (offset, byte) in chapter.text.utf8.enumerated() where byte == 0x0A { lines.append(offset + 1) }
-        let document = Document(parsing: chapter.text)
-        let opensWithHeading = document.child(at: 0) is Heading
-        if index > 0 {
-            append("\u{2042}\n", attributes(font: font(size: set.size * 0.9), color: set.palette.muted, paragraph: paragraph(align: .center, before: set.size * 2.4, after: set.size * 2.4)))
+    /// The link "Next: …" carries at a chapter's end.
+    static func link(toChapter index: Int) -> URL {
+        URL(string: "inkling-chapter:\(index)")!
+    }
+
+    static func chapter(of link: URL) -> Int? {
+        link.scheme == "inkling-chapter" ? Int(link.absoluteString.dropFirst("inkling-chapter:".count)) : nil
+    }
+
+    private static func title(of chapter: Chapter, at index: Int) -> String {
+        let heading = chapter.text.split(separator: "\n").first { $0.hasPrefix("#") }?.drop { $0 == "#" }
+        let title = (chapter.title ?? heading.map(String.init) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Chapter \(index + 1)" : title
+    }
+
+    /// Each footnote mark `[^n]`, which CommonMark reads as text or as a link, with its brackets
+    /// swapped for two control characters it leaves alone. Every byte stays where it was, so a
+    /// highlight still addresses the chapter's own Markdown. A mark the book escaped stays text.
+    static func marking(_ markdown: String) -> String {
+        guard markdown.contains("[^") else { return markdown }
+        return markdown.replacing(#/(\\?)\[\^([^\]\s]+)\]/#) { match in
+            match.output.1.isEmpty ? "\(Self.markOpen)^\(match.output.2)\(Self.markClose)" : String(match.output.0)
         }
+    }
+
+    private static let markOpen = "\u{1}"
+    private static let markClose = "\u{2}"
+
+    private mutating func chapter(_ index: Int, _ chapter: Chapter, in book: Book, next: String?) {
+        self.chapter = index
+        notes = 0
+        let markdown = Self.marking(chapter.text)
+        lines = [0]
+        for (offset, byte) in markdown.utf8.enumerated() where byte == 0x0A { lines.append(offset + 1) }
+        let document = Document(parsing: markdown)
+        let opensWithHeading = document.child(at: 0) is Heading
         if !opensWithHeading, let title = chapter.title, book.chapters.count > 1 {
             append(title + "\n", attributes(font: font(size: set.size * 1.35, weight: .semibold), color: set.palette.ink, paragraph: paragraph(before: 0, after: set.size * 0.9, lineHeight: 1.25)))
         }
         for block in document.children { self.block(block, indent: 0) }
+        if let next { nextLine(next, chapter: index + 1) }
+    }
+
+    /// "Next: …" at a chapter's end, centred in the UI face: the way on, and the break between
+    /// chapters.
+    private mutating func nextLine(_ title: String, chapter: Int) {
+        let style = paragraph(align: .center, before: set.size * 2.2, after: set.size * 3.6, lineHeight: 1.5)
+        let size = max(13, set.size * 0.7)
+        var label = attributes(font: interface(size: size, weight: .medium), color: set.palette.muted, paragraph: style)
+        label[.link] = Self.link(toChapter: chapter)
+        append("Next: ", label)
+        label[.foregroundColor] = set.palette.ink
+        append(title, label)
+        label[.foregroundColor] = set.palette.muted
+        append("  \u{2192}\n", label)
     }
 
     // MARK: Blocks
@@ -146,6 +195,10 @@ nonisolated struct Renderer {
                 }
             }
         case let paragraph as Paragraph:
+            if let first = paragraph.child(at: 0) as? Markdown.Text, let note = Self.note(first.string) {
+                footnote(paragraph, label: note.label, prefix: note.prefix, indent: indent)
+                return
+            }
             if let image = paragraph.children.compactMap({ $0 as? Markdown.Image }).first, paragraph.childCount == 1 {
                 figure(image, indent: indent)
                 return
@@ -184,6 +237,23 @@ nonisolated struct Renderer {
         default:
             for child in markup.children { block(child, indent: indent, quoted: quoted) }
         }
+    }
+
+    /// A footnote's definition, `[^n]: …`: its label in Link and its words in muted ink, a size
+    /// down, hanging from the label.
+    private mutating func footnote(_ paragraph: Paragraph, label: String, prefix: Int, indent: CGFloat) {
+        let size = set.size * 0.82
+        let style = self.paragraph(indent: indent, before: notes == 0 ? set.size * 1.6 : 0, after: set.size * 0.5, lineHeight: set.lineHeight * 0.92, hanging: size * 1.6, size: size)
+        notes += 1
+        append(label + "\t", attributes(font: font(size: size), color: set.palette.link, paragraph: style))
+        dropping = prefix
+        inlines(paragraph, Style(size: size, color: set.palette.muted), style)
+    }
+
+    /// The label of a footnote's definition and how many bytes its `[^n]: ` takes.
+    private static func note(_ text: String) -> (label: String, prefix: Int)? {
+        guard let match = text.prefixMatch(of: #/\x{1}\^([^\x{2}]+)\x{2}:[ \t]*/#) else { return nil }
+        return (String(match.output.1), text[match.range].utf8.count)
     }
 
     private mutating func listItem(_ item: ListItem, indent: CGFloat, marker: String) {
@@ -237,7 +307,7 @@ nonisolated struct Renderer {
         var style = style
         switch markup {
         case let text as Markdown.Text:
-            append(text.string, attributes(style, paragraph), source: text.range)
+            marked(text, style, paragraph)
         case is SoftBreak:
             append(" ", attributes(style, paragraph))
         case is LineBreak:
@@ -267,13 +337,48 @@ nonisolated struct Renderer {
         }
     }
 
+    /// A run of text, its footnote marks raised: each one's label, smaller, in Link.
+    private mutating func marked(_ text: Markdown.Text, _ style: Style, _ paragraph: NSParagraphStyle) {
+        var string = text.string
+        var bytes = text.range.flatMap { range in byte(range.lowerBound).flatMap { lower in byte(range.upperBound).map { lower..<max($0, lower) } } }
+        if bytes?.count != string.utf8.count, string.contains(Self.markOpen) || dropping > 0 { bytes = nil }
+        if dropping > 0 {
+            let drop = String(decoding: string.utf8.prefix(dropping), as: UTF8.self)
+            string.removeFirst(drop.count)
+            bytes = bytes.map { $0.lowerBound + dropping..<$0.upperBound }
+            dropping = 0
+        }
+        guard string.contains(Self.markOpen) else {
+            append(string, attributes(style, paragraph), bytes: bytes)
+            return
+        }
+        var at = string.startIndex
+        for match in string.matches(of: #/\x{1}\^([^\x{2}]+)\x{2}/#) {
+            let words = String(string[at..<match.range.lowerBound])
+            let offset = string.utf8.distance(from: string.startIndex, to: at)
+            if !words.isEmpty { append(words, attributes(style, paragraph), bytes: bytes.map { $0.lowerBound + offset..<$0.lowerBound + offset + words.utf8.count }) }
+            var mark = attributes(font: font(size: style.size * 0.64), color: set.palette.link, paragraph: paragraph)
+            mark[.baselineOffset] = ((attributes(style, paragraph)[.baselineOffset] as? CGFloat) ?? 0) + style.size * 0.36
+            append(String(match.output.1), mark)
+            at = match.range.upperBound
+        }
+        let rest = String(string[at...])
+        let offset = string.utf8.distance(from: string.startIndex, to: at)
+        if !rest.isEmpty { append(rest, attributes(style, paragraph), bytes: bytes.map { $0.lowerBound + offset..<$0.upperBound }) }
+    }
+
     // MARK: Text
 
     private mutating func append(_ string: String, _ attributes: [NSAttributedString.Key: Any], source: SourceRange? = nil) {
+        let bytes = source.flatMap { source in byte(source.lowerBound).flatMap { lower in byte(source.upperBound).flatMap { $0 >= lower ? lower..<$0 : nil } } }
+        append(string, attributes, bytes: bytes)
+    }
+
+    private mutating func append(_ string: String, _ attributes: [NSAttributedString.Key: Any], bytes: Range<Int>?) {
         let start = out.length
         out.append(NSAttributedString(string: string, attributes: attributes))
-        guard let source, let lower = byte(source.lowerBound), let upper = byte(source.upperBound), upper >= lower else { return }
-        runs.append(Rendered.Run(chapter: chapter, rendered: NSRange(location: start, length: out.length - start), source: lower..<upper, text: string))
+        guard let bytes else { return }
+        runs.append(Rendered.Run(chapter: chapter, rendered: NSRange(location: start, length: out.length - start), source: bytes, text: string))
     }
 
     private func byte(_ location: SourceLocation) -> Int? {
@@ -296,9 +401,9 @@ nonisolated struct Renderer {
         return [.font: font, .foregroundColor: color, .paragraphStyle: paragraph, .baselineOffset: offset]
     }
 
-    private func paragraph(indent: CGFloat = 0, align: NSTextAlignment = .natural, before: CGFloat, after: CGFloat, lineHeight: CGFloat? = nil, hanging: CGFloat = 0) -> NSParagraphStyle {
+    private func paragraph(indent: CGFloat = 0, align: NSTextAlignment = .natural, before: CGFloat, after: CGFloat, lineHeight: CGFloat? = nil, hanging: CGFloat = 0, size: CGFloat? = nil) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        let size = set.size
+        let size = size ?? set.size
         let line = (lineHeight ?? set.lineHeight) * size
         style.minimumLineHeight = line
         style.maximumLineHeight = line
@@ -317,8 +422,8 @@ nonisolated struct Renderer {
         Fonts.reading(set.face, size: size, bold: weight != .regular, italic: italic)
     }
 
-    private func interface(size: CGFloat) -> PlatformFont {
-        PlatformFont(name: Fonts.inter, size: size) ?? .systemFont(ofSize: size)
+    private func interface(size: CGFloat, weight: PlatformFont.Weight = .regular) -> PlatformFont {
+        PlatformFont(name: weight == .regular ? Fonts.inter : Fonts.interMedium, size: size) ?? .systemFont(ofSize: size, weight: weight)
     }
 }
 

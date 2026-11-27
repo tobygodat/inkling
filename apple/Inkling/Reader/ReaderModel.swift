@@ -14,6 +14,8 @@ final class ReaderModel {
     private(set) var fraction: Double
     /// Where the text should scroll to once, on opening or when a highlight is chosen.
     var jump: Int?
+    /// How the text gets to `jump`.
+    var motion = Motion.instant
     /// The text selected on the Mac, for Highlight in the menu bar.
     var selection = NSRange()
     /// Whether the bars are out of the way: on iPhone they hide as the reader scrolls on and come
@@ -90,5 +92,23 @@ final class ReaderModel {
 
     func go(to passage: Passage) {
         jump = rendered.range(of: passage)?.location
+    }
+
+    var chapters: Int { rendered.chapters.count }
+
+    /// Goes to the start of chapter `index`, if the book has one.
+    func go(toChapter index: Int, _ motion: Motion) {
+        guard rendered.chapters.indices.contains(index) else { return }
+        self.motion = motion
+        jump = rendered.chapters[index].location
+    }
+
+    /// How the text moves to a place. A keyboard command jumps, because it is pressed often and
+    /// any motion would make it feel slow. "Next: …" glides, because the next chapter is just
+    /// below. A chapter chosen from Contents dips out and in, rising from the direction it is in,
+    /// because scrolling through pages to get there would only blur. Reduce Motion keeps only the
+    /// dip's fade.
+    enum Motion {
+        case instant, glide, fade
     }
 }

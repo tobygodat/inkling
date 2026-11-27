@@ -72,6 +72,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
                 sleep(1)
                 shoot("\(name)-\(tab.lowercased())")
             }
+            XCTAssertTrue(app.searchFields.firstMatch.isHittable, "the Search field shows without pulling down")
             XCTAssertTrue(row(app, "Walking").exists, "Search starts from everything in the library")
             leaveSearch(app)
             app.tabBars.buttons["Queue"].tap()
@@ -102,6 +103,50 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         XCTAssertLessThan(ground(), 0.2, "Dark recolours the open reader")
         choose(app, "System")
         app.terminate()
+    }
+
+    /// A book's chapters: its footnote marks raised, "Next: …" at a chapter's end going on to the next,
+    /// and Contents going back.
+    @MainActor func testChaptersAndFootnotes() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        for name in ["light", "dark"] {
+            appearance = name
+            let app = launch(data: "\(base)/chapters-\(name)", demo: true)
+            app.tabBars.buttons["Library"].tap()
+            row(app, "Walden").tap()
+            let reader = app.textViews["reader"]
+            XCTAssertTrue(reader.waitForExistence(timeout: 10))
+            sleep(1)
+            shoot("\(name)-reader-footnotes")
+            XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), place(app))
+
+            let next = reader.links.matching(NSPredicate(format: "label BEGINSWITH 'Next: Economy'")).firstMatch
+            XCTAssertTrue(next.waitForExistence(timeout: 5), "the chapter ends with \"Next: …\"")
+            for _ in 0..<4 where !next.isHittable {
+                reader.swipeUp(velocity: .slow)
+                sleep(1)
+            }
+            shoot("\(name)-reader-next")
+            next.tap()
+            sleep(2)
+            XCTAssertTrue(place(app).hasPrefix("Chapter 2 of 2"), "\"Next: …\" goes to the next chapter: \(place(app))")
+            shoot("\(name)-reader-next-chapter")
+
+            app.buttons["contents"].tap()
+            let first = app.buttons["Where I Lived, and What I Lived For"]
+            XCTAssertTrue(first.waitForExistence(timeout: 5), "Contents lists the chapters")
+            shoot("\(name)-reader-contents")
+            first.tap()
+            sleep(2)
+            XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), "a chapter chosen in Contents opens: \(place(app))")
+            app.terminate()
+        }
+    }
+
+    /// The place in the reader's bar, the bars brought back first.
+    @MainActor private func place(_ app: XCUIApplication) -> String {
+        showChrome(app)
+        return app.staticTexts["place"].label
     }
 
     /// On some iOS versions the Search tab folds the other tabs into one button; tapping it brings

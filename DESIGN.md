@@ -14,7 +14,8 @@ draft as inline changes, and the writer accepts or rejects each one, or all the 
 The writer picks Light, Dark, Custom or a paper tone (Paper, Sepia, Sage, Dusk, Night) on the
 Appearance panel, once for writing and once for reading, or one look for both while "Same look for
 reading and writing" is on. Every colour a view draws comes
-from `inkling_core::Appearance::tokens`. Light is the default.
+from `inkling_core::Appearance::tokens`. Light and Dark follow the system's appearance until the
+writer picks one.
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
@@ -123,12 +124,18 @@ from `inkling_core::Appearance::tokens`. Light is the default.
   either end of a chapter is the next or the one before. Contents opens under its button with two
   tabs on Segment, Chapters and Highlights: the chapters, the current one on Segment, or the
   highlights in reading order, each in the body face; choosing one goes to it.
+  In the native app (ADR 0007) a book reads as one scroll, chapter after chapter. Contents is a
+  menu: the chapters, the current one ticked, and Previous Chapter and Next Chapter (Cmd-[ and
+  Cmd-] on the Mac, in the Go menu), on the side nearest the button. Each chapter ends with
+  "Next: " and the next chapter's title, centred in the UI face, the title in ink and the rest
+  muted; it goes to that chapter.
   The chapter is set as the book set it: italics and bold, headings, bulleted and numbered lists
   with the marker in muted ink, quotes behind a Hairline rule, scene breaks as three muted
   asterisks, and each picture centred in the column, no wider than its file and at most 60% of a
   page tall, with its caption under it in muted italic. A footnote marker is raised, in Link
   (accent); a tap shows the note in a Surface popover with a Hairline border just under the
-  marker, and any other tap or Escape closes it. A link inside the book is in Link (accent),
+  marker, and any other tap or Escape closes it. At the chapter's end each note hangs from its
+  label in Link, a size down, in muted ink. A link inside the book is in Link (accent),
   underlined, and goes to its target; a link out of the book looks the same and never opens.
 - **Passage.** On the Mac a drag across a book's text selects it, a double click selects a word,
   and Cmd-C copies it; on iPhone pressing and holding a paragraph selects it, and a tap still turns
@@ -204,3 +211,8 @@ shows its source.
   came from.
 - The panel's switches slide their thumb with GPUI Kit's own spring.
 - Nothing on the page itself moves.
+- Going to a chapter moves by how it was asked for. Cmd-[ and Cmd-] jump, with no motion, because
+  they are pressed often. "Next: …" glides the next chapter up, because it is just below. A
+  chapter chosen in Contents dips out in 120 ms and comes back in 260 ms on the quick ease-out,
+  rising 14 pt from the side it lies on, because scrolling through the pages between would only
+  blur. Reduce Motion keeps the dip's fade and drops the glide and the rise.
