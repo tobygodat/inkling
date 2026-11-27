@@ -78,9 +78,13 @@ draws every screen; every read and write goes through `InklingCore`.
   selection becomes a `Passage` in bytes (ADR 0006) and a stored one is drawn where it was made, in
   this app or the GPUI one. The place is the first character on screen as a chapter and a share of
   that chapter's characters.
-- Colours come from `Looks.colors`. The app's own screens follow the system's Light or Dark; the
-  reader does too while reading's tone is Light or Dark, and takes a paper tone's colours as they
-  are.
+- Colours come from `Looks.colors`. The app's own screens follow the system's Light or Dark, or
+  the one chosen in Appearance (kept in `UserDefaults`, not `settings.json`). The reader does too
+  while reading's tone is Light or Dark (Auto), and takes a paper tone's colours as they are; on
+  iPhone the bars and the status bar then take the paper's Light or Dark.
+- `AppearancePanel` sets reading's tone, face, size and line height through `Looks.set_reading`.
+  It opens from the reader (a popover on the Mac, a sheet on iPhone) and is the Mac's Reading
+  settings. `Shelf.look` is the look on show; a new one redraws the reader at its place.
 - `apple/snap.sh` is the proof: `InklingMacSnapshots` compiles the app's sources into a test bundle
   and renders each screen in a window off every screen, which the window server captures;
   `InklingPhoneSnapshots` drives the iPhone app on a Simulator with XCUITest. Both seed a temp data

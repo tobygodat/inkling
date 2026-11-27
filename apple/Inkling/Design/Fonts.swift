@@ -20,6 +20,25 @@ nonisolated enum Fonts {
     static func register() {
         _ = registered
     }
+
+    /// A reading face at `size`: Source Serif 4 from the bundle, every other face from the system.
+    static func reading(_ family: String, size: CGFloat, bold: Bool = false, italic: Bool = false) -> PlatformFont {
+        if family == "Source Serif 4" {
+            return PlatformFont(name: bold ? serifSemibold : (italic ? serifItalic : serif), size: size) ?? .systemFont(ofSize: size)
+        }
+        let plain = PlatformFontDescriptor(fontAttributes: [.family: family])
+        #if os(macOS)
+        var traits: NSFontDescriptor.SymbolicTraits = []
+        if italic { traits.insert(.italic) }
+        if bold { traits.insert(.bold) }
+        return PlatformFont(descriptor: plain.withSymbolicTraits(traits), size: size) ?? PlatformFont(name: serif, size: size) ?? .systemFont(ofSize: size)
+        #else
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if italic { traits.insert(.traitItalic) }
+        if bold { traits.insert(.traitBold) }
+        return PlatformFont(descriptor: plain.withSymbolicTraits(traits) ?? plain, size: size)
+        #endif
+    }
 }
 
 extension Font {

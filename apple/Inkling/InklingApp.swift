@@ -4,6 +4,7 @@ import SwiftUI
 struct InklingApp: App {
     @State private var shelf = Shelf.launch()
     @State private var navigator = Navigator()
+    @AppStorage("appearance") private var appearance = Appearance.system
 
     init() {
         Fonts.register()
@@ -25,6 +26,7 @@ struct InklingApp: App {
         Settings {
             SettingsView()
                 .environment(shelf)
+                .preferredColorScheme(Appearance.forced ?? appearance.scheme)
         }
         #else
         WindowGroup {
@@ -37,15 +39,10 @@ struct InklingApp: App {
         RootView()
             .environment(shelf)
             .environment(navigator)
-            .preferredColorScheme(Self.forced)
-    }
-
-    /// Light or Dark from `INKLING_APPEARANCE`, for the snapshot tests on a headless Simulator.
-    private static var forced: ColorScheme? {
-        switch ProcessInfo.processInfo.environment["INKLING_APPEARANCE"] {
-        case "light": .light
-        case "dark": .dark
-        default: nil
-        }
+            #if os(iOS)
+            .preferredColorScheme(navigator.readerScheme ?? Appearance.forced ?? appearance.scheme)
+            #else
+            .preferredColorScheme(Appearance.forced ?? appearance.scheme)
+            #endif
     }
 }
