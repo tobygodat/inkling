@@ -22,20 +22,21 @@ export TEST_RUNNER_INKLING_FAKE_AI=1
 derived="$root/target/apple"
 # The result bundle stays in target/apple for a failure to be read: xcrun xcresulttool get test-results tests --path <it>.
 rm -rf "$derived/$where.xcresult"
+status=0
 
 case "$where" in
   mac)
     mkdir -p "$out/mac"
     TEST_RUNNER_INKLING_SNAP_OUT="$out" xcodebuild test -project apple/Inkling.xcodeproj -scheme MacSnapshots \
       -destination 'platform=macOS' -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
-      -resultBundlePath "$derived/mac.xcresult" -quiet
+      -resultBundlePath "$derived/mac.xcresult" -quiet || status=$?
     ;;
   iphone)
     udid=${2:?usage: apple/snap.sh iphone <udid>}
     xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3
     TEST_RUNNER_INKLING_SNAP_DATA="$temp/data" xcodebuild test -project apple/Inkling.xcodeproj -scheme PhoneSnapshots \
       -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
-      -resultBundlePath "$derived/iphone.xcresult" -quiet
+      -resultBundlePath "$derived/iphone.xcresult" -quiet || status=$?
     xcrun simctl status_bar "$udid" clear
     mkdir -p "$out/iphone" "$temp/attachments"
     xcrun xcresulttool export attachments --path "$derived/iphone.xcresult" --output-path "$temp/attachments" >/dev/null
@@ -51,4 +52,9 @@ EOF
     ;;
   *) echo "usage: apple/snap.sh mac | iphone <udid>" >&2; exit 2 ;;
 esac
+if [ "$status" -ne 0 ]; then
+  echo "FAIL apple/snap.sh $where:" >&2
+  xcrun xcresulttool get test-results tests --path "$derived/$where.xcresult" | grep -B1 '"Failure Message"' | grep '"name"' >&2 || true
+  exit "$status"
+fi
 echo "ok   apple/snap.sh $where: screenshots in $out/$where"
