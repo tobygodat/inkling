@@ -14,6 +14,12 @@ struct InklingCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
+            Button("New Document") {
+                navigator.section = .writing
+                navigator.document = shelf.createDocument()
+            }
+            .keyboardShortcut("n")
+            Divider()
             Button("Save Link…") { navigator.savingLink = true }
                 .keyboardShortcut("l")
             Button("Add Book…") { navigator.addingBook = true }

@@ -66,7 +66,7 @@ pub struct Look {
     pub paged: bool,
 }
 
-/// The colours the reader draws, each `0xRRGGBB`. `DESIGN.md` names each one.
+/// The colours the app draws, each `0xRRGGBB`. `DESIGN.md` names each one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct Colors {
     pub ground: u32,
@@ -78,9 +78,16 @@ pub struct Colors {
     pub link: u32,
     pub selection: u32,
     pub highlight: u32,
+    pub added_text: u32,
+    pub added_fill: u32,
+    pub added_line: u32,
+    pub added_count: u32,
+    pub removed_text: u32,
+    pub removed_fill: u32,
+    pub removed_line: u32,
 }
 
-/// The faces Inkling offers for reading, Source Serif 4 first.
+/// The faces Inkling offers for reading and writing, Source Serif 4 first.
 #[uniffi::export]
 pub fn faces() -> Vec<String> {
     Face::ALL.iter().map(|f| f.family().to_string()).collect()
@@ -103,7 +110,8 @@ impl Looks {
     }
 
     pub fn reading(&self) -> Look {
-        let settings = self.lock();
+        let mut settings = self.lock();
+        *settings = Settings::load(&self.paths);
         let look = settings.look(View::Reading);
         Look {
             tone: look.mode.into(),
@@ -118,6 +126,7 @@ impl Looks {
     /// Keeps reading's look. While reading and writing share one look, writing takes it too.
     pub fn set_reading(&self, look: Look) -> Result<(), InklingError> {
         let mut settings = self.lock();
+        *settings = Settings::load(&self.paths);
         settings.change_look(View::Reading, |a| {
             a.mode = look.tone.into();
             a.face = Face::ALL.into_iter().find(|f| f.family() == look.face).unwrap_or_default();
@@ -126,6 +135,36 @@ impl Looks {
             a.page_width = PageWidth::new(look.page_width.into());
         });
         settings.reading.pages = if look.paged { PageMode::Paged } else { PageMode::Scroll };
+        settings.save(&self.paths)?;
+        Ok(())
+    }
+
+    /// How writing looks, from `settings.json`.
+    pub fn writing(&self) -> Look {
+        let mut settings = self.lock();
+        *settings = Settings::load(&self.paths);
+        let look = settings.look(View::Writing);
+        Look {
+            tone: look.mode.into(),
+            face: look.face.family().to_string(),
+            text_size: look.text_size.get(),
+            line_spacing: look.line_spacing.get(),
+            page_width: look.page_width.get(),
+            paged: false,
+        }
+    }
+
+    /// Keeps writing's look. While reading and writing share one look, reading takes it too.
+    pub fn set_writing(&self, look: Look) -> Result<(), InklingError> {
+        let mut settings = self.lock();
+        *settings = Settings::load(&self.paths);
+        settings.change_look(View::Writing, |a| {
+            a.mode = look.tone.into();
+            a.face = Face::ALL.into_iter().find(|f| f.family() == look.face).unwrap_or_default();
+            a.text_size = TextSize::new(look.text_size.into());
+            a.line_spacing = LineSpacing::new(look.line_spacing.into());
+            a.page_width = PageWidth::new(look.page_width.into());
+        });
         settings.save(&self.paths)?;
         Ok(())
     }
@@ -146,6 +185,13 @@ impl Looks {
             link: c(t.link),
             selection: c(t.selection),
             highlight: c(t.highlight),
+            added_text: c(t.added_text),
+            added_fill: c(t.added_fill),
+            added_line: c(t.added_line),
+            added_count: c(t.added_count),
+            removed_text: c(t.removed_text),
+            removed_fill: c(t.removed_fill),
+            removed_line: c(t.removed_line),
         }
     }
 }

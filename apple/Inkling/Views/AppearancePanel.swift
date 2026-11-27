@@ -20,15 +20,31 @@ enum Appearance: String, CaseIterable {
     }
 }
 
-/// How reading looks: the app's Light or Dark, the paper, the face, the size and the line height.
-/// It opens from the reader, which redraws behind it, and is the Mac's Reading settings.
+/// How reading or writing looks: the app's Light or Dark, the paper, the face, the size and the
+/// line height. It opens from the reader or writing page, which redraws behind it, and is in the
+/// Mac's Settings.
 struct AppearancePanel: View {
+    enum Target { case reading, writing }
+
     @Environment(Shelf.self) private var shelf
     @AppStorage("appearance") private var appearance = Appearance.system
+    var target: Target = .reading
 
     /// Auto (Light or Dark, as the app is) and the paper tones. Custom is the writer's own and
-    /// waits for writing.
+    /// waits for a custom colour picker.
     private static let tones: [Tone] = [.light, .paper, .sepia, .sage, .dusk, .night]
+
+    private var currentLook: Look {
+        target == .writing ? shelf.writingLook : shelf.look
+    }
+
+    private func updateLook(_ look: Look) {
+        if target == .writing {
+            shelf.setWritingLook(look)
+        } else {
+            shelf.setLook(look)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -56,11 +72,11 @@ struct AppearancePanel: View {
                     .fixedSize()
                 }
                 Stepper(value: binding(\.textSize), in: 15...32) {
-                    LabeledContent("Size", value: "\(shelf.look.textSize)")
+                    LabeledContent("Size", value: "\(currentLook.textSize)")
                 }
                 .accessibilityIdentifier("size")
                 Stepper(value: binding(\.lineSpacing), in: 120...220, step: 5) {
-                    LabeledContent("Line height", value: (Double(shelf.look.lineSpacing) / 100).formatted(.number.precision(.fractionLength(2))))
+                    LabeledContent("Line height", value: (Double(currentLook.lineSpacing) / 100).formatted(.number.precision(.fractionLength(2))))
                 }
                 .accessibilityIdentifier("line-height")
             }
@@ -69,18 +85,18 @@ struct AppearancePanel: View {
         }
         .padding(20)
         .frame(minWidth: 320, idealWidth: 360)
-        .sensoryFeedback(.selection, trigger: shelf.look)
+        .sensoryFeedback(.selection, trigger: currentLook)
     }
 
     private func swatch(_ tone: Tone) -> some View {
-        let selected = tone == .light ? [.light, .dark].contains(shelf.look.tone) : shelf.look.tone == tone
+        let selected = tone == .light ? [.light, .dark].contains(currentLook.tone) : currentLook.tone == tone
         let name = tone == .light ? "Auto" : String(describing: tone).capitalized
         let light = Palette(shelf.looks.colors(tone: tone))
         let dark = Palette(shelf.looks.colors(tone: tone == .light ? .dark : tone))
         return Button {
-            var look = shelf.look
+            var look = currentLook
             look.tone = tone
-            shelf.setLook(look)
+            updateLook(look)
         } label: {
             VStack(spacing: 6) {
                 Group {
@@ -125,11 +141,11 @@ struct AppearancePanel: View {
 
     private func binding<Value>(_ key: WritableKeyPath<Look, Value>) -> Binding<Value> {
         Binding {
-            shelf.look[keyPath: key]
+            currentLook[keyPath: key]
         } set: {
-            var look = shelf.look
+            var look = currentLook
             look[keyPath: key] = $0
-            shelf.setLook(look)
+            updateLook(look)
         }
     }
 }

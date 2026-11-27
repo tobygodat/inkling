@@ -23,6 +23,13 @@ nonisolated struct Palette: Equatable {
     let link: PlatformColor
     let selection: PlatformColor
     let highlight: PlatformColor
+    let addedText: PlatformColor
+    let addedFill: PlatformColor
+    let addedLine: PlatformColor
+    let addedCount: PlatformColor
+    let removedText: PlatformColor
+    let removedFill: PlatformColor
+    let removedLine: PlatformColor
     let isDark: Bool
 
     init(_ c: Colors) {
@@ -38,6 +45,13 @@ nonisolated struct Palette: Equatable {
         link = color(c.link)
         selection = color(c.selection)
         highlight = color(c.highlight)
+        addedText = color(c.addedText)
+        addedFill = color(c.addedFill)
+        addedLine = color(c.addedLine)
+        addedCount = color(c.addedCount)
+        removedText = color(c.removedText)
+        removedFill = color(c.removedFill)
+        removedLine = color(c.removedLine)
         let r = Double((c.ground >> 16) & 0xFF), g = Double((c.ground >> 8) & 0xFF), b = Double(c.ground & 0xFF)
         isDark = (0.299 * r + 0.587 * g + 0.114 * b) < 128
     }

@@ -23,7 +23,9 @@ final class MacSnapshots {
         data = FileManager.default.temporaryDirectory.appending(path: "inkling-snap-\(UUID().uuidString)")
         shelf = try Shelf(folder: data)
         Demo.seed(shelf.library, from: URL(filePath: demo), books: URL(filePath: fixtures))
+        Demo.seedDocuments(shelf.documents)
         shelf.reload()
+        shelf.reloadDocuments()
     }
 
     deinit {
@@ -47,6 +49,7 @@ final class MacSnapshots {
                 navigator.section = section
                 if section == .queue { navigator.selection = shelf.queue[0].id }
                 if section == .library { navigator.selection = shelf.books.first { $0.title.hasPrefix(name == "light" ? "Walden" : "Pride") }?.id }
+                if section == .writing { navigator.document = shelf.docs.first?.id }
                 try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
             }
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
@@ -174,6 +177,178 @@ final class MacSnapshots {
         #expect(pictures.count == 1, "the https picture is fetched and kept; the file: one is left out")
         #expect(book.chapters[0].text.contains("The flats at dawn"))
         await #expect(throws: SaveError.self) { try await added.save(link: "ftp://pages.test/tide") }
+    }
+
+    @Test func writingLiveMarkdownDocumentsAndInlineReview() async throws {
+        // 1. Live Markdown attributes and TextKit 2 layout on a real NSTextView.
+        let doc = try #require(shelf.docs.first { $0.id == "quiet-desk" })
+        let draft = shelf.readDocument(doc.id)
+        let style = WritingStyle.make(look: shelf.writingLook, palette: palette(.aqua), column: 700, isPhone: false)
+        let styler = LiveMarkdownStyler(style: style)
+        let textView = WritingNSTextView(usingTextLayoutManager: true)
+        #expect(textView.textLayoutManager != nil, "writing page uses TextKit 2")
+        let storage = try #require(textView.textStorage)
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: draft)
+        styler.restyleAll(storage)
+
+        let ns = storage.string as NSString
+        // Heading: `#` is quieter than the title text, and title uses titleSize.
+        let hashRange = ns.range(of: "# On Keeping")
+        let h1Font = try #require(storage.attribute(.font, at: hashRange.location + 2, effectiveRange: nil) as? NSFont)
+        #expect(abs(h1Font.pointSize - style.titleSize) < 0.5, "H1 uses titleSize")
+        let hashColor = try #require(storage.attribute(.foregroundColor, at: hashRange.location, effectiveRange: nil) as? NSColor)
+        let titleColor = try #require(storage.attribute(.foregroundColor, at: hashRange.location + 2, effectiveRange: nil) as? NSColor)
+        #expect(hashColor != titleColor, "heading mark is quieter than heading text")
+
+        // Bold, italic, inline code, link, blockquote, list, code block.
+        let boldAt = ns.range(of: "for rhythm").location
+        let boldFont = try #require(storage.attribute(.font, at: boldAt, effectiveRange: nil) as? NSFont)
+        #expect(boldFont.fontName.contains("Semibold") || boldFont.fontDescriptor.symbolicTraits.contains(.bold))
+        let italicAt = ns.range(of: "for clarity").location
+        let italicFont = try #require(storage.attribute(.font, at: italicAt, effectiveRange: nil) as? NSFont)
+        #expect(italicFont.fontName.contains("It") || italicFont.fontDescriptor.symbolicTraits.contains(.italic))
+        let codeAt = ns.range(of: "plain.md").location
+        #expect(storage.attribute(.backgroundColor, at: codeAt, effectiveRange: nil) as? NSColor == style.palette.segment)
+        let linkAt = ns.range(of: "small note on craft").location
+        #expect(storage.attribute(.foregroundColor, at: linkAt, effectiveRange: nil) as? NSColor == style.palette.link)
+        #expect(storage.attribute(.underlineStyle, at: linkAt, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue)
+        let quoteAt = ns.range(of: "> Good tools").location
+        #expect(storage.attribute(.inklingBlock, at: quoteAt, effectiveRange: nil) as? BlockDecoration == .blockquote)
+        let fenceAt = ns.range(of: "let prose").location
+        if case .codeBlock = storage.attribute(.inklingBlock, at: fenceAt, effectiveRange: nil) as? BlockDecoration {} else {
+            Issue.record("fenced code block carries codeBlock decoration")
+        }
+
+        // 2. Document create / edit / save / delete / undo through core's DocumentStore.
+        let freshId = shelf.createDocument()
+        let freshModel = WritingModel(id: freshId, text: "", shelf: shelf)
+        freshModel.textDidChange("# Scratchpad\n\nSaved through core.")
+        freshModel.saveNow()
+        let reloaded = try Shelf(folder: data)
+        #expect(reloaded.readDocument(freshId) == "# Scratchpad\n\nSaved through core.", "edits persist to core's documents folder")
+        let freshInfo = try #require(shelf.docs.first { $0.id == freshId })
+        shelf.deleteDocument(freshInfo)
+        #expect(!shelf.docs.contains { $0.id == freshId })
+        _ = shelf.undoDeleteDocument()
+        #expect(shelf.docs.contains { $0.id == freshId }, "undo restores removed document")
+        shelf.deleteDocument(freshInfo)
+
+        // 3. Inline review through core's review model (with INKLING_FAKE_AI=1).
+        let reviewModel = WritingModel(id: doc.id, text: draft, shelf: shelf)
+        reviewModel.askFixGrammar()
+        for _ in 0..<200 where !reviewModel.isReviewing {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(reviewModel.isReviewing, "Fix grammar finishes into an inline review")
+        guard case .reviewing(let stats, let segments) = reviewModel.snapshot?.state else {
+            Issue.record("expected reviewing state")
+            return
+        }
+        #expect(stats.total >= 3, "fake grammar pass finds multiple fixes")
+        #expect(segments.contains { if case .change(let c) = $0 { return c.removed == "teh" && c.added == "the" }; return false })
+
+        // Accept first change so the screenshot shows both pending (`✓`/`✕`) and decided (`✓ kept · Undo`) states.
+        reviewModel.acceptChange(0)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let view = WritingView(documentId: doc.id, initialModel: reviewModel)
+                .environment(shelf)
+                .environment(Navigator())
+            try await shoot(view, "\(name)-writing-review", appearance)
+        }
+
+        // Reject change 1, accept the rest, and confirm accepted edits land on disk.
+        reviewModel.rejectChange(1)
+        reviewModel.acceptRest()
+        #expect(!reviewModel.isReviewing, "accepting the rest finishes the review")
+        let finalDraft = try Shelf(folder: data).readDocument(doc.id)
+        #expect(finalDraft.contains("crosses the grain"), "accepted change 0 is saved to disk")
+        #expect(finalDraft.contains("i dont want"), "rejected change 1 stays untouched")
+        #expect(finalDraft.contains("which holds"), "accept-the-rest applied remaining pending change 2")
+        // Restore demo doc for any subsequent test.
+        try shelf.saveDocument(id: doc.id, text: draft)
+    }
+
+    @Test func typingStaysSmoothIn5000WordDraft() async throws {
+        // Same 5,000-word draft and 50 characters as ios/bench.sh.
+        var paragraphs: [String] = []
+        paragraphs.reserveCapacity(100)
+        for _ in 0..<100 {
+            let words = (0..<50).map { $0 % 9 == 4 ? "**river**" : "light" }.joined(separator: " ")
+            paragraphs.append(words)
+        }
+        let draft = paragraphs.joined(separator: "\n\n") + "\n\n"
+        let typed = "the light held over the river and the light held  "
+
+        let style = WritingStyle.make(look: shelf.writingLook, palette: palette(.aqua), column: 700, isPhone: false)
+        let styler = LiveMarkdownStyler(style: style)
+        let layoutDelegate = InklingLayoutDelegate(palette: style.palette)
+        let textView = WritingNSTextView(usingTextLayoutManager: true)
+        textView.column = style.column
+        textView.textLayoutManager?.delegate = layoutDelegate
+        let storage = try #require(textView.textStorage)
+
+        final class Delegate: NSObject, NSTextStorageDelegate {
+            let styler: LiveMarkdownStyler
+            var restyling = false
+            init(_ styler: LiveMarkdownStyler) { self.styler = styler }
+            func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
+                guard !restyling, editedMask.contains(.editedCharacters) else { return }
+                restyling = true
+                styler.restyleEdited(textStorage, editedRange: editedRange)
+                restyling = false
+            }
+        }
+
+        let storageDelegate = Delegate(styler)
+        storage.delegate = storageDelegate
+
+        let scroll = NSScrollView(frame: CGRect(x: 0, y: 0, width: 900, height: 760))
+        textView.frame = scroll.bounds
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        scroll.documentView = textView
+
+        let window = Offscreen(contentRect: scroll.bounds, styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = scroll
+        window.setFrameOrigin(CGPoint(x: -40000, y: -40000))
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+
+        let probe = TypingProbe()
+        var samples: [Int] = []
+        probe.onSample = { samples.append($0) }
+        textView.probe = probe
+
+        storageDelegate.restyling = true
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: draft)
+        styler.restyleAll(storage)
+        storageDelegate.restyling = false
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        window.displayIfNeeded()
+
+        for ch in typed {
+            textView.insertText(String(ch), replacementRange: NSRange(location: NSNotFound, length: 0))
+            await Task.yield()
+        }
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(textView.string.hasPrefix(typed), "all 50 typed characters landed in the draft")
+        #expect(samples.count == typed.count, "every keystroke produced a painted-frame sample: \(samples.count)")
+        let sorted = samples.sorted()
+        let medianMs = Double(sorted[sorted.count / 2]) / 1000.0
+        let worstMs = Double(sorted.last ?? 0) / 1000.0
+        let fastestMs = Double(sorted.first ?? 0) / 1000.0
+        if let outPath = ProcessInfo.processInfo.environment["INKLING_PROBE_OUT"] {
+            let body = samples.map(String.init).joined(separator: "\n") + "\n"
+            try body.write(toFile: outPath, atomically: true, encoding: .utf8)
+        }
+        fputs(String(format: "MAC_TYPING_BENCH samples=%d fastest=%.2fms median=%.2fms worst=%.2fms\n", samples.count, fastestMs, medianMs, worstMs), stderr)
+        #expect(medianMs < 16.6, "median keystroke-to-painted time stays under one 60fps frame: \(medianMs) ms")
     }
 
     private func root(_ navigator: Navigator) -> some View {

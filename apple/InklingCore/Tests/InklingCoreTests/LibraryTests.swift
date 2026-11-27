@@ -34,3 +34,24 @@ final class NoPictures: Fetcher {
     #expect(reopened.highlights(id: item.id) == [passage])
     #expect(throws: InklingError.self) { try reopened.book(id: "nope") }
 }
+
+@Test func documentsAndInlineReviewRoundTripFromSwift() throws {
+    let data = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: data) }
+    let docs = try DocumentStore.open(data: data.path)
+    #expect(docs.list().isEmpty)
+
+    let id = docs.newId()
+    let draft = "# Morning desk\n\nWe walked to teh quiet pier and i dont think anyone saw"
+    try docs.write(id: id, text: draft)
+    try docs.setLastOpen(id: id)
+
+    let reopened = try DocumentStore.open(data: data.path)
+    #expect(reopened.lastOpen() == id)
+    #expect(reopened.list().first?.title == "Morning desk")
+    #expect(try reopened.read(id: id) == draft)
+
+    let colors = Looks.open(data: data.path).colors(tone: .light)
+    #expect(colors.addedText == 0x116329)
+    #expect(colors.removedFill == 0xFFEBE9)
+}
