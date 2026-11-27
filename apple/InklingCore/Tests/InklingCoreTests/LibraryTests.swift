@@ -16,7 +16,7 @@ final class NoPictures: Fetcher {
     #expect(library.items().isEmpty)
 
     let words = String(repeating: "The tide came in slowly over the flats, and the birds lifted as it reached them. ", count: 8)
-    let html = "<html><body><nav>Home</nav><article><h1>Notes on the tide</h1><p>\(words)</p><p>\(words)</p></article></body></html>"
+    let html = "<html><head><title>Notes on the tide</title></head><body><nav>Home</nav><article><h1>Notes on the tide</h1><p>\(words)</p><p>\(words)</p></article></body></html>"
     let item = try library.saveArticle(url: "https://shore.example/tide", html: html, fetcher: NoPictures())
     #expect(item.kind == .article)
     #expect(item.title == "Notes on the tide")
