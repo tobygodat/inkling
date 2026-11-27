@@ -28,7 +28,7 @@ security find-generic-password -s inkling-ota -a upload-token >/dev/null 2>&1 \
 
 # Own bundle ID and display name so OTA installs sit beside TestFlight (com.tobygodat.inkling),
 # passed as overrides so apple/project.yml keeps com.tobygodat.inkling.native.
-PROFILE=release apple/core.sh
+apple/core.sh
 xcodegen generate --spec apple/project.yml --project apple --quiet
 rm -rf "$archive" "$export_dir"
 mkdir -p "$export_dir"
@@ -65,6 +65,7 @@ version="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleShor
 response="$(security find-generic-password -s inkling-ota -a upload-token -w \
   | sed 's/^/Authorization: Bearer /' \
   | curl --silent --show-error --fail-with-body -H @- -H 'content-type: application/octet-stream' \
-    --data-binary @"$export_dir/Inkling.ipa" "$server/builds?version=$version&build=$build")"
+    --data-binary @"$export_dir/Inkling.ipa" "$server/builds?version=$version&build=$build")" \
+  || { echo "error: the upload was refused: $response" >&2; exit 1; }
 echo "uploaded $display_name $version ($build). Open this on the iPhone within 24 hours:"
 plutil -extract url raw -o - - <<<"$response"

@@ -41,8 +41,8 @@ an account may use the cloud-managed distribution certificate; an API key gets `
 permission error`. `altool` then uploads it with the App Store Connect API key stored in the login
 Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and `p8`, the .p8 file in base64).
 
-Over-the-air builds moved to `apple/ota.sh [build number]`, which ships the native SwiftUI iPhone
-app (`apple/`) rather than the GPUI host here. It builds a Release archive under bundle ID
+`apple/ota.sh [build number]` ships over-the-air builds of the native SwiftUI iPhone app (`apple/`),
+not the GPUI host here. It builds a Release archive under bundle ID
 `com.tobygodat.inkling.dev` with display name "Inkling Dev", signs it for development (`debugging`,
 team Q6NAWA42Y2) with the "Inkling Dev Development" profile and the local Apple Development
 identity, so no Xcode account is needed and only the iPhones in that profile can install it, uploads
