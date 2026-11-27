@@ -43,8 +43,9 @@ Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and `p8`, the 
 
 `ota.sh [build number]` puts a build on Toby's iPhone over the air, without TestFlight. It builds
 a Release archive under bundle ID `com.tobygodat.inkling.dev` with display name "Inkling Dev",
-exports it ad hoc (`release-testing`, team Q6NAWA42Y2) so only the iPhones registered on the
-developer account can install it, uploads the .ipa to `inkling-server` and prints a link. Open the
+signs it for development (`debugging`, team Q6NAWA42Y2) with the "Inkling Dev Development"
+profile and the local Apple Development identity, so no Xcode account is needed and only the
+iPhones in that profile can install it, uploads the .ipa to `inkling-server` and prints a link. Open the
 link on the iPhone within 24 hours and tap Install. Because it has its own bundle ID, it installs
 beside the TestFlight app (`com.tobygodat.inkling`, "Inkling") and keeps its own sandbox data
 (documents, library, settings, and its own "Inkling Dev" folder in Files) and its own Keychain
@@ -454,10 +455,12 @@ One-time setup, on the Mac:
    Keychain and in the Worker in one go.
 2. Register the iPhone's UDID on team Q6NAWA42Y2. Connect the iPhone to the Mac, select it in the
    Finder and click the line under its name until it shows the UDID, then copy it. Add it at
-   developer.apple.com, under Certificates, Identifiers & Profiles, Devices. The next `ota.sh`
-   run's `-allowProvisioningUpdates` registers `com.tobygodat.inkling.dev` if needed and makes an ad
-   hoc profile that includes the registered devices. An iPhone added later needs a new build. An ad
-   hoc build needs no Developer Mode on the iPhone.
+   developer.apple.com, under Certificates, Identifiers & Profiles, Devices.
+3. Make the iOS App Development profile "Inkling Dev Development" for `com.tobygodat.inkling.dev`
+   with the "Apple Development: Toby Godat" certificate and the registered iPhones, and install it
+   in `~/Library/Developer/Xcode/UserData/Provisioning Profiles`. An iPhone added later needs the
+   profile regenerated and a new build. A development build needs Developer Mode on the iPhone, and
+   its push notifications would use the sandbox environment.
 
 ## Gaps
 
