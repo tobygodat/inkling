@@ -125,6 +125,13 @@ jobs:
           path: ${{ runner.temp }}/snap
           if-no-files-found: ignore
 
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: native-app-test-results
+          path: target/apple/*.xcresult
+          if-no-files-found: ignore
+
   server:
     name: Server types and tests
     # The Worker in server/ (ADR 0004). Its tests run in workerd with local D1 and KV.

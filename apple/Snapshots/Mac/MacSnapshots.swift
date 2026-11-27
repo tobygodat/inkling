@@ -34,6 +34,10 @@ final class MacSnapshots {
         #expect(shelf.queue.map(\.title) == ["Walking", "An Apology for Idlers", "Self-Reliance"], "the Queue is the articles still to read, newest first")
         #expect(shelf.archive.map(\.title) == ["Resistance to Civil Government"])
         #expect(shelf.books.count == 3)
+        let walking = try #require(shelf.queue.first)
+        #expect(walking.picture.map { FileManager.default.fileExists(atPath: $0) } == true, "an article's first picture is its row's")
+        #expect(walking.excerpt?.isEmpty == false)
+        #expect(shelf.queue.first { $0.title == "Self-Reliance" }?.picture == nil, "an article with no picture has none")
         let walden = try #require(shelf.books.first { $0.title == "Walden" })
         #expect(walden.progress == 0, "a book not yet read opens at its start")
 
@@ -96,7 +100,8 @@ final class MacSnapshots {
         #expect(abs(item.fraction - 0.5) < 0.01, "the place is kept")
         let again = ReaderModel(item: item, rendered: rendered, shelf: relaunched)
         #expect(again.highlightRanges == [at], "the highlight is drawn where it was made")
-        #expect(again.jump == rendered.chapters[0].location + rendered.chapters[0].length / 2, "the reader opens at the place")
+        let middle = rendered.chapters[0].location + rendered.chapters[0].length / 2
+        #expect(again.jump.map { abs($0 - middle) <= 1 } == true, "the reader opens at the place, to the character a stored f32 fraction keeps")
     }
 
     @Test func aBookFileAndALinkAreAddedThroughTheBridge() async throws {

@@ -93,6 +93,10 @@ pub struct Item {
     pub site: Option<String>,
     /// How many words it has, or 0 when that isn't known.
     pub words: u64,
+    /// An article's summary of itself.
+    pub excerpt: Option<String>,
+    /// An article's first picture's full path, for one that has a picture.
+    pub picture: Option<String>,
 }
 
 /// Where an article came from.
@@ -288,6 +292,8 @@ fn item(library: &books::Library, e: &Entry) -> Item {
         archived: e.archived,
         site: e.site.clone(),
         words: e.words as u64,
+        excerpt: e.excerpt.clone(),
+        picture: library.picture_path(e).map(|p| p.to_string_lossy().into_owned()),
     }
 }
 
@@ -319,6 +325,8 @@ mod tests {
         assert_eq!((saved.kind, saved.title.as_str(), saved.chapters), (Kind::Article, "Notes on the tide", 1));
         assert_eq!((saved.site.as_deref(), saved.archived), (Some("shore.example"), 0));
         assert!(saved.words > 200, "{} words", saved.words);
+        assert!(saved.picture.as_deref().is_some_and(|p| PathBuf::from(p).is_file()), "the first picture is on disk for the row: {:?}", saved.picture);
+        assert!(saved.excerpt.as_deref().is_some_and(|e| e.starts_with("The tide came in")), "{:?}", saved.excerpt);
         let again = library.save_article("https://shore.example/tide#top".into(), html, Arc::new(Pictures)).unwrap();
         assert_eq!(again.id, saved.id, "the same page is found again");
 

@@ -102,14 +102,16 @@ struct NothingOpen: View {
     }
 }
 #else
+/// The essentials in the tab bar, and Search. Archive is a step inside Queue and Library.
 struct PhoneRoot: View {
-    @Environment(Navigator.self) private var navigator
+    private enum Place: Hashable { case section(Section), search }
+    private static let tabs: [Section] = [.queue, .inbox, .library, .notebook]
+    @State private var place = Place.section(.queue)
 
     var body: some View {
-        @Bindable var navigator = navigator
-        TabView(selection: $navigator.section) {
-            ForEach(Section.allCases) { section in
-                Tab(section.title, systemImage: section.symbol, value: section) {
+        TabView(selection: $place) {
+            ForEach(Self.tabs) { section in
+                Tab(section.title, systemImage: section.symbol, value: Place.section(section)) {
                     NavigationStack {
                         SectionView(section: section)
                             .navigationDestination(for: String.self) { id in
@@ -118,8 +120,34 @@ struct PhoneRoot: View {
                     }
                 }
             }
+            Tab(value: Place.search, role: .search) {
+                NavigationStack {
+                    SearchView()
+                        .navigationDestination(for: String.self) { id in
+                            PhoneReader(id: id)
+                        }
+                }
+            }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
+    }
+}
+
+/// Every item, archived ones too, found by its title, author, site or summary.
+private struct SearchView: View {
+    @Environment(Shelf.self) private var shelf
+    @State private var query = ""
+
+    var body: some View {
+        let words = query.trimmingCharacters(in: .whitespaces)
+        let found = words.isEmpty ? shelf.items : shelf.items.filter { item in
+            [item.title, item.author, item.site, item.excerpt].compactMap(\.self).contains { $0.localizedStandardContains(words) }
+        }
+        ItemList(groups: [("", found)], section: .library) {
+            ContentUnavailableView.search(text: words)
+        }
+        .navigationTitle("Search")
+        .searchable(text: $query, prompt: "Titles, authors and sites")
     }
 }
 

@@ -7,6 +7,7 @@ struct ReaderView: View {
     @Environment(Shelf.self) private var shelf
     @Environment(Navigator.self) private var navigator
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
     let item: Item
     @State private var model: ReaderModel?
     @State private var failed: String?
@@ -30,23 +31,40 @@ struct ReaderView: View {
                     .frame(maxHeight: .infinity)
             }
         }
+        #if os(iOS)
+        .overlay { EdgeFades(ground: Color(palette.ground), shown: model?.chromeHidden != true) }
+        #endif
+        .overlay(alignment: .top) {
+            if let model { ProgressLine(progress: model.progress, palette: palette) }
+        }
         .animation(.easeOut(duration: 0.2), value: model.map(ObjectIdentifier.init))
         .environment(\.palette, palette)
         .toolbar {
             if let model {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Appearance", systemImage: "textformat.size") { choosing = true }
-                        .accessibilityIdentifier("appearance")
-                        #if os(macOS)
-                        .popover(isPresented: $choosing, arrowEdge: .bottom) { AppearancePanel() }
-                        #endif
-                }
-                ReaderTools(model: model)
                 #if os(iOS)
                 ToolbarItem(placement: .principal) { Place(model: model, palette: palette) }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Highlights(model: model)
+                    Spacer()
+                    Button("Archive", systemImage: "archivebox") {
+                        shelf.setArchived(item, true)
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("archive-item")
+                    appearanceButton
+                }
+                #else
+                ToolbarItem(placement: .primaryAction) {
+                    appearanceButton
+                        .popover(isPresented: $choosing, arrowEdge: .bottom) { AppearancePanel() }
+                }
+                ToolbarItem(placement: .primaryAction) { Highlights(model: model) }
                 #endif
             }
         }
+        #if os(iOS)
+        .toolbarVisibility(model?.chromeHidden == true ? .hidden : .visible, for: .navigationBar, .bottomBar)
+        #endif
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("")
@@ -69,6 +87,11 @@ struct ReaderView: View {
         #if os(macOS)
         .focusedSceneValue(\.reader, model)
         #endif
+    }
+
+    private var appearanceButton: some View {
+        Button("Appearance", systemImage: "textformat.size") { choosing = true }
+            .accessibilityIdentifier("appearance")
     }
 
     private func load(look: Look, palette: Palette) async {
@@ -154,25 +177,72 @@ private struct Place: View {
     }
 }
 
-/// The reader's toolbar: its highlights, and the page an article came from.
-private struct ReaderTools: ToolbarContent {
+#if os(iOS)
+/// The text dims into the paper under the bars, so a line never reads through their glass. The
+/// fades go with the bars.
+private struct EdgeFades: View {
+    let ground: Color
+    let shown: Bool
+
+    var body: some View {
+        GeometryReader { space in
+            VStack(spacing: 0) {
+                fade(from: .top).frame(height: space.safeAreaInsets.top + 20)
+                Spacer(minLength: 0)
+                fade(from: .bottom).frame(height: space.safeAreaInsets.bottom + 100)
+            }
+        }
+        .ignoresSafeArea()
+        .opacity(shown ? 1 : 0)
+        .animation(.easeInOut(duration: 0.25), value: shown)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func fade(from edge: UnitPoint) -> LinearGradient {
+        LinearGradient(stops: [.init(color: ground, location: 0), .init(color: ground, location: 0.5), .init(color: ground.opacity(0), location: 1)], startPoint: edge, endPoint: edge == .top ? .bottom : .top)
+    }
+}
+#endif
+
+/// How far through, as a hairline across the top of the reader.
+private struct ProgressLine: View {
+    let progress: Double
+    let palette: Palette
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(palette.hairline))
+            .frame(height: 2)
+            .overlay(alignment: .leading) {
+                GeometryReader { space in
+                    Rectangle()
+                        .fill(Color(palette.ink).opacity(0.55))
+                        .frame(width: space.size.width * progress)
+                }
+            }
+            .animation(.linear(duration: 0.15), value: progress)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The passages highlighted in the open item, each one a way back to where it is.
+private struct Highlights: View {
     let model: ReaderModel
 
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
-            Menu {
-                if model.highlights.isEmpty {
-                    Text("Select a passage and choose Highlight")
-                }
-                ForEach(model.highlights, id: \.self) { passage in
-                    Button(passage.words.count > 80 ? String(passage.words.prefix(80)) + "…" : passage.words) { model.go(to: passage) }
-                        .accessibilityIdentifier("passage")
-                }
-            } label: {
-                Label("Highlights", systemImage: "highlighter")
+    var body: some View {
+        Menu {
+            if model.highlights.isEmpty {
+                Text("Select a passage and choose Highlight")
             }
-            .accessibilityIdentifier("highlights")
-            .accessibilityValue("\(model.highlights.count)")
+            ForEach(model.highlights, id: \.self) { passage in
+                Button(passage.words.count > 80 ? String(passage.words.prefix(80)) + "…" : passage.words) { model.go(to: passage) }
+                    .accessibilityIdentifier("passage")
+            }
+        } label: {
+            Label("Highlights", systemImage: "highlighter")
         }
+        .accessibilityIdentifier("highlights")
+        .accessibilityValue("\(model.highlights.count)")
     }
 }

@@ -69,10 +69,10 @@ struct ItemList<Empty: View>: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if item.archived == 0 {
                 Button("Archive", systemImage: "archivebox") { shelf.setArchived(item, true) }
-                    .tint(Color(palette.ink))
+                    .tint(Color(palette.isDark ? palette.segment : palette.ink))
             } else {
                 Button("Move to Queue", systemImage: "arrow.uturn.backward") { shelf.setArchived(item, false) }
-                    .tint(Color(palette.ink))
+                    .tint(Color(palette.isDark ? palette.segment : palette.ink))
             }
         }
         .contextMenu { actions(item) }

@@ -59,6 +59,9 @@ struct ReaderText: UIViewRepresentable {
         view.attributedText = model.rendered.text
         view.delegate = context.coordinator
         view.accessibilityIdentifier = "reader"
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped))
+        tap.delegate = context.coordinator
+        view.addGestureRecognizer(tap)
         context.coordinator.view = view
         context.coordinator.repaint()
         view.pending = model.jump
@@ -77,11 +80,12 @@ struct ReaderText: UIViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var model: ReaderModel
         let palette: Palette
         weak var view: ColumnTextView?
         private var painted: [NSRange] = []
+        private var lastY: CGFloat = 0
 
         init(model: ReaderModel, palette: Palette) {
             self.model = model
@@ -97,6 +101,27 @@ struct ReaderText: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             report()
+            let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            defer { lastY = y }
+            guard scrollView.isTracking || scrollView.isDecelerating else { return }
+            if y < 40 || y - lastY < -6 {
+                show(true)
+            } else if y - lastY > 6 {
+                show(false)
+            }
+        }
+
+        /// A tap on the text, with nothing selected, brings the bars back or puts them away.
+        @objc func tapped() {
+            guard let view, view.selectedRange.length == 0 else { return }
+            show(model.chromeHidden)
+        }
+
+        func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+        private func show(_ shown: Bool) {
+            guard model.chromeHidden == shown else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { model.chromeHidden = !shown }
         }
 
         func report() {

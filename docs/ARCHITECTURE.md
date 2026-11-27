@@ -38,8 +38,8 @@ app.
   `Library` object wraps `inkling_books::Library` behind a mutex: `items`, `book` (which upgrades
   an old parse, as opening a book does), `add_file`, `save_article` (with a `Fetcher` that Swift
   implements for the pictures), `set_position`, `set_archived`, `opened` and the highlights. An
-  `Item` carries what a row shows: its site, its word count, its place and when it was archived
-  (`Entry::archived`, 0 while it is still to read). `Looks` is reading's look in `settings.json`,
+  `Item` carries what a row shows: its site, its word count, its excerpt, its first picture, its
+  place and when it was archived (`Entry::archived`, 0 while it is still to read). `Looks` is reading's look in `settings.json`,
   the same file the GPUI app keeps, with the colours `inkling_core` makes for each tone. Records and
   `InklingError` are plain values, so UniFFI stays in this crate. `apple/core.sh` builds it into
   `apple/InklingCore`: an XCFramework of the static library for the Mac, the iPhone and the
@@ -70,14 +70,21 @@ draws every screen; every read and write goes through `InklingCore`.
   pictures `PictureFetcher` fetches over http(s) only. The reader's place is noted at once and
   written 0.6 s after scrolling stops, and when the reader closes or the app leaves the foreground.
 - `RootView` is a three-column `NavigationSplitView` on the Mac (sections, list, reader) with the
-  menu bar's commands and a Settings window, and a Liquid Glass `TabView` on iPhone, one
-  `NavigationStack` per section, with swipe actions and sheets.
+  menu bar's commands and a Settings window, and a Liquid Glass `TabView` on iPhone of Queue, Inbox,
+  Library, Notebook and Search, one `NavigationStack` each, with swipe actions and sheets. On
+  iPhone the Archive is a step inside Queue and Library; the Mac's sidebar keeps it.
+- `ItemRow` draws an item as a card: its site or author, its title, the article's excerpt
+  (`Entry::excerpt`, the page's own summary), how long it takes, the progress, and the article's
+  first picture (`Entry::picture`) or the book's cover, decoded once at row size. A missing part
+  leaves no gap.
 - The reader draws an item's chapters, one after another, as one attributed text in a TextKit 2
   `UITextView` or `NSTextView` in a centred column. `Renderer` walks each chapter's Markdown with
   swift-markdown and keeps every run of text with the bytes of the Markdown it came from, so a
   selection becomes a `Passage` in bytes (ADR 0006) and a stored one is drawn where it was made, in
   this app or the GPUI one. The place is the first character on screen as a chapter and a share of
-  that chapter's characters.
+  that chapter's characters. A picture is a `FittedAttachment`, no wider than the line it lands
+  on. A hairline across the top shows how far through. On iPhone the bars, with Highlights, Archive
+  and Appearance at the foot, hide as the reader scrolls on and come back on a scroll back or a tap.
 - Colours come from `Looks.colors`. The app's own screens follow the system's Light or Dark, or
   the one chosen in Appearance (kept in `UserDefaults`, not `settings.json`). The reader does too
   while reading's tone is Light or Dark (Auto), and takes a paper tone's colours as they are; on

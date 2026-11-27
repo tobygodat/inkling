@@ -200,11 +200,11 @@ nonisolated struct Renderer {
     private mutating func figure(_ image: Markdown.Image, indent: CGFloat) {
         let centred = paragraph(align: .center, before: set.size * 0.4, after: set.size * 0.5, lineHeight: 1)
         if let source = image.source, let picture = PlatformImage(contentsOfFile: folder.appending(path: source).path) {
-            let attachment = NSTextAttachment()
+            let attachment = FittedAttachment()
             attachment.image = picture
             let size = picture.size
             let scale = min(1, set.column / max(size.width, 1), set.column * 0.9 / max(size.height, 1))
-            attachment.bounds = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
+            attachment.natural = CGSize(width: size.width * scale, height: size.height * scale)
             let picture = NSMutableAttributedString(attachment: attachment)
             picture.addAttributes(attributes(font: font(size: set.size), color: set.palette.ink, paragraph: centred), range: NSRange(location: 0, length: picture.length))
             out.append(picture)
@@ -329,3 +329,14 @@ typealias PlatformFontDescriptor = NSFontDescriptor
 typealias PlatformImage = UIImage
 typealias PlatformFontDescriptor = UIFontDescriptor
 #endif
+
+/// A picture no wider than its file and no wider than the line it lands on, so a column narrower
+/// than the look's page width still holds it.
+nonisolated final class FittedAttachment: NSTextAttachment {
+    var natural = CGSize.zero
+
+    override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
+        let width = min(natural.width, proposedLineFragment.width)
+        return CGRect(x: 0, y: 0, width: width, height: natural.height * width / max(natural.width, 1))
+    }
+}
