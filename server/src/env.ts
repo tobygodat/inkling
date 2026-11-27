@@ -14,7 +14,7 @@ export interface Env extends GoogleConfig {
   SECRET_KEY: string;
   /** The one Google account that may sign in, by its email. Unset, sign-in only shows the email. */
   OWNER_EMAIL?: string;
-  /** What `ios/ota.sh` sends as its bearer token to upload a build. Unset, no upload is taken. */
+  /** What `apple/ota.sh` sends as its bearer token to upload a build. Unset, no upload is taken. */
   BUILD_UPLOAD_TOKEN?: string;
   /** Bearer or form token for `POST /save` from a bookmarklet or Shortcut. Unset, `/save` refuses every request. */
   SAVE_TOKEN?: string;

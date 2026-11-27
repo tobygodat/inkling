@@ -31,9 +31,14 @@ Keychain (service `com.tobygodat.inkling`), never to a file. Each document is a 
 ios/run.sh <agent-device> --fake-ai
 ```
 
-It builds for the iPhone Simulator, installs and launches the app; see `ios/README.md`. The header
-on the page opens the key screen, and Done puts the keyboard away. In a version, tap a change, then
-Keep or Use, or Accept the rest.
+It builds the GPUI app for the iPhone Simulator, installs and launches it; see `ios/README.md`. The
+header on the page opens the key screen, and Done puts the keyboard away. In a version, tap a
+change, then Keep or Use, or Accept the rest.
+
+Two iPhone distribution channels install side by side:
+
+- **TestFlight (`ios/testflight.sh`):** the GPUI iPhone app (`ios/`), `com.tobygodat.inkling` ("Inkling").
+- **Over-the-air (`apple/ota.sh`):** the native SwiftUI iPhone app (`apple/`, ADR 0007), `com.tobygodat.inkling.dev` ("Inkling Dev").
 
 ## Check
 

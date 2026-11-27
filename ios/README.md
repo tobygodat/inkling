@@ -29,10 +29,10 @@ Launch flags work in Debug builds only; Release ignores them:
 
 With neither flag the app reads keys from the Keychain through `inkling_core::default_keys()`.
 
-`testflight.sh [build number]` archives a Release build for a real iPhone under bundle ID
-`com.tobygodat.inkling` ("Inkling") and uploads it to TestFlight. The build number defaults to the
-UTC time (`20261111.2220`), so each upload is higher than the last. Release builds read keys from
-the Keychain and call the real providers.
+`testflight.sh [build number]` archives a Release build of the GPUI iPhone app (`ios/`) for a real
+iPhone under bundle ID `com.tobygodat.inkling` ("Inkling") and uploads it to TestFlight. The build
+number defaults to the UTC time (`20261111.2220`), so each upload is higher than the last. Release
+builds read keys from the Keychain and call the real providers.
 Before uploading it checks every framework symbol the binary imports against the public iPhoneOS
 SDK headers, because App Store Connect rejects private API use (ITMS-90338). Build 20261111.2229
 was rejected for `CGContextSetFontSmoothingStyle`, which core-graphics links through an unused
@@ -41,20 +41,20 @@ an account may use the cloud-managed distribution certificate; an API key gets `
 permission error`. `altool` then uploads it with the App Store Connect API key stored in the login
 Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and `p8`, the .p8 file in base64).
 
-`ota.sh [build number]` puts a build on Toby's iPhone over the air, without TestFlight. It builds
-a Release archive under bundle ID `com.tobygodat.inkling.dev` with display name "Inkling Dev",
-signs it for development (`debugging`, team Q6NAWA42Y2) with the "Inkling Dev Development"
-profile and the local Apple Development identity, so no Xcode account is needed and only the
-iPhones in that profile can install it, uploads the .ipa to `inkling-server` and prints a link. Open the
-link on the iPhone within 24 hours and tap Install. Because it has its own bundle ID, it installs
-beside the TestFlight app (`com.tobygodat.inkling`, "Inkling") and keeps its own sandbox data
-(documents, library, settings, and its own "Inkling Dev" folder in Files) and its own Keychain
-sign-in and API keys. It sends nothing to Apple, so any thread on Toby's Mac may run it without
-asking. It skips `testflight.sh`'s private-symbol check, which exists for App Store review. The
-upload token comes from the login Keychain (service `inkling-ota`, account `upload-token`) and goes
-to `curl` on stdin, so it is never in a file, an argument or the log. `INKLING_SERVER` points it at
-another Worker. Only the newest five builds are kept, and each link opens one build, never "latest".
-See [Over-the-air builds](#over-the-air-builds) for the one-time setup.
+Over-the-air builds moved to `apple/ota.sh [build number]`, which ships the native SwiftUI iPhone
+app (`apple/`) rather than the GPUI host here. It builds a Release archive under bundle ID
+`com.tobygodat.inkling.dev` with display name "Inkling Dev", signs it for development (`debugging`,
+team Q6NAWA42Y2) with the "Inkling Dev Development" profile and the local Apple Development
+identity, so no Xcode account is needed and only the iPhones in that profile can install it, uploads
+the .ipa to `inkling-server` and prints a link. Open the link on the iPhone within 24 hours and tap
+Install. Because it has its own bundle ID, it installs beside the GPUI TestFlight app
+(`com.tobygodat.inkling`, "Inkling") and keeps its own sandbox data (documents, library, settings)
+and its own Keychain sign-in and API keys. It sends nothing to Apple, so any thread on Toby's Mac
+may run it without asking. The upload token comes from the login Keychain (service `inkling-ota`,
+account `upload-token`) and goes to `curl` on stdin, so it is never in a file, an argument or the
+log. `INKLING_SERVER` points it at another Worker. Only the newest five builds are kept, and each
+link opens one build, never "latest". See [Over-the-air builds](#over-the-air-builds) for the
+one-time setup.
 
 `snap.sh <agent-device>` (or `AGENT_DEVICE=<agent-device> snap.sh`) is the scripted proof; see
 [The scripted run](#the-scripted-run).
@@ -435,8 +435,8 @@ Like the books lane, they have not run end to end yet.
 
 Channels use separate bundle IDs so both stay installed on the same iPhone:
 
-- **TestFlight (`testflight.sh`):** `com.tobygodat.inkling` ("Inkling").
-- **Over-the-air (`ota.sh`):** `com.tobygodat.inkling.dev` ("Inkling Dev").
+- **TestFlight (`ios/testflight.sh`):** the GPUI iPhone app (`ios/`), `com.tobygodat.inkling` ("Inkling").
+- **Over-the-air (`apple/ota.sh`):** the native SwiftUI iPhone app (`apple/`), `com.tobygodat.inkling.dev` ("Inkling Dev").
 
 Because iOS isolates each bundle ID's sandbox and Keychain access group, Inkling Dev keeps its own
 data (documents, books, settings) and its own Google sign-in and API keys, separate from the

@@ -377,10 +377,12 @@ more than 10 ms of CPU, so it never parses a book.
   `POST https://readwise.io/api/v2/highlights/` (with atomic row claims so retries never duplicate).
   The 30-minute poll pushes any unsent highlights and streams each new EPUB or PDF from Reader into
   KV as an inbox item. Only Reader documents saved after the link was made come in.
-- **iPhone builds.** `src/builds.ts` (TOB-518). `ios/ota.sh` uploads an ad hoc .ipa with a bearer
-  token to R2, where the newest five are kept. The install page, its manifest and the .ipa are
-  each served only on a URL signed with HMAC under a key derived from `SECRET_KEY`, which expires
-  24 hours after the upload, because iOS fetches the manifest and the .ipa without cookies.
+- **iPhone builds.** `src/builds.ts` (TOB-518). `apple/ota.sh` uploads a development-signed .ipa of
+  the native iPhone app (`apple/`, `com.tobygodat.inkling.dev`) with a bearer token to R2, where the
+  newest five are kept. The install page, its manifest and the .ipa are each served only on a URL
+  signed with HMAC under a key derived from `SECRET_KEY`, which expires 24 hours after the upload,
+  because iOS fetches the manifest and the .ipa without cookies. TestFlight (`ios/testflight.sh`)
+  ships the GPUI iPhone app (`ios/`, `com.tobygodat.inkling`).
 
 ## External services
 Anthropic, OpenAI and Google's generative language API, each called directly with the user's key.

@@ -73,6 +73,16 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   Take the UDID from the T3 device tools' `device_open`, or boot a Simulator of your own with
   `xcrun simctl boot` (never Simulator.app) and shut it down after. Any change under `apple/` or
   `ffi/` reruns both after `apple/core.sh`. `INKLING_SNAP_OUT=<folder>` writes elsewhere.
+- `apple/ota.sh` archives the native SwiftUI iPhone app (`apple/`) in Release for a real device
+  under bundle ID `com.tobygodat.inkling.dev` ("Inkling Dev") so it installs beside the GPUI
+  TestFlight app (`com.tobygodat.inkling`, `ios/`), with its own sandbox data and sign-in. It signs
+  for development with the "Inkling Dev Development" profile (team Q6NAWA42Y2, the registered
+  iPhones) and local "Apple Development" identity, uploads it to `inkling-server` and prints an
+  install link that works for 24 hours. It sends nothing to Apple, so any thread working on Toby's
+  Mac may run it without asking, and hands Toby the link. The upload token is read from the login
+  Keychain (service `inkling-ota`, account `upload-token`). It needs the one-time setup in
+  `ios/README.md` (R2 bucket, upload token, registered UDID) and the Worker deployed with its
+  `/builds` routes. Feedback threads don't use it.
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
@@ -83,21 +93,12 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   `ios/README.md` lists what is still driven by hand.
 - `ios/bench.sh <agent-device>` types 50 characters into a 5,000-word draft in the installed Debug
   build and prints the median and worst time from a typed character to its painted frame.
-- `ios/testflight.sh` archives the iPhone app in Release for a real device under bundle ID
-  `com.tobygodat.inkling` ("Inkling"), signs it for the App Store (team Q6NAWA42Y2), refuses any
-  build that imports a symbol missing from the public SDK headers, and uploads it to TestFlight.
-  Xcode's signed-in account signs it, and `altool` uploads it with the App Store Connect API key in
-  the login Keychain (service `inkling-app-store-connect`). It sends a build to Apple, so run it
-  only when Toby asks for a TestFlight build.
-- `ios/ota.sh` archives the iPhone app in Release for a real device under bundle ID
-  `com.tobygodat.inkling.dev` ("Inkling Dev") so it installs beside the TestFlight app
-  (`com.tobygodat.inkling`) with its own sandbox data and sign-in, signs it for
-  development with the "Inkling Dev Development" profile (team Q6NAWA42Y2, the registered
-  iPhones), uploads it to `inkling-server` and prints an install link that works for 24 hours. It sends nothing to Apple, so any thread
-  working on Toby's Mac may run it without asking, and hands Toby the link. The upload token is
-  read from the login Keychain (service `inkling-ota`, account `upload-token`). It needs the
-  one-time setup in `ios/README.md` (R2 bucket, upload token, registered UDID) and the Worker
-  deployed with its `/builds` routes. Feedback threads don't use it.
+- `ios/testflight.sh` archives the GPUI iPhone app (`ios/`) in Release for a real device under
+  bundle ID `com.tobygodat.inkling` ("Inkling"), signs it for the App Store (team Q6NAWA42Y2),
+  refuses any build that imports a symbol missing from the public SDK headers, and uploads it to
+  TestFlight. Xcode's signed-in account signs it, and `altool` uploads it with the App Store
+  Connect API key in the login Keychain (service `inkling-app-store-connect`). It sends a build to
+  Apple, so run it only when Toby asks for a TestFlight build.
 - `feedback/ship.sh done|declined <id> "<one line>"` ships one feedback from the standing checkout:
   tests, clippy, `mac/snap.sh`, the record, a commit on `main`, `mac/install.sh` and a push. Only a
   feedback thread runs it.
