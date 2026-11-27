@@ -16,6 +16,8 @@ targets=(aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim)
 package=apple/InklingCore
 generated=target/inkling-ffi-swift
 
+# The C in ring and its kin is compiled for the app's own minimum, not the SDK's newest.
+export MACOSX_DEPLOYMENT_TARGET=26.0 IPHONEOS_DEPLOYMENT_TARGET=26.0
 for target in "${targets[@]}"; do
   cargo build -p inkling-ffi --lib --profile "$profile" --target "$target"
 done

@@ -11,6 +11,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use inkling_books::{self as books, BookId, Entry, Format, Highlight, Position};
 
+mod look;
+
+pub use look::{Colors, Look, Looks, Tone, faces};
+
 uniffi::setup_scaffolding!();
 
 /// What went wrong, in words the reader can be shown.
@@ -83,6 +87,12 @@ pub struct Item {
     pub opened: u64,
     /// The cover image's full path, for a book that has one.
     pub cover: Option<String>,
+    /// When it was archived, in seconds since the Unix epoch, or 0 while it is still to read.
+    pub archived: u64,
+    /// An article's site: its own name, else its address's host.
+    pub site: Option<String>,
+    /// How many words it has, or 0 when that isn't known.
+    pub words: u64,
 }
 
 /// Where an article came from.
@@ -216,6 +226,14 @@ impl Library {
         Ok(())
     }
 
+    /// Archives a book or an article, or brings it back to read.
+    pub fn set_archived(&self, id: String, archived: bool) -> Result<(), InklingError> {
+        let mut library = self.lock();
+        let id = known(&library, id)?;
+        library.set_archived(&id, archived)?;
+        Ok(())
+    }
+
     /// Notes that a book was just opened, for Keep reading.
     pub fn opened(&self, id: String) -> Result<(), InklingError> {
         let mut library = self.lock();
@@ -267,6 +285,9 @@ fn item(library: &books::Library, e: &Entry) -> Item {
         added: e.added,
         opened: e.opened,
         cover: library.cover_path(e).map(|p| p.to_string_lossy().into_owned()),
+        archived: e.archived,
+        site: e.site.clone(),
+        words: e.words as u64,
     }
 }
 
@@ -296,6 +317,8 @@ mod tests {
         );
         let saved = library.save_article("https://shore.example/tide".into(), html.clone(), Arc::new(Pictures)).unwrap();
         assert_eq!((saved.kind, saved.title.as_str(), saved.chapters), (Kind::Article, "Notes on the tide", 1));
+        assert_eq!((saved.site.as_deref(), saved.archived), (Some("shore.example"), 0));
+        assert!(saved.words > 200, "{} words", saved.words);
         let again = library.save_article("https://shore.example/tide#top".into(), html, Arc::new(Pictures)).unwrap();
         assert_eq!(again.id, saved.id, "the same page is found again");
 
@@ -307,10 +330,12 @@ mod tests {
         library.set_position(saved.id.clone(), 0, 1.5).unwrap();
         let passage = Passage { chapter: 0, start: 2, end: 19, words: "Notes on the tide".into(), made: 7 };
         library.set_highlights(saved.id.clone(), vec![passage.clone()]).unwrap();
+        library.set_archived(saved.id.clone(), true).unwrap();
 
         let reopened = Library::open(data).unwrap();
         let item = &reopened.items()[0];
         assert_eq!((item.chapter, item.fraction, item.progress), (0, 1.0, 1.0), "a place past the end is kept at the end");
+        assert!(item.archived > 0, "archiving is kept");
         assert_eq!(reopened.highlights(saved.id.clone()), [passage]);
         assert!(matches!(reopened.book("nope".into()), Err(InklingError::NotFound { .. })));
         let refused = reopened.save_article("/tide".into(), String::new(), Arc::new(Pictures)).unwrap_err();

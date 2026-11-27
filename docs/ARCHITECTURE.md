@@ -37,7 +37,10 @@ app.
 - `ffi/` is `inkling-ffi`, the boundary of ADR 0007's native app. It has no UI dependency. Its
   `Library` object wraps `inkling_books::Library` behind a mutex: `items`, `book` (which upgrades
   an old parse, as opening a book does), `add_file`, `save_article` (with a `Fetcher` that Swift
-  implements for the pictures), `set_position`, `opened` and the highlights. Records and
+  implements for the pictures), `set_position`, `set_archived`, `opened` and the highlights. An
+  `Item` carries what a row shows: its site, its word count, its place and when it was archived
+  (`Entry::archived`, 0 while it is still to read). `Looks` is reading's look in `settings.json`,
+  the same file the GPUI app keeps, with the colours `inkling_core` makes for each tone. Records and
   `InklingError` are plain values, so UniFFI stays in this crate. `apple/core.sh` builds it into
   `apple/InklingCore`: an XCFramework of the static library for the Mac, the iPhone and the
   Simulator, the Swift that `uniffi-bindgen` writes from the Mac library, and the package's own
@@ -55,6 +58,33 @@ app.
   `Paths`, and uses the Keychain through `default_keys()`. The host keeps the view between the top
   safe area and the keyboard. It lends the library a `BookHost` over the C ABI: the Swift host
   (`ios/app/Inkling/Books.swift`) shows the document pickers and keeps the folder bookmarks.
+
+## The native app
+`apple/Inkling` is the SwiftUI app of ADR 0007, one target built for the Mac and the iPhone. Swift
+draws every screen; every read and write goes through `InklingCore`.
+
+- `Shelf` (`@Observable`) holds the `Library` and `Looks` for the data folder (`INKLING_DATA_DIR`, else
+  the GPUI app's folder on the Mac and the app's own Application Support on iPhone) and the items.
+  Queue, Library and Archive are filters over `items`. Calls that parse or fetch run off the main
+  thread. Saving a link fetches the page with URLSession and hands the HTML to `save_article`, whose
+  pictures `PictureFetcher` fetches over http(s) only. The reader's place is noted at once and
+  written 0.6 s after scrolling stops, and when the reader closes or the app leaves the foreground.
+- `RootView` is a three-column `NavigationSplitView` on the Mac (sections, list, reader) with the
+  menu bar's commands and a Settings window, and a Liquid Glass `TabView` on iPhone, one
+  `NavigationStack` per section, with swipe actions and sheets.
+- The reader draws an item's chapters, one after another, as one attributed text in a TextKit 2
+  `UITextView` or `NSTextView` in a centred column. `Renderer` walks each chapter's Markdown with
+  swift-markdown and keeps every run of text with the bytes of the Markdown it came from, so a
+  selection becomes a `Passage` in bytes (ADR 0006) and a stored one is drawn where it was made, in
+  this app or the GPUI one. The place is the first character on screen as a chapter and a share of
+  that chapter's characters.
+- Colours come from `Looks.colors`. The app's own screens follow the system's Light or Dark; the
+  reader does too while reading's tone is Light or Dark, and takes a paper tone's colours as they
+  are.
+- `apple/snap.sh` is the proof: `InklingMacSnapshots` compiles the app's sources into a test bundle
+  and renders each screen in a window off every screen, which the window server captures;
+  `InklingPhoneSnapshots` drives the iPhone app on a Simulator with XCUITest. Both seed a temp data
+  folder from `apple/Demo` and the fixture books (`Demo.seed`, only when `INKLING_DEMO` is set).
 
 ## Data flow
 A quick action or the ask field builds a `Request` from the page, picks a `Backend` with

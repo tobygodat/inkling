@@ -45,6 +45,15 @@ pub struct Entry {
     /// keeps the later of two devices' positions by this.
     #[serde(default)]
     pub position_at: u64,
+    /// When it was archived, in seconds since the Unix epoch, or 0 while it is still to read.
+    #[serde(default)]
+    pub archived: u64,
+    /// An article's site for its row: the site's own name, else its address's host.
+    #[serde(default)]
+    pub site: Option<String>,
+    /// How many words it has, for how long it takes to read. 0 for one added before this was kept.
+    #[serde(default)]
+    pub words: usize,
 }
 
 impl Entry {
@@ -110,6 +119,12 @@ impl Library {
                 if entry.cover.is_none() && book.cover.is_some() {
                     entry.cover = book.cover.clone();
                 }
+                if entry.site.is_none() {
+                    entry.site = book.site.clone();
+                }
+                if entry.words == 0 {
+                    entry.words = book.words;
+                }
                 if let Some(old) = &book.before {
                     (entry.title, entry.author, entry.chapters) = (book.title.clone(), book.author.clone(), book.chapters);
                     let carried = entry.position.carried(old, &book.titles);
@@ -135,6 +150,9 @@ impl Library {
                     cover: book.cover.clone(),
                     opened: 0,
                     position_at: 0,
+                    archived: 0,
+                    site: book.site.clone(),
+                    words: book.words,
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -245,6 +263,16 @@ impl Library {
         self.save()
     }
 
+    /// Archives the book, or brings it back to read when `archived` is false.
+    pub fn set_archived(&mut self, id: &BookId, archived: bool) -> io::Result<()> {
+        let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(()) };
+        if (entry.archived > 0) == archived {
+            return Ok(());
+        }
+        entry.archived = if archived { now() } else { 0 };
+        self.save()
+    }
+
     /// Records a book another device added, whose parsed file is already stored here. A book
     /// already in the library is left as it is.
     pub fn record(&mut self, entry: Entry) -> io::Result<()> {
@@ -307,6 +335,8 @@ pub struct Prepared {
     pub titles: Vec<Option<String>>,
     /// The chapter titles of the parse this one replaced, when it replaced one.
     pub before: Option<Vec<Option<String>>>,
+    pub site: Option<String>,
+    pub words: usize,
 }
 
 /// Reads, parses and stores the book at `path` under `dir`, without touching the index, so it
@@ -444,8 +474,18 @@ impl Prepared {
             cover: None,
             titles: titles(book),
             before: None,
+            site: book.source.as_ref().and_then(|s| s.site.clone().or_else(|| host(&s.url))),
+            words: book.chapters.iter().map(|c| c.text.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count()).sum(),
         }
     }
+}
+
+/// The host of a web address, without `www.`.
+fn host(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let host = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?.split(':').next()?;
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    (!host.is_empty()).then(|| host.to_lowercase())
 }
 
 fn store(dir: &Path, book: &Book) -> io::Result<()> {
@@ -505,9 +545,18 @@ mod tests {
         lib.set_position(&id, Position { chapter: 1, fraction: 0.6 }).unwrap();
         assert!(lib.entries()[0].position_at > stamped, "a move in the same millisecond still stamps later");
         lib.set_position(&id, Position { chapter: 1, fraction: 0.5 }).unwrap();
+        lib.set_archived(&id, true).unwrap();
+        lib.add(&prepare(lib.dir(), &file).unwrap()).unwrap();
+        assert!(lib.entries()[0].archived > 0, "importing an archived book again leaves it archived");
 
         let reopened = Library::open(dir.path().join("data")).unwrap();
         assert_eq!(reopened.entries()[0].position, Position { chapter: 1, fraction: 0.5 });
+        assert!(reopened.entries()[0].archived > 0, "archiving is kept");
+        assert!(reopened.entries()[0].words > 0);
+        let mut reopened = reopened;
+        reopened.set_archived(&id, false).unwrap();
+        let reopened = Library::open(dir.path().join("data")).unwrap();
+        assert_eq!(reopened.entries()[0].archived, 0, "unarchiving is kept");
         assert_eq!(reopened.entries()[0].title, "A Small Book");
         assert_eq!(reopened.load(&id).unwrap().chapters.len(), 3);
         assert!((reopened.entries()[0].progress() - 0.5).abs() < 1e-6);

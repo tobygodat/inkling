@@ -1,0 +1,141 @@
+import InklingCore
+import SwiftUI
+
+/// The reader: the item's text in reading's face on its paper, the place kept as it scrolls, and
+/// how far through at the foot.
+struct ReaderView: View {
+    @Environment(Shelf.self) private var shelf
+    @Environment(\.colorScheme) private var scheme
+    let item: Item
+    @State private var model: ReaderModel?
+    @State private var failed: String?
+
+    var body: some View {
+        let look = shelf.looks.reading()
+        let palette = Self.palette(look.tone, shelf: shelf, scheme: scheme)
+        ZStack(alignment: .bottom) {
+            Color(palette.ground).ignoresSafeArea()
+            if let model {
+                ReaderText(model: model, palette: palette, column: CGFloat(look.pageWidth))
+                    .ignoresSafeArea(edges: .bottom)
+                    .transition(.opacity)
+            } else if let failed {
+                Text(failed)
+                    .font(.inter(14))
+                    .foregroundStyle(Color(palette.muted))
+                    .padding(40)
+                    .frame(maxHeight: .infinity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: model == nil)
+        .environment(\.palette, palette)
+        .toolbar {
+            if let model {
+                ReaderTools(model: model)
+                #if os(iOS)
+                ToolbarItem(placement: .principal) { Place(model: model, palette: palette) }
+                #endif
+            }
+        }
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("")
+        #else
+        .navigationTitle(item.title)
+        .navigationSubtitle(model.map(Place.words) ?? "")
+        #endif
+        .task(id: item.id) { await load(look: look, palette: palette) }
+        .onDisappear { shelf.flushPlaces() }
+        #if os(macOS)
+        .focusedSceneValue(\.reader, model)
+        #endif
+    }
+
+    private func load(look: Look, palette: Palette) async {
+        do {
+            let book = try await shelf.open(item.id)
+            #if os(macOS)
+            let scale: CGFloat = 1
+            let lineScale: CGFloat = 1
+            let column = CGFloat(look.pageWidth)
+            let title: CGFloat = 36
+            #else
+            let scale: CGFloat = 19 / 21
+            let lineScale: CGFloat = 1.65 / 1.75
+            let column = min(CGFloat(look.pageWidth), UIScreen.main.bounds.width - 48)
+            let title: CGFloat = 28
+            #endif
+            let set = Typesetting(
+                face: look.face,
+                size: CGFloat(look.textSize) * scale,
+                lineHeight: CGFloat(look.lineSpacing) / 100 * lineScale,
+                titleSize: title * CGFloat(look.textSize) / 21,
+                palette: palette,
+                column: column
+            )
+            let byline = item.kind == .article ? [item.author, item.site, item.minutes.map { "\($0) min" }].compactMap(\.self).joined(separator: "  ·  ") : nil
+            let folder = URL(filePath: shelf.library.folder())
+            let rendered = try await Shelf.offMain { Renderer.render(book, set: set, folder: folder, byline: byline) }
+            model = ReaderModel(item: item, rendered: rendered, shelf: shelf)
+        } catch {
+            failed = Shelf.words(error)
+        }
+    }
+
+    /// Reading's look: Light and Dark follow the system's appearance; a paper tone is its own.
+    static func palette(_ tone: Tone, shelf: Shelf, scheme: ColorScheme) -> Palette {
+        switch tone {
+        case .light, .dark: Palette(shelf.looks.colors(tone: scheme == .dark ? .dark : .light))
+        default: Palette(shelf.looks.colors(tone: tone))
+        }
+    }
+}
+
+/// How far through, in muted ink in the bar above the text: the time left in an article, the
+/// chapter and the share read in a book.
+private struct Place: View {
+    let model: ReaderModel
+    let palette: Palette
+
+    var body: some View {
+        Text(Self.words(model))
+            .font(.inter(13, weight: .medium, relativeTo: .footnote))
+            .monospacedDigit()
+            .foregroundStyle(Color(palette.muted))
+            .contentTransition(.numericText())
+            .animation(.snappy(duration: 0.25), value: Self.words(model))
+            .accessibilityIdentifier("place")
+    }
+
+    static func words(_ model: ReaderModel) -> String {
+        let percent = "\(Int((model.progress * 100).rounded()))%"
+        if model.item.kind == .article {
+            guard let left = model.minutesLeft, model.progress < 0.98 else { return "Finished" }
+            return left == 0 ? percent : "\(left) min left"
+        }
+        return "Chapter \(model.chapter + 1) of \(model.rendered.chapters.count) · \(percent)"
+    }
+}
+
+/// The reader's toolbar: its highlights, and the page an article came from.
+private struct ReaderTools: ToolbarContent {
+    let model: ReaderModel
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                if model.highlights.isEmpty {
+                    Text("Select a passage and choose Highlight")
+                }
+                ForEach(model.highlights, id: \.self) { passage in
+                    Button(passage.words.count > 80 ? String(passage.words.prefix(80)) + "…" : passage.words) { model.go(to: passage) }
+                        .accessibilityIdentifier("passage")
+                }
+            } label: {
+                Label("Highlights", systemImage: "highlighter")
+            }
+            .accessibilityIdentifier("highlights")
+            .accessibilityValue("\(model.highlights.count)")
+        }
+    }
+}

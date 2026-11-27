@@ -4020,6 +4020,7 @@ name = "inkling-ffi"
 version = "0.1.0"
 dependencies = [
  "inkling-books",
+ "inkling-core",
  "tempfile",
  "uniffi",
 ]
