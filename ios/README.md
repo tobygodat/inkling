@@ -29,9 +29,10 @@ Launch flags work in Debug builds only; Release ignores them:
 
 With neither flag the app reads keys from the Keychain through `inkling_core::default_keys()`.
 
-`testflight.sh [build number]` archives a Release build for a real iPhone and uploads it to
-TestFlight. The build number defaults to the UTC time (`20261111.2220`), so each upload is higher
-than the last. Release builds read keys from the Keychain and call the real providers.
+`testflight.sh [build number]` archives a Release build for a real iPhone under bundle ID
+`com.tobygodat.inkling` ("Inkling") and uploads it to TestFlight. The build number defaults to the
+UTC time (`20261111.2220`), so each upload is higher than the last. Release builds read keys from
+the Keychain and call the real providers.
 Before uploading it checks every framework symbol the binary imports against the public iPhoneOS
 SDK headers, because App Store Connect rejects private API use (ITMS-90338). Build 20261111.2229
 was rejected for `CGContextSetFontSmoothingStyle`, which core-graphics links through an unused
@@ -40,16 +41,20 @@ an account may use the cloud-managed distribution certificate; an API key gets `
 permission error`. `altool` then uploads it with the App Store Connect API key stored in the login
 Keychain under `inkling-app-store-connect` (`key-id`, `issuer-id` and `p8`, the .p8 file in base64).
 
-`ota.sh [build number]` puts a build on Toby's iPhone over the air, without TestFlight. It makes
-the same Release archive as `testflight.sh`, exports it ad hoc (`release-testing`, team
-Q6NAWA42Y2), so only the iPhones registered on the developer account can install it, uploads the
-.ipa to `inkling-server` and prints a link. Open the link on the iPhone within 24 hours and tap
-Install. It sends nothing to Apple, so any thread on Toby's Mac may run it without asking. It skips
-`testflight.sh`'s private-symbol check, which exists for App Store review. The upload token comes
-from the login Keychain (service `inkling-ota`, account `upload-token`) and goes to `curl` on
-stdin, so it is never in a file, an argument or the log. `INKLING_SERVER` points it at another
-Worker. Only the newest five builds are kept, and each link opens one build, never "latest". See
-[Over-the-air builds](#over-the-air-builds) for the one-time setup.
+`ota.sh [build number]` puts a build on Toby's iPhone over the air, without TestFlight. It builds
+a Release archive under bundle ID `com.tobygodat.inkling.dev` with display name "Inkling Dev",
+signs it for development (`debugging`, team Q6NAWA42Y2) with the "Inkling Dev Development"
+profile and the local Apple Development identity, so no Xcode account is needed and only the
+iPhones in that profile can install it, uploads the .ipa to `inkling-server` and prints a link. Open the
+link on the iPhone within 24 hours and tap Install. Because it has its own bundle ID, it installs
+beside the TestFlight app (`com.tobygodat.inkling`, "Inkling") and keeps its own sandbox data
+(documents, library, settings, and its own "Inkling Dev" folder in Files) and its own Keychain
+sign-in and API keys. It sends nothing to Apple, so any thread on Toby's Mac may run it without
+asking. It skips `testflight.sh`'s private-symbol check, which exists for App Store review. The
+upload token comes from the login Keychain (service `inkling-ota`, account `upload-token`) and goes
+to `curl` on stdin, so it is never in a file, an argument or the log. `INKLING_SERVER` points it at
+another Worker. Only the newest five builds are kept, and each link opens one build, never "latest".
+See [Over-the-air builds](#over-the-air-builds) for the one-time setup.
 
 `snap.sh <agent-device>` (or `AGENT_DEVICE=<agent-device> snap.sh`) is the scripted proof; see
 [The scripted run](#the-scripted-run).
@@ -428,10 +433,20 @@ Like the books lane, they have not run end to end yet.
 
 ## Over-the-air builds
 
+Channels use separate bundle IDs so both stay installed on the same iPhone:
+
+- **TestFlight (`testflight.sh`):** `com.tobygodat.inkling` ("Inkling").
+- **Over-the-air (`ota.sh`):** `com.tobygodat.inkling.dev` ("Inkling Dev").
+
+Because iOS isolates each bundle ID's sandbox and Keychain access group, Inkling Dev keeps its own
+data (documents, books, settings) and its own Google sign-in and API keys, separate from the
+TestFlight app.
+
 The page holds `itms-services://?action=download-manifest&url=<manifest>`. iOS fetches the
 manifest and the .ipa outside Safari, with no cookies, so every URL carries its own HMAC signature
 and expiry: the page signs the manifest's URL and the manifest signs the .ipa's.
-`server/src/builds.ts` serves them.
+`server/src/builds.ts` serves them, naming `com.tobygodat.inkling.dev` ("Inkling Dev") in
+`manifest.plist`.
 
 One-time setup, on the Mac:
 
@@ -440,13 +455,12 @@ One-time setup, on the Mac:
    Keychain and in the Worker in one go.
 2. Register the iPhone's UDID on team Q6NAWA42Y2. Connect the iPhone to the Mac, select it in the
    Finder and click the line under its name until it shows the UDID, then copy it. Add it at
-   developer.apple.com, under Certificates, Identifiers & Profiles, Devices. The next `ota.sh`
-   run's `-allowProvisioningUpdates` makes an ad hoc profile that includes it. An iPhone added
-   later needs a new build. An ad hoc build needs no Developer Mode on the iPhone.
-
-Not proven yet: no build has been archived with `release-testing`, uploaded or installed from a
-link (TOB-518). The first install should record whether it upgrades the TestFlight install in
-place or needs the app deleted first.
+   developer.apple.com, under Certificates, Identifiers & Profiles, Devices.
+3. Make the iOS App Development profile "Inkling Dev Development" for `com.tobygodat.inkling.dev`
+   with the "Apple Development: Toby Godat" certificate and the registered iPhones, and install it
+   in `~/Library/Developer/Xcode/UserData/Provisioning Profiles`. An iPhone added later needs the
+   profile regenerated and a new build. A development build needs Developer Mode on the iPhone, and
+   its push notifications would use the sandbox environment.
 
 ## Gaps
 

@@ -55,12 +55,16 @@ describe("over-the-air builds", () => {
     const page = await call(local(url));
     expect(page.status).toBe(200);
     expect(page.headers.get("cache-control")).toBe("no-store");
-    expect(await page.clone().text()).toContain("Version 0.1.0 (20261121.0900)");
+    const pageHtml = await page.clone().text();
+    expect(pageHtml).toContain("Install Inkling Dev");
+    expect(pageHtml).toContain("Version 0.1.0 (20261121.0900)");
 
     const { manifest, ipa } = await chain(url);
     const plist = await call(local(manifest));
     expect(plist.headers.get("cache-control")).toBe("no-store");
-    expect(await plist.text()).toContain("<string>com.tobygodat.inkling</string>");
+    const plistXml = await plist.text();
+    expect(plistXml).toContain("<string>com.tobygodat.inkling.dev</string>");
+    expect(plistXml).toContain("<string>Inkling Dev</string>");
 
     const file = await call(local(ipa));
     expect(file.status).toBe(200);

@@ -11,7 +11,8 @@ import { fromBase64 } from "./secret";
 
 const LINK_HOURS = 24;
 const KEPT_BUILDS = 5;
-const BUNDLE_ID = "com.tobygodat.inkling";
+const BUNDLE_ID = "com.tobygodat.inkling.dev";
+const TITLE = "Inkling Dev";
 const ROUTE = /^\/builds\/([0-9a-f]{32})(\/manifest\.plist|\/Inkling\.ipa)?$/u;
 const LABEL = z.string().regex(/^[0-9A-Za-z.-]{1,32}$/u);
 const Labels = z.object({ version: LABEL, build: LABEL });
@@ -97,7 +98,7 @@ function installPage(env: Env, id: string, labels: z.infer<typeof Labels>, manif
   const install = `itms-services://?action=download-manifest&url=${encodeURIComponent(manifest)}`;
 
   return page(
-    "Install Inkling",
+    `Install ${TITLE}`,
     `<style>a.install { display: inline-block; padding: .6rem 1.5rem; border-radius: .5rem; background: #2f6fde; color: #fff; text-decoration: none; font-weight: 600; }</style>
 <p>Version ${escapeHtml(labels.version)} (${escapeHtml(labels.build)}), build ${escapeHtml(id.slice(0, 8))}.</p>
 <p><a class="install" href="${escapeHtml(install)}">Install</a></p>
@@ -125,7 +126,7 @@ function manifestPlist(labels: z.infer<typeof Labels>, ipa: string): Response {
         <key>bundle-identifier</key><string>${BUNDLE_ID}</string>
         <key>bundle-version</key><string>${escapeHtml(labels.version)}</string>
         <key>kind</key><string>software</string>
-        <key>title</key><string>Inkling</string>
+        <key>title</key><string>${TITLE}</string>
       </dict>
     </dict>
   </array>
