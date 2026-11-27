@@ -62,7 +62,7 @@ struct ReaderView: View {
         #endif
         .task(id: Setting(id: item.id, look: look, dark: palette.isDark)) { await load(look: look, palette: palette) }
         #if os(iOS)
-        .onChange(of: palette.isDark, initial: true) { navigator.readerScheme = palette.isDark ? .dark : .light }
+        .onChange(of: look.tone, initial: true) { navigator.readerScheme = Self.scheme(of: look.tone, palette: palette) }
         .onDisappear { navigator.readerScheme = nil }
         #endif
         .onDisappear { shelf.flushPlaces() }
@@ -108,6 +108,15 @@ struct ReaderView: View {
         let id: String
         let look: Look
         let dark: Bool
+    }
+
+    /// The Light or Dark a paper tone asks of the bars around it. Auto asks nothing: its paper
+    /// follows the app's own Light or Dark, so it must never decide that.
+    static func scheme(of tone: Tone, palette: Palette) -> ColorScheme? {
+        switch tone {
+        case .light, .dark: nil
+        default: palette.isDark ? .dark : .light
+        }
     }
 
     /// Reading's look: Light and Dark follow the system's appearance; a paper tone is its own.
