@@ -11,28 +11,48 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use inkling_books::{self as books, BookId, Entry, Format, Highlight, Position};
 
+mod documents;
 mod look;
+mod review;
 
+pub use documents::{DocInfo, DocumentStore, document_title};
 pub use look::{Colors, Look, Looks, Tone, faces};
+pub use review::{
+    AiEngine, AiProvider, AskKind, ChangeDecision, ReviewChange, ReviewSegment, ReviewSession,
+    ReviewStats, RevisionListener, RevisionSnapshot, RevisionState, TextEdit,
+    provider_default_model, provider_label,
+};
 
 uniffi::setup_scaffolding!();
 
-/// What went wrong, in words the reader can be shown.
+/// What went wrong, in words the reader or writer can be shown.
 #[derive(Debug, uniffi::Error)]
 pub enum InklingError {
     /// The data folder couldn't be read or written.
     Storage { message: String },
     /// A file or page couldn't become a book or an article.
     Import { message: String },
-    /// No book in the library has this id.
+    /// No book or document has this id.
     NotFound { id: String },
+    /// The AI request wasn't valid for the draft (empty instruction, empty selection, etc.).
+    InvalidRequest { message: String },
+    /// The chosen provider has no API key saved yet.
+    MissingKey { provider: String },
+    /// The Keychain refused to save or remove a secret.
+    Keychain { message: String },
 }
 
 impl std::fmt::Display for InklingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InklingError::Storage { message } | InklingError::Import { message } => f.write_str(message),
-            InklingError::NotFound { id } => write!(f, "Nothing in the library has the id {id}."),
+            InklingError::Storage { message }
+            | InklingError::Import { message }
+            | InklingError::InvalidRequest { message }
+            | InklingError::Keychain { message } => f.write_str(message),
+            InklingError::NotFound { id } => write!(f, "Nothing in Inkling has the id {id}."),
+            InklingError::MissingKey { provider } => {
+                write!(f, "Add your {provider} API key in Settings before asking.")
+            }
         }
     }
 }

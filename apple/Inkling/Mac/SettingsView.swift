@@ -8,9 +8,18 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             Tab("Reading", systemImage: "textformat.size") {
-                AppearancePanel()
+                AppearancePanel(target: .reading)
                     .frame(width: 400)
                     .padding(.vertical, 8)
+            }
+            Tab("Writing", systemImage: "pencil.line") {
+                AppearancePanel(target: .writing)
+                    .frame(width: 400)
+                    .padding(.vertical, 8)
+            }
+            Tab("AI Provider", systemImage: "sparkles") {
+                ProviderPanel()
+                    .frame(width: 460, height: 280)
             }
             Tab("Library", systemImage: "books.vertical") {
                 Form {

@@ -67,10 +67,18 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-archive")
             app.navigationBars.buttons.element(boundBy: 0).tap()
 
-            for tab in ["Library", "Inbox", "Notebook", "Search"] {
+            for tab in ["Library", "Inbox", "Writing", "Search"] {
                 app.tabBars.buttons[tab].tap()
                 sleep(1)
-                shoot("\(name)-\(tab.lowercased())")
+                if tab == "Library" {
+                    shoot("\(name)-library")
+                    app.buttons["notebook"].tap()
+                    sleep(1)
+                    shoot("\(name)-notebook")
+                    app.navigationBars.buttons.element(boundBy: 0).tap()
+                } else {
+                    shoot("\(name)-\(tab.lowercased())")
+                }
             }
             XCTAssertTrue(app.searchFields.firstMatch.isHittable, "the Search field shows without pulling down")
             XCTAssertTrue(row(app, "Walking").exists, "Search starts from everything in the library")
@@ -141,6 +149,104 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), "a chapter chosen in Contents opens: \(place(app))")
             app.terminate()
         }
+    }
+
+    /// The native writing page and inline review in Light and Dark: documents list, live Markdown
+    /// canvas, Fix grammar inline review, accepting/rejecting changes and persisting across relaunch.
+    @MainActor func testWritingPage() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        for name in ["light", "dark"] {
+            appearance = name
+            let dir = "\(base)/writing-\(name)"
+            let app = launch(data: dir, demo: true)
+            let writingTab = app.tabBars.buttons["Writing"]
+            XCTAssertTrue(writingTab.waitForExistence(timeout: 5), "Writing tab exists")
+            writingTab.tap()
+            sleep(1)
+            shoot("\(name)-documents")
+
+            let doc = app.buttons["doc-On Keeping a Quiet Desk"].firstMatch
+            XCTAssertTrue(doc.waitForExistence(timeout: 5), "demo document appears in Writing list")
+            doc.tap()
+            let editor = app.textViews["editor"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 10), "TextKit 2 writing editor opens")
+            sleep(1)
+            shoot("\(name)-writing")
+
+            // Ask Fix grammar (INKLING_FAKE_AI=1) and review inline.
+            let fix = app.buttons["fix-grammar"]
+            XCTAssertTrue(fix.waitForExistence(timeout: 5), "Fix grammar quick action is visible")
+            fix.tap()
+            let useButton = app.buttons["review-use"]
+            XCTAssertTrue(useButton.waitForExistence(timeout: 15), "inline review opens with Use/Keep controls")
+            sleep(1)
+            shoot("\(name)-writing-review")
+
+            // Accept the first change, reject the second, then accept the rest.
+            useButton.tap()
+            sleep(1)
+            let keepButton = app.buttons["review-keep"]
+            XCTAssertTrue(keepButton.waitForExistence(timeout: 5))
+            keepButton.tap()
+            sleep(1)
+            app.buttons["accept-rest"].tap()
+            XCTAssertTrue(editor.waitForExistence(timeout: 5), "finishing review returns to the live editor")
+            sleep(1)
+
+            // Verify accepted edits persisted to disk across a relaunch.
+            app.terminate()
+            let again = launch(data: dir, demo: false)
+            again.tabBars.buttons["Writing"].tap()
+            again.buttons["doc-On Keeping a Quiet Desk"].firstMatch.tap()
+            let reloadedEditor = again.textViews["editor"]
+            XCTAssertTrue(reloadedEditor.waitForExistence(timeout: 10))
+            let text = (reloadedEditor.value as? String) ?? ""
+            XCTAssertTrue(text.contains("crosses the grain"), "accepted change survives relaunch")
+            XCTAssertTrue(text.contains("i dont want"), "rejected change stays untouched")
+            XCTAssertTrue(text.contains("which holds"), "remaining accepted changes survive relaunch")
+            again.terminate()
+        }
+    }
+
+    /// Measures keystroke-to-painted-frame latency typing 50 characters into a 5,000-word draft on
+    /// the Simulator (apples-to-apples with `ios/bench.sh`). Driven by `apple/bench.sh`.
+    @MainActor func testTypingBenchmark5000Words() throws {
+        guard let dir = environment["INKLING_BENCH_DATA"],
+              let probeOut = environment["INKLING_PROBE_OUT"] else {
+            throw XCTSkip("apple/bench.sh sets INKLING_BENCH_DATA and INKLING_PROBE_OUT")
+        }
+        appearance = "light"
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "INKLING_DATA_DIR": dir,
+            "INKLING_FAKE_AI": "1",
+            "INKLING_APPEARANCE": "light",
+            "INKLING_PROBE_TYPING": "1",
+            "INKLING_PROBE_OUT": probeOut,
+        ]
+        app.launch()
+        let writingTab = app.tabBars.buttons["Writing"]
+        XCTAssertTrue(writingTab.waitForExistence(timeout: 10))
+        writingTab.tap()
+        let benchDoc = app.buttons["doc-Benchmark"].firstMatch
+        XCTAssertTrue(benchDoc.waitForExistence(timeout: 5))
+        benchDoc.tap()
+        let editor = app.textViews["editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)).tap()
+        sleep(1)
+
+        // Clear any stray sample before typing starts.
+        try? FileManager.default.removeItem(atPath: probeOut)
+        let typed = "the light held over the river and the light held  "
+        for ch in typed {
+            editor.typeText(String(ch))
+        }
+        sleep(1)
+        app.terminate()
+
+        let saved = try String(contentsOfFile: "\(dir)/documents/bench.md", encoding: .utf8)
+        XCTAssertTrue(saved.localizedCaseInsensitiveContains("the light held over the river and"), "typed text persisted to bench.md")
     }
 
     /// The place in the reader's bar, the bars brought back first.

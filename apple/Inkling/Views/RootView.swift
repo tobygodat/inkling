@@ -71,14 +71,26 @@ struct MacRoot: View {
             SectionView(section: navigator.section)
                 .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 520)
         } detail: {
-            if let item = shelf.item(navigator.selection) {
+            if navigator.section == .writing {
+                if let docId = navigator.document {
+                    WritingView(documentId: docId)
+                        .id(docId)
+                } else {
+                    NothingOpen(words: "Choose a document or start a new one")
+                }
+            } else if let item = shelf.item(navigator.selection) {
                 ReaderView(item: item)
                     .id(item.id)
             } else {
                 NothingOpen(words: shelf.count(navigator.section) == nil ? nil : "Choose something to read")
             }
         }
-        .onChange(of: navigator.section) { navigator.selection = nil }
+        .onChange(of: navigator.section) {
+            navigator.selection = nil
+            if navigator.section == .writing && navigator.document == nil {
+                navigator.document = shelf.lastOpenDocumentId() ?? shelf.docs.first?.id
+            }
+        }
     }
 }
 
@@ -102,21 +114,40 @@ struct NothingOpen: View {
     }
 }
 #else
-/// The essentials in the tab bar, and Search. Archive is a step inside Queue and Library.
+/// The essentials in the tab bar, and Search. Archive and Notebook sit inside Queue and Library so
+/// the tab bar keeps four tabs beside the detached Search pill with no More tab.
 struct PhoneRoot: View {
     private enum Place: Hashable { case section(Section), search }
-    private static let tabs: [Section] = [.queue, .inbox, .library, .notebook]
+    private static let tabs: [Section] = [.queue, .inbox, .library, .writing]
+    @Environment(Navigator.self) private var navigator
     @State private var place = Place.section(.queue)
+    @State private var writingPath: [DocumentRoute] = []
 
     var body: some View {
         TabView(selection: $place) {
             ForEach(Self.tabs) { section in
                 Tab(section.title, systemImage: section.symbol, value: Place.section(section)) {
-                    NavigationStack {
-                        SectionView(section: section)
-                            .navigationDestination(for: String.self) { id in
-                                PhoneReader(id: id)
+                    if section == .writing {
+                        NavigationStack(path: $writingPath) {
+                            SectionView(section: .writing)
+                                .navigationDestination(for: DocumentRoute.self) { route in
+                                    WritingView(documentId: route.id)
+                                        .toolbar(.hidden, for: .tabBar)
+                                }
+                        }
+                        .onChange(of: navigator.phoneDocument) {
+                            if let route = navigator.phoneDocument {
+                                navigator.phoneDocument = nil
+                                writingPath.append(route)
                             }
+                        }
+                    } else {
+                        NavigationStack {
+                            SectionView(section: section)
+                                .navigationDestination(for: String.self) { id in
+                                    PhoneReader(id: id)
+                                }
+                        }
                     }
                 }
             }

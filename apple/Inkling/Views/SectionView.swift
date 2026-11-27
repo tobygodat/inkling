@@ -13,17 +13,25 @@ struct SectionView: View {
             .toolbar {
                 #if os(iOS)
                 if section == .queue || section == .library {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItemGroup(placement: .topBarLeading) {
                         NavigationLink {
                             SectionView(section: .archive)
                         } label: {
                             Label("Archive", systemImage: "archivebox")
                         }
                         .accessibilityIdentifier("archive")
+                        if section == .library {
+                            NavigationLink {
+                                SectionView(section: .notebook)
+                            } label: {
+                                Label("Notebook", systemImage: "highlighter")
+                            }
+                            .accessibilityIdentifier("notebook")
+                        }
                     }
                 }
                 #endif
-                if section != .archive {
+                if section != .archive && section != .writing {
                     ToolbarItem(placement: .primaryAction) { AddMenu() }
                 }
             }
@@ -31,6 +39,8 @@ struct SectionView: View {
 
     @ViewBuilder private var content: some View {
         switch section {
+        case .writing:
+            DocumentListView()
         case .queue:
             ItemList(groups: [("", shelf.queue)], section: section) {
                 ContentUnavailableView {

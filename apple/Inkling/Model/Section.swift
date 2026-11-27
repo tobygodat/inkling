@@ -1,6 +1,6 @@
 /// The app's top-level places, in the order the sidebar and the tab bar show them.
 enum Section: String, CaseIterable, Identifiable, Hashable {
-    case queue, inbox, library, archive, notebook
+    case queue, inbox, library, archive, notebook, writing
 
     var id: Self { self }
 
@@ -11,6 +11,7 @@ enum Section: String, CaseIterable, Identifiable, Hashable {
         case .library: "Library"
         case .archive: "Archive"
         case .notebook: "Notebook"
+        case .writing: "Writing"
         }
     }
 
@@ -21,6 +22,7 @@ enum Section: String, CaseIterable, Identifiable, Hashable {
         case .library: "books.vertical"
         case .archive: "archivebox"
         case .notebook: "highlighter"
+        case .writing: "pencil.line"
         }
     }
 }

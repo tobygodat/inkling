@@ -10,12 +10,20 @@ final class Shelf {
     let folder: URL
     let library: Library
     let looks: Looks
+    let documents: DocumentStore
+    let ai: AiEngine
     /// Fetches saved pages and their pictures.
     let session: URLSession
     private(set) var items: [Item]
+    /// The writer's documents, newest first.
+    private(set) var docs: [DocInfo]
     /// How reading looks, kept in `settings.json` beside the GPUI app's.
     private(set) var look: Look
-    /// A failure to show the reader, in Rust's own words.
+    /// How writing looks, kept in `settings.json` beside the GPUI app's.
+    private(set) var writingLook: Look
+    /// The document removed last, held until the next action for Undo.
+    private var deletedDoc: (info: DocInfo, text: String)?
+    /// A failure to show the reader or writer, in Rust's own words.
     var failure: String?
     @ObservationIgnored private var places: [String: (chapter: Int, fraction: Double)] = [:]
     @ObservationIgnored private var keeping: Task<Void, Never>?
@@ -25,8 +33,12 @@ final class Shelf {
         self.session = session
         library = try Library.open(data: folder.path)
         looks = Looks.open(data: folder.path)
+        documents = try DocumentStore.open(data: folder.path)
+        ai = AiEngine.open(data: folder.path)
         look = looks.reading()
+        writingLook = looks.writing()
         items = library.items()
+        docs = documents.list()
     }
 
     /// The data folder core names: `INKLING_DATA_DIR` when set, as every headless run sets it, else
@@ -36,9 +48,15 @@ final class Shelf {
         let folder = URL(filePath: dataFolder(), directoryHint: .isDirectory)
         do {
             let shelf = try Shelf(folder: folder)
-            if let demo = environment["INKLING_DEMO"], shelf.items.isEmpty {
-                Demo.seed(shelf.library, from: URL(filePath: demo), books: environment["INKLING_FIXTURES"].map { URL(filePath: $0) })
-                shelf.reload()
+            if let demo = environment["INKLING_DEMO"] {
+                if shelf.items.isEmpty {
+                    Demo.seed(shelf.library, from: URL(filePath: demo), books: environment["INKLING_FIXTURES"].map { URL(filePath: $0) })
+                    shelf.reload()
+                }
+                if shelf.docs.isEmpty {
+                    Demo.seedDocuments(shelf.documents)
+                    shelf.reloadDocuments()
+                }
             }
             return shelf
         } catch {
@@ -63,12 +81,78 @@ final class Shelf {
         case .queue: queue.count
         case .library: books.count + queue.count
         case .archive: archive.count
+        case .writing: docs.count
         case .inbox, .notebook: nil
         }
     }
 
     func reload() {
         items = library.items()
+    }
+
+    // MARK: - Documents
+
+    var canUndoDeleteDocument: Bool { deletedDoc != nil }
+
+    func reloadDocuments() {
+        docs = documents.list()
+    }
+
+    func lastOpenDocumentId() -> String? {
+        documents.lastOpen()
+    }
+
+    func setLastOpenDocument(_ id: String?) {
+        try? documents.setLastOpen(id: id)
+    }
+
+    func readDocument(_ id: String) -> String {
+        (try? documents.read(id: id)) ?? ""
+    }
+
+    func saveDocument(id: String, text: String) throws {
+        try documents.write(id: id, text: text)
+        reloadDocuments()
+    }
+
+    func createDocument() -> String {
+        deletedDoc = nil
+        let id = documents.newId()
+        try? documents.write(id: id, text: "")
+        try? documents.setLastOpen(id: id)
+        reloadDocuments()
+        return id
+    }
+
+    func deleteDocument(_ doc: DocInfo) {
+        let text = readDocument(doc.id)
+        attempt { try documents.remove(id: doc.id) }
+        deletedDoc = (doc, text)
+        withAnimation(.snappy(duration: 0.25)) { reloadDocuments() }
+    }
+
+    func undoDeleteDocument() -> String? {
+        guard let removed = deletedDoc else { return nil }
+        deletedDoc = nil
+        attempt { try documents.restore(id: removed.info.id, text: removed.text, changedMs: removed.info.changedMs) }
+        withAnimation(.snappy(duration: 0.25)) { reloadDocuments() }
+        return removed.info.id
+    }
+
+    /// The first non-empty body line after the title, stripped of Markdown marks for the list row.
+    func documentExcerpt(_ id: String) -> String? {
+        let text = readDocument(id)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard lines.count > 1 else { return nil }
+        let raw = lines[1]
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#>- "))
+        return raw.isEmpty ? nil : raw
     }
 
     func setArchived(_ item: Item, _ archived: Bool) {
@@ -167,6 +251,14 @@ final class Shelf {
     func setLook(_ look: Look) {
         attempt { try looks.setReading(look: look) }
         self.look = looks.reading()
+        self.writingLook = looks.writing()
+    }
+
+    /// Keeps writing's look, as core clamps it.
+    func setWritingLook(_ look: Look) {
+        attempt { try looks.setWriting(look: look) }
+        self.writingLook = looks.writing()
+        self.look = looks.reading()
     }
 
     private func attempt(_ work: () throws -> Void) {
@@ -181,8 +273,9 @@ final class Shelf {
         switch error {
         case let error as InklingError:
             switch error {
-            case .Storage(let message), .Import(let message): message
-            case .NotFound: "That item is no longer in the library."
+            case .Storage(let message), .Import(let message), .InvalidRequest(let message), .Keychain(let message): message
+            case .MissingKey(let provider): "Add your \(provider) API key in Settings before asking."
+            case .NotFound: "That item is no longer here."
             }
         case let error as SaveError: error.message
         default: error.localizedDescription
