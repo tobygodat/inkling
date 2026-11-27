@@ -129,13 +129,16 @@ Set up Cloudflare Email Routing on `tobygodat.com` once, after deploying the Wor
 
 ## Over-the-air builds
 
-`ios/ota.sh` uploads an ad hoc .ipa with `POST /builds?version=…&build=…` and the upload token as
-a bearer token. The Worker stores it in the R2 bucket `inkling-builds` under a random ID, deletes
-all but the newest five, and answers with a link to `/builds/<id>`. The install page, its
-`manifest.plist` and `Inkling.ipa` are each refused unless their URL carries an HMAC of its path
-and expiry, under a key derived from `SECRET_KEY`. A link works for 24 hours after the upload, and
-the page and the manifest pass that same expiry on. Every response sends `Cache-Control: no-store`.
-A Worker on the free plan takes request bodies of up to 100 MB, which caps the .ipa.
+`apple/ota.sh` uploads a development-signed .ipa of the native SwiftUI iPhone app (`apple/`,
+`com.tobygodat.inkling.dev`, "Inkling Dev") with `POST /builds?version=…&build=…` and the upload
+token as a bearer token. TestFlight (`ios/testflight.sh`) stays on the GPUI iPhone app (`ios/`,
+`com.tobygodat.inkling`, "Inkling"). The Worker stores each upload in the R2 bucket `inkling-builds`
+under a random ID, deletes all but the newest five, and answers with a link to `/builds/<id>`. The
+install page, its `manifest.plist` and `Inkling.ipa` are each refused unless their URL carries an
+HMAC of its path and expiry, under a key derived from `SECRET_KEY`. A link works for 24 hours after
+the upload, and the page and the manifest pass that same expiry on. Every response sends
+`Cache-Control: no-store`. A Worker on the free plan takes request bodies of up to 100 MB, which
+caps the .ipa.
 
 Set it up once, on the Mac. Do it before the next deploy of any change: the deploy fails while the
 bucket is missing.
@@ -153,4 +156,4 @@ bucket is missing.
    Without `BUILD_UPLOAD_TOKEN`, every upload is refused.
 4. `bun run deploy`. Only Toby runs it.
 
-Then `ios/ota.sh` works. `ios/README.md` has the rest, including registering the iPhone's UDID.
+Then `apple/ota.sh` works. `ios/README.md` has the rest, including registering the iPhone's UDID.

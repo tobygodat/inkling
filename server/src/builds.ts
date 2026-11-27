@@ -1,5 +1,6 @@
-// iPhone builds installed over the air (TOB-518). `ios/ota.sh` uploads an ad hoc .ipa with the upload
-// token, the Worker keeps the newest five in R2 and answers with a signed link to the install page.
+// iPhone builds installed over the air (TOB-518, TOB-557). `apple/ota.sh` uploads a development-signed
+// .ipa of the native app with the upload token, the Worker keeps the newest five in R2 and answers
+// with a signed link to the install page.
 // iOS fetches the manifest and the .ipa outside Safari, with no cookies, so every URL carries an
 // HMAC of its path and expiry. The page signs the manifest's URL and the manifest signs the .ipa's,
 // each with the expiry it was opened with, so the whole chain stops working 24 hours after upload.
