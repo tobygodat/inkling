@@ -1,0 +1,58 @@
+# The native Inkling of ADR 0007: a Mac app and an iPhone app over apple/InklingUI. XcodeGen writes
+# Inkling.xcodeproj from this; apple/build.sh does it and builds both. The bundle id differs from the
+# GPUI apps' until they are deleted, so both can be installed while writing still lives there.
+name: Inkling
+options:
+  bundleIdPrefix: com.tobygodat.inkling
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+  createIntermediateGroups: true
+packages:
+  InklingUI:
+    path: InklingUI
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: Q6NAWA42Y2
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: Inkling
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+    INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+    PRODUCT_NAME: Inkling
+    PRODUCT_BUNDLE_IDENTIFIER: com.tobygodat.inkling.reader
+targets:
+  InklingMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: InklingUI
+    scheme: {}
+    settings:
+      base:
+        # The XCFramework is built for Apple silicon only.
+        ARCHS: arm64
+        # Not sandboxed, like the GPUI app, so both read ~/Library/Application Support/Inkling.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+  InklingPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: InklingUI
+    scheme: {}
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"

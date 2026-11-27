@@ -79,11 +79,11 @@ jobs:
         run: ios/run.sh
 
   swift-core:
-    name: Swift core package
-    # inkling-ffi as the native app sees it (ADR 0007): the XCFramework, its Swift side and the
-    # package's tests, run from Swift on the Mac.
+    name: Native app
+    # The native app of ADR 0007: inkling-ffi as Swift sees it (the XCFramework and the bridge's
+    # tests), the screens' tests and offscreen renders, and the Mac and Simulator app builds.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -97,6 +97,22 @@ jobs:
 
       - name: Swift tests
         run: swift test --package-path apple/InklingCore
+
+      - name: Screens and their renders
+        run: INKLING_SNAP_OUT="$RUNNER_TEMP/apple-snap" apple/snap.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apple-snap
+          path: ${{ runner.temp }}/apple-snap
+          if-no-files-found: ignore
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build the Mac and Simulator apps
+        run: SKIP_CORE=1 apple/build.sh
 
   server:
     name: Server types and tests

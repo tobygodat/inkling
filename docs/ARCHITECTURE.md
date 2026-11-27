@@ -42,6 +42,13 @@ app.
   `apple/InklingCore`: an XCFramework of the static library for the Mac, the iPhone and the
   Simulator, the Swift that `uniffi-bindgen` writes from the Mac library, and the package's own
   Swift (`PictureFetcher`, over URLSession).
+- `apple/InklingUI` is the native app's screens, in SwiftUI. `Shelf` is the library as the screens
+  see it, calling `Library` off the main thread. `Blocks` splits a chapter's Markdown into the
+  blocks the reader draws, each knowing its byte offset, and `Inline` styles a block's words. On
+  the Mac, `RootView` is a three-column split view (sidebar, rows, reader); on iPhone, a
+  navigation stack. The reader keeps the place as a chapter and a fraction, as the GPUI reader
+  does. The Mac app reads the same `~/Library/Application Support/Inkling` as the GPUI app, so
+  the two should not both be open. It bundles a copy of `ui/fonts/` until `ui/` goes.
 - `ui/` is `inkling-ui`: every view, on GPUI Kit, with no Mac-only or iPhone-only code. The host
   passes a `FormFactor`, the data folder (`Paths`) and the key store, and can lend the library a
   `BookHost`. It bundles Source Serif 4 and Inter (SIL OFL, licences in `ui/fonts/`) and nine

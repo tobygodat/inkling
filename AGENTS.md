@@ -28,7 +28,10 @@ https://app.notion.com/p/415935c51fac81acaefac497b9010370
 - `ffi/` is `inkling-ffi`: the Rust crates as the native Swift app sees them, through UniFFI
   (ADR 0007). Plain records and one error type, so no crate under it depends on UniFFI.
 - `apple/` is the native SwiftUI app of ADR 0007, which replaces `ui/`, `mac/` and the GPUI host in
-  `ios/` screen by screen. `apple/InklingCore` is the Swift package over `inkling-ffi`.
+  `ios/` screen by screen. `apple/InklingCore` is the Swift package over `inkling-ffi`,
+  `apple/InklingUI` holds every native screen, and `apple/project.yml` (XcodeGen) makes the Mac and
+  iPhone apps over it from `apple/App/`. Their bundle id is `com.tobygodat.inkling.reader` until
+  the GPUI apps go.
 - `server/` is `inkling-server`, the Cloudflare Worker of ADR 0004: OAuth with Sign in with Google,
   the remote MCP endpoint, the devices' sync API, the Readwise inbox and the iPhone builds' signed
   install links (TOB-518). TypeScript on Bun, not in
@@ -62,6 +65,13 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   `apple/InklingCore` (the XCFramework and its generated Swift, neither committed). Then
   `swift test --package-path apple/InklingCore` runs the package's tests. Any change under `ffi/`
   or `apple/` runs both. Mac only.
+- `apple/snap.sh` runs `apple/InklingUI`'s tests: the reader's blocks, and the native screens
+  rendered offscreen into `docs/screenshots/apple/` (`INKLING_SNAP_OUT=<folder>` writes them there
+  instead). The window never becomes key and sits off every screen. Any change under `apple/`
+  reruns it. Needs `apple/core.sh` first.
+- `apple/build.sh` builds the native Mac app and the iPhone Simulator app, unsigned, into
+  `target/apple` (XcodeGen, `brew install xcodegen`). `SKIP_CORE=1` reuses InklingCore when it is
+  already built. It opens nothing.
 - `ios/run.sh <agent-device> --fake-ai` builds the iPhone app, installs it on the Simulator and
   launches it with the fake model and keys in memory. Get `<agent-device>` from the T3 device tools'
   `device_open`.
@@ -111,6 +121,8 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
   over a list of hand-written cases.
 - `ui/`, `mac/` and `ios/` have no unit tests. Their snap script is the proof, and a visual change
   needs nothing more.
+- In `apple/`, logic (the reader's blocks, the bridge) gets Swift tests, and a screen's proof is
+  its offscreen render from `apple/snap.sh`.
 - A bug in logic, data or parsing gets a failing test first, then the fix.
 
 ## Review
