@@ -1,11 +1,14 @@
 # inkling-server
 
-The Cloudflare Worker of ADR 0004. It runs on the free plan and handles five things:
+The Cloudflare Worker of ADR 0004 and ADR 0007. It runs on the free plan and handles:
 
 - the OAuth sign-in, through Sign in with Google, for one owner;
 - the remote MCP endpoint at `/mcp`;
-- the devices' sync API under `/v1`;
-- the Readwise inbox;
+- the devices' sync API under `/v1` (books, articles, documents, highlights, feeds and incoming pages);
+- saving URLs from anywhere at `/save` and `/v1/save` (TOB-554);
+- RSS and Atom feed polling on the 30-minute cron (TOB-554);
+- Readwise Reader uploads in, and highlights out once each to Readwise (TOB-461, TOB-554);
+- newsletters delivered to the Worker's `email()` handler through Cloudflare Email Routing (TOB-554);
 - the iPhone builds' signed install links under `/builds` (TOB-518).
 
 `docs/ARCHITECTURE.md` says how the pieces fit.
@@ -70,9 +73,59 @@ then on the app syncs its documents, books and reading positions on its own.
 ## Readwise
 
 On Account, Readwise's Connect asks for the token from readwise.io/access_token. Underneath, it is
-`PUT /v1/readwise` with `{"token": …}`. The server checks Reader every 30 minutes; only documents
-saved after you connect come in. EPUBs and PDFs land in the inbox, and the next device to sync adds
-them to its library.
+`PUT /v1/readwise` with `{"token": …}`. The token is sealed with AES-256-GCM under `SECRET_KEY` and
+never leaves the server. The 30-minute cron checks Reader for new EPUBs and PDFs saved after you
+connect (which land in the inbox for a device to parse), and exports any unsent highlights made on
+any device once each via `POST https://readwise.io/api/v2/highlights/` (also triggered immediately
+when a device syncs new highlights).
+
+## Save from anywhere
+
+`POST /save` takes a URL from an Apple Shortcut, share sheet, or browser bookmarklet, fetches the
+HTML without parsing it, and stages it in `incoming` so the next syncing device parses it with
+`inkling-books` (TOB-534) into the Queue. Signed-in clients can also call `POST /v1/save` with
+their OAuth `sync` token (and may pass pre-fetched `html` for paywalled pages).
+
+Set the secret once before deploying:
+
+```sh
+openssl rand -hex 32 | bunx wrangler secret put SAVE_TOKEN
+```
+
+Without `SAVE_TOKEN`, `POST /save` refuses every request.
+
+- **Apple Shortcut / curl:** `POST https://inkling-server.tobygodat.workers.dev/save` with header
+  `Authorization: Bearer <SAVE_TOKEN>` and JSON body `{"url": "https://…"}`.
+- **Bookmarklet:** submits an `application/x-www-form-urlencoded` form POST to `/save` with `url`
+  and `token` in the POST body (never in the URL query string) and opens a plain confirmation page.
+
+## Feeds
+
+Devices follow RSS 2.0, Atom 1.0, and RSS 1.0/RDF feeds through `/v1/feeds` (`GET` to list,
+`POST {"url": "…"}` with HTML `<link rel="alternate">` autodiscovery to follow, `DELETE /v1/feeds/<id>`
+to unfollow). The 30-minute cron checks feeds with conditional GET (`If-None-Match`,
+`If-Modified-Since`), deduplicates items in `feed_seen`, and stages new items in `incoming` with
+`destination = "inbox"` so syncing devices parse them into the Inbox without duplicates.
+
+## Newsletters (Cloudflare Email Routing)
+
+The Worker exports an `email()` handler that accepts mail addressed to `NEWSLETTER_ADDRESS` in
+`wrangler.jsonc` (default `read@tobygodat.com`, plus `read+<tag>@tobygodat.com` aliases), unpacks
+the MIME message with `postal-mime`, deduplicates by `Message-ID`, and stages the HTML in `incoming`
+with `destination = "inbox"` so syncing devices parse it into the Inbox as an article. Mail to any
+other address is rejected during SMTP.
+
+Set up Cloudflare Email Routing on `tobygodat.com` once, after deploying the Worker:
+
+1. In the Cloudflare Dashboard, open zone `tobygodat.com` → **Email** → **Email Routing** and
+   enable Email Routing. Cloudflare creates the zone's MX records (`route1`–`route3.mx.cloudflare.net`)
+   and SPF TXT record (`v=spf1 include:_spf.mx.cloudflare.net ~all`).
+2. Under **Email Routing** → **Routing rules** → **Custom addresses**, create a rule for
+   `read@tobygodat.com` with action **Send to a Worker** → `inkling-server`.
+3. Optional, for `+tag` aliases (`read+substack@tobygodat.com`): set the **Catch-all address** rule
+   to **Send to a Worker** → `inkling-server` (the Worker rejects every recipient that doesn't match
+   `NEWSLETTER_ADDRESS` or its `+tag` form).
+4. Run `cd server && bun run deploy` to deploy the Worker and apply `migrations/0003_worker.sql`.
 
 ## Over-the-air builds
 

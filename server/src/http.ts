@@ -59,9 +59,29 @@ export const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/u;
 /** A picture a book's chapters show, as the device names it in `images/<book id>/`. */
 export const IMAGE_NAME = /^[0-9]+\.[a-z0-9]{1,5}$/u;
 export const COVER_NAME = /^[0-9a-f]{64}\.(jpg|png|gif|webp)$/u;
+export const INCOMING_ID = /^[0-9a-f]{64}$/u;
+export const FEED_ID = /^[0-9a-f]{32}$/u;
 
 /** KV's largest value. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+/** Largest raw HTML page or feed body the Worker fetches and keeps for a device to parse. */
+export const MAX_ARTICLE_BYTES = 5 * 1024 * 1024;
+
+const toHex = (bytes: ArrayBuffer | Uint8Array) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+export async function sha256Hex(text: string): Promise<string> {
+  return toHex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+}
+
+/** Constant-time token comparison by comparing SHA-256 digests so lengths never leak. */
+export async function tokenMatches(given: string | null | undefined, expected: string | undefined): Promise<boolean> {
+  if (!given || !expected) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", enc.encode(given)), crypto.subtle.digest("SHA-256", enc.encode(expected))]);
+
+  return crypto.subtle.timingSafeEqual(a, b);
+}
 
 /** The request's body checked against `schema`, or null when it isn't JSON at all. */
 export async function parseBody<T>(request: Request, schema: z.ZodType<T>): Promise<z.ZodSafeParseResult<T> | null> {

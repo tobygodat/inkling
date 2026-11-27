@@ -16,6 +16,8 @@ export default defineConfig(async () => ({
           GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",
           GOOGLE_CLIENT_SECRET: "test-secret",
           BUILD_UPLOAD_TOKEN: "test-upload-token",
+          SAVE_TOKEN: "test-save-token",
+          NEWSLETTER_ADDRESS: "read@tobygodat.com",
         },
       },
     }),

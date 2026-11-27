@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import type { Env } from "./env";
+import { pushHighlightsToReadwise } from "./highlights";
 import { MAX_FILE_BYTES, Refused, json, readJson } from "./http";
 import { open, seal } from "./secret";
 
@@ -42,6 +43,13 @@ async function link(env: Env): Promise<Link | null> {
   return { ...row, token: await open(env.SECRET_KEY, row.token) };
 }
 
+/** The decrypted Readwise token for server-side calls only, or null when Readwise isn't connected. */
+export async function readwiseToken(env: Env): Promise<string | null> {
+  const current = await link(env);
+
+  return current?.token ?? null;
+}
+
 export async function readwiseStatus(env: Env) {
   const row = await env.DB.prepare("SELECT since FROM readwise WHERE id = 1").first<{ since: string }>();
 
@@ -66,6 +74,12 @@ export async function connectReadwise(request: Request, env: Env): Promise<Respo
     .bind(await seal(env.SECRET_KEY, token), now, now)
     .run();
 
+  try {
+    await pushHighlightsToReadwise(env);
+  } catch {
+    // Unsent highlights remain queued for the next poll.
+  }
+
   return json(await readwiseStatus(env));
 }
 
@@ -78,11 +92,12 @@ export async function disconnectReadwise(env: Env): Promise<Response> {
 /** Readwise and this Worker write timestamps differently, so they are compared as times. */
 const time = (t: string | null | undefined) => (t ? Date.parse(t) : NaN);
 
-/** Every 30 minutes: documents saved to Reader since the last look. */
+/** Every 30 minutes: unsent highlights out to Readwise, and new Reader EPUB/PDFs into the inbox. */
 export async function poll(env: Env): Promise<void> {
   const current = await link(env);
 
   if (!current) return;
+  await pushHighlightsToReadwise(env);
   const found: z.infer<typeof ReaderDocument>[] = [];
 
   for (const category of CATEGORIES) {

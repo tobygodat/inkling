@@ -39,9 +39,12 @@ pub struct State {
     pub books: BTreeMap<String, BookRow>,
     /// Which chapters of each book are uploaded.
     chapters: BTreeMap<String, Vec<usize>>,
-    /// Parsed books, covers and inbox files, base64.
+    /// Parsed books, covers, inbox files and incoming HTML pages, base64.
     files: BTreeMap<String, String>,
     pub inbox: Vec<InboxItem>,
+    pub incoming: Vec<IncomingItem>,
+    pub feeds: Vec<FeedRow>,
+    pub highlights: BTreeMap<String, Vec<HighlightRow>>,
     pub readwise: bool,
 }
 
@@ -67,6 +70,8 @@ pub struct BookRow {
     pub chapter: usize,
     pub fraction: f64,
     pub position_at: u64,
+    pub source_url: Option<String>,
+    pub inbox: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -76,6 +81,41 @@ pub struct InboxItem {
     pub title: String,
     pub category: String,
     pub state: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IncomingItem {
+    pub id: String,
+    pub source: String,
+    pub destination: String,
+    pub url: String,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub site: Option<String>,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FeedRow {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub site_url: Option<String>,
+    pub added_at: u64,
+    pub checked_at: u64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HighlightRow {
+    pub chapter: usize,
+    pub start: usize,
+    pub end: usize,
+    pub words: String,
+    pub made: u64,
 }
 
 pub struct Fake {
@@ -104,6 +144,25 @@ impl Fake {
             let _ = inkling_books::library::write_atomic(path, &serde_json::to_vec_pretty(&*state).expect("the state serialises"));
         }
         out
+    }
+
+    /// Stages a raw HTML article (from `/save`, a feed or a newsletter) in the fake server.
+    pub fn stage_incoming(&self, source: &str, destination: &str, url: &str, title: Option<&str>, html: &[u8]) -> String {
+        let id = inkling_books::import::book_id(format!("{source}:{url}").as_bytes()).0;
+        self.with(|state| {
+            state.files.insert(format!("incoming/{id}"), STANDARD.encode(html));
+            state.incoming.push(IncomingItem {
+                id: id.clone(),
+                source: source.to_string(),
+                destination: destination.to_string(),
+                url: url.to_string(),
+                title: title.map(str::to_string),
+                author: None,
+                site: None,
+                state: "waiting".into(),
+            });
+        });
+        id
     }
 }
 
@@ -158,10 +217,11 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
                 .iter()
                 .map(|(id, b)| {
                     json!({ "id": id, "title": b.title, "author": b.author, "format": b.format, "chapters": b.chapters,
-                        "cover": b.cover, "added": b.added, "chapter": b.chapter, "fraction": b.fraction, "position_at": b.position_at })
+                        "cover": b.cover, "added": b.added, "chapter": b.chapter, "fraction": b.fraction, "position_at": b.position_at,
+                        "source_url": b.source_url, "inbox": b.inbox })
                 })
                 .collect();
-            ok(json!({ "books": books, "inbox": s.inbox }))
+            ok(json!({ "books": books, "inbox": s.inbox, "incoming": s.incoming }))
         }
         (Method::Put, ["books", id, "file"]) => file_in(s, format!("book/{id}"), body),
         (Method::Get, ["books", id, "file"]) => file_out(s, &format!("book/{id}")),
@@ -170,6 +230,7 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
         (Method::Put, ["covers", name]) => file_in(s, format!("cover/{name}"), body),
         (Method::Get, ["covers", name]) => file_out(s, &format!("cover/{name}")),
         (Method::Get, ["inbox", id, "file"]) => file_out(s, &format!("inbox/{id}")),
+        (Method::Get, ["incoming", id, "file"]) => file_out(s, &format!("incoming/{id}")),
         (Method::Put, ["books", id, "chapters", n]) => {
             let n: usize = n.parse().unwrap_or(usize::MAX);
             let list = s.chapters.entry(id.to_string()).or_default();
@@ -188,6 +249,9 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
             if there.cover.is_none() {
                 there.cover = row.cover;
             }
+            if there.source_url.is_none() {
+                there.source_url = row.source_url;
+            }
             ok(json!({ "ok": true }))
         }
         (Method::Put, ["books", id, "position"]) => {
@@ -203,12 +267,97 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
             };
             ok(json!({ "ok": true, "kept": kept }))
         }
+        (Method::Get, ["highlights"]) => {
+            let all: Vec<Value> = s
+                .highlights
+                .iter()
+                .flat_map(|(book_id, list)| {
+                    list.iter().map(move |h| {
+                        json!({ "book_id": book_id, "chapter": h.chapter, "start": h.start, "end": h.end, "words": h.words, "made": h.made })
+                    })
+                })
+                .collect();
+            ok(json!({ "highlights": all }))
+        }
+        (Method::Get, ["books", id, "highlights"]) => {
+            let all: Vec<Value> = s
+                .highlights
+                .get(*id)
+                .into_iter()
+                .flatten()
+                .map(|h| json!({ "book_id": id, "chapter": h.chapter, "start": h.start, "end": h.end, "words": h.words, "made": h.made }))
+                .collect();
+            ok(json!({ "highlights": all }))
+        }
+        (Method::Post, ["books", id, "highlights"]) => {
+            let batch: Vec<HighlightRow> = serde_json::from_value(input["highlights"].clone()).unwrap_or_default();
+            let list = s.highlights.entry(id.to_string()).or_default();
+            let mut added = 0;
+            for h in batch {
+                if !list.iter().any(|x| (x.chapter, x.start, x.end, &x.words) == (h.chapter, h.start, h.end, &h.words)) {
+                    list.push(h);
+                    added += 1;
+                }
+            }
+            ok(json!({ "ok": true, "added": added, "readwise_sent": if s.readwise { added } else { 0 } }))
+        }
         (Method::Post, ["inbox", id]) => {
             if let Some(item) = s.inbox.iter_mut().find(|i| i.readwise_id == *id) {
                 item.state = input["state"].as_str().unwrap_or("failed").to_string();
             }
             s.files.remove(&format!("inbox/{id}"));
             ok(json!({ "ok": true }))
+        }
+        (Method::Post, ["incoming", id]) => {
+            if let Some(item) = s.incoming.iter_mut().find(|i| i.id == *id) {
+                item.state = input["state"].as_str().unwrap_or("failed").to_string();
+            }
+            s.files.remove(&format!("incoming/{id}"));
+            ok(json!({ "ok": true }))
+        }
+        (Method::Post, ["save"]) => {
+            let Some(url) = input["url"].as_str().map(str::trim).filter(|u| !u.is_empty()) else {
+                return status(400, json!({ "error": "Send a JSON body with a web address in `url`." }));
+            };
+            let id = inkling_books::import::book_id(format!("save:{url}").as_bytes()).0;
+            if let Some(html) = input["html"].as_str() {
+                s.files.insert(format!("incoming/{id}"), STANDARD.encode(html.as_bytes()));
+            }
+            if !s.incoming.iter().any(|i| i.id == id && i.state == "waiting") {
+                s.incoming.push(IncomingItem {
+                    id: id.clone(),
+                    source: "save".into(),
+                    destination: "queue".into(),
+                    url: url.into(),
+                    title: input["title"].as_str().map(str::to_string),
+                    author: None,
+                    site: None,
+                    state: "waiting".into(),
+                });
+            }
+            status(201, json!({ "id": id, "url": url, "status": "waiting" }))
+        }
+        (Method::Get, ["feeds"]) => ok(json!({ "feeds": s.feeds })),
+        (Method::Post, ["feeds"]) => {
+            let Some(url) = input["url"].as_str().map(str::trim).filter(|u| !u.is_empty()) else {
+                return status(400, json!({ "error": "Send a JSON body with the feed’s `url`." }));
+            };
+            let id = inkling_books::import::book_id(url.as_bytes()).0[..32].to_string();
+            if let Some(existing) = s.feeds.iter().find(|f| f.id == id) {
+                return ok(serde_json::to_value(existing).unwrap_or_default());
+            }
+            let row = FeedRow { id, url: url.into(), title: url.into(), site_url: None, added_at: 1, checked_at: 0, last_error: None };
+            s.feeds.push(row.clone());
+            status(201, serde_json::to_value(row).unwrap_or_default())
+        }
+        (Method::Delete, ["feeds", id]) => {
+            let before = s.feeds.len();
+            s.feeds.retain(|f| f.id != *id);
+            if s.feeds.len() == before {
+                status(404, json!({ "error": "That feed isn’t followed." }))
+            } else {
+                ok(json!({ "ok": true }))
+            }
         }
         (Method::Get, ["documents"]) => {
             let list: Vec<Value> = s

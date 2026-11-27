@@ -301,10 +301,14 @@ when it ends. Only while signed in: a sign-in is `Secret::ServerSignIn` in the k
   open document is never removed under the writer. A skipped change is a conflict at the next sync,
   so both texts are kept. A changed open document's page is rebuilt from its file; a changed
   parked one is dropped and opens afresh.
-- **Books and places.** A book goes up as its parsed file, its chapters' Markdown, the pictures
-  its chapters link to (`images/<id>/`) and its cover, never its original. Those that came down
-  are written off the UI thread (they are named by the book's hash); `Library::record`, `take_position` and `add` record them on the UI
-  thread. Readwise uploads are parsed with `prepare` like an Add.
+- **Books, articles, places and highlights.** A book or article goes up as its parsed file, its
+  chapters' Markdown, the pictures its chapters link to (`images/<id>/`) and its cover, never its
+  original, plus `source_url` and `inbox` for articles. Those that came down are written off the UI
+  thread (they are named by the book's hash); `Library::record`, `take_position`, `add` and
+  `set_highlights` record them on the UI thread. Readwise EPUB/PDF uploads are parsed with `prepare`
+  like an Add; incoming HTML pages from `/save`, followed feeds and newsletters are parsed locally
+  with `prepare_article` (one parser, TOB-534), with feed items and newsletters marked `Entry::inbox`.
+  Highlights sync in both directions through `/v1/highlights` and `/v1/books/:id/highlights`.
 - **Failure.** Any failed sync sets `stopped`: the cog's dot and Account's "Sync stopped". The next
   sync that succeeds clears it. An ended grant also signs the device out.
 
@@ -351,16 +355,28 @@ more than 10 ms of CPU, so it never parses a book.
   `inkling-mcp`. Each chapter is stored as the Markdown `read_book` gives, in a trigram FTS5 index,
   so a search runs inside D1. It finds one hit per chapter, and a query under three characters
   falls back to `instr`.
-- **Sync.** `src/sync.ts`. A device uploads a book's parsed JSON and its pictures to KV, then each chapter, then its
-  row, which is refused until the rest is there. A position carries when it changed (an entry's
-  `position_at`), and the later wins. A document carries a `version`, counted up on every write
-  the server takes; a write names the version it was made on and is refused with 409 and what the
-  server has otherwise, in one statement so two devices can't both take a version. A delete is a
-  write that keeps the last text. Times are milliseconds since the Unix epoch.
-- **Readwise.** `src/readwise.ts`. The token is kept as AES-GCM ciphertext under `SECRET_KEY`. The
-  poll every 30 minutes streams each new EPUB or PDF from Reader into KV as an inbox item. The next
-  device to sync downloads it, parses it into its library and settles the item. Only documents
-  saved after the link was made come in.
+- **Sync.** `src/sync.ts` and `src/documents.ts`. A device uploads a book or article's parsed JSON
+  and its pictures to KV, then each chapter, then its row (including `source_url` and `inbox`), which
+  is refused until the rest is there. A position carries when it changed (`position_at`), and the
+  later wins. A document carries a `version`, counted up on every write the server takes; a write
+  names the version it was made on and is refused with 409 and what the server has otherwise, in one
+  statement so two devices can't both take a version. A delete is a write that keeps the last text.
+  Times are milliseconds since the Unix epoch.
+- **Save from anywhere, feeds and newsletters.** `src/save.ts`, `src/feeds.ts`, `src/feed-xml.ts`,
+  `src/newsletter.ts` (TOB-554). The Worker still never parses articles: `POST /save` (with
+  `SAVE_TOKEN`, JSON or bookmarklet form POST) and `POST /v1/save` (OAuth `sync`) fetch public HTML
+  pages into `incoming` (`destination = 'queue'`); `/v1/feeds` and the 30-minute cron poll RSS and
+  Atom feeds with conditional GETs and `feed_seen` deduplication into `incoming` (`destination = 'inbox'`);
+  and the Worker's `email()` handler unpacks mail sent to `NEWSLETTER_ADDRESS` (default
+  `read@tobygodat.com`) through Cloudflare Email Routing with `postal-mime` into `incoming`
+  (`destination = 'inbox'`). The next syncing device downloads each waiting page from KV, parses it
+  with `inkling-books::prepare_article`, settles the item, and uploads the parsed article.
+- **Readwise and highlights.** `src/readwise.ts` and `src/highlights.ts`. The token is kept as
+  AES-GCM ciphertext under `SECRET_KEY` and never leaves the server. Highlights synced through
+  `/v1/books/:id/highlights` are deduplicated by content hash in D1 and pushed once each to
+  `POST https://readwise.io/api/v2/highlights/` (with atomic row claims so retries never duplicate).
+  The 30-minute poll pushes any unsent highlights and streams each new EPUB or PDF from Reader into
+  KV as an inbox item. Only Reader documents saved after the link was made come in.
 - **iPhone builds.** `src/builds.ts` (TOB-518). `ios/ota.sh` uploads an ad hoc .ipa with a bearer
   token to R2, where the newest five are kept. The install page, its manifest and the .ipa are
   each served only on a URL signed with HMAC under a key derived from `SECRET_KEY`, which expires

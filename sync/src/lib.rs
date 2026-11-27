@@ -96,8 +96,10 @@ pub fn run(transport: &dyn Transport, sign_in: &mut SignIn, state: &documents::S
         }
         n.to_string()
     })?;
-    let library = library::sync(&api, &paths.dir.join("library"))?;
+    // Readwise status goes before `library::sync` so no network call follows settling inbox or
+    // incoming items (which deletes their staged files on the server).
     let readwise = api.json::<serde_json::Value>(Method::Get, "/v1/readwise", api::Body::None)?["connected"].as_bool().unwrap_or(false);
+    let library = library::sync(&api, &paths.dir.join("library"))?;
     Ok(Synced { documents, library, readwise })
 }
 
@@ -111,6 +113,63 @@ pub fn readwise(transport: &dyn Transport, sign_in: &mut SignIn, token: Option<&
         None => api.json(Method::Delete, "/v1/readwise", api::Body::None)?,
     };
     Ok(answer["connected"].as_bool().unwrap_or(false))
+}
+
+/// A followed RSS or Atom feed on the server.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct Feed {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub site_url: Option<String>,
+    pub added_at: u64,
+    pub checked_at: u64,
+    pub last_error: Option<String>,
+}
+
+/// The server's answer after staging a saved web address for sync.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct SavedUrl {
+    pub id: String,
+    pub url: String,
+    pub status: String,
+}
+
+/// Saves a web address (and optionally the page's HTML) on the server so it reaches every device.
+pub fn save_url(transport: &dyn Transport, sign_in: &mut SignIn, url: &str, html: Option<&str>) -> Result<SavedUrl, Error> {
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    let mut body = serde_json::json!({ "url": url.trim() });
+    if let Some(html) = html {
+        body["html"] = serde_json::Value::String(html.to_string());
+    }
+    api.json(Method::Post, "/v1/save", api::Body::Json(body))
+}
+
+/// Lists the RSS and Atom feeds followed on the server.
+pub fn feeds(transport: &dyn Transport, sign_in: &mut SignIn) -> Result<Vec<Feed>, Error> {
+    #[derive(serde::Deserialize)]
+    struct FeedList {
+        feeds: Vec<Feed>,
+    }
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    let list: FeedList = api.json(Method::Get, "/v1/feeds", api::Body::None)?;
+    Ok(list.feeds)
+}
+
+/// Follows an RSS or Atom feed by its feed URL or site URL.
+pub fn follow_feed(transport: &dyn Transport, sign_in: &mut SignIn, url: &str) -> Result<Feed, Error> {
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    api.json(Method::Post, "/v1/feeds", api::Body::Json(serde_json::json!({ "url": url.trim() })))
+}
+
+/// Unfollows a feed on the server. Articles already in the library stay.
+pub fn unfollow_feed(transport: &dyn Transport, sign_in: &mut SignIn, id: &str) -> Result<(), Error> {
+    let access = sign_in.token(transport)?;
+    let api = Api::new(transport, &sign_in.server, access);
+    api.send(Method::Delete, &format!("/v1/feeds/{id}"), api::Body::None).map(drop)
 }
 
 /// A name for this install, as the server records which device saved a document: the kind of
@@ -131,4 +190,46 @@ pub fn load_state(paths: &inkling_core::Paths, kind: &str) -> documents::State {
 
 pub fn save_state(paths: &inkling_core::Paths, state: &documents::State) -> std::io::Result<()> {
     inkling_books::library::write_atomic(&paths.dir.join("sync.json"), &serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn readwise_status_offline_in_run_never_loses_an_incoming_article() {
+        struct DropReadwiseOnce<'a> {
+            inner: &'a Fake,
+            dropped: AtomicBool,
+        }
+
+        impl Transport for DropReadwiseOnce<'_> {
+            fn send(&self, method: Method, url: &str, headers: &[(&str, &str)], body: Option<(&str, &[u8])>) -> Result<Response, Error> {
+                if method == Method::Get && url.ends_with("/v1/readwise") && !self.dropped.swap(true, Ordering::Relaxed) {
+                    return Err(Error::Offline);
+                }
+                self.inner.send(method, url, headers, body)
+            }
+        }
+
+        let fake = Fake::memory();
+        let words = "The tide came in slowly over the flats, and the birds lifted as it reached them. ".repeat(8);
+        let html = format!("<!doctype html><html><head><title>Safe Save</title></head><body><article><h1>Safe Save</h1><p>{words}</p></article></body></html>");
+        fake.stage_incoming("save", "queue", "https://shore.example/safe", Some("Safe Save"), html.as_bytes());
+
+        let begun = account::begin(&fake, FAKE_SERVER, "inkling://callback", "test").unwrap();
+        let mut sign_in = begun.finish(&fake, &fake_way_back(&begun.url).unwrap()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = inkling_core::Paths { dir: dir.path().to_path_buf() };
+        let state = load_state(&paths, "mac");
+
+        let flaky = DropReadwiseOnce { inner: &fake, dropped: AtomicBool::new(false) };
+        assert!(matches!(run(&flaky, &mut sign_in, &state, &paths), Err(Error::Offline)));
+
+        // Because `/v1/readwise` ran before `library::sync`, the staged item wasn't settled yet and imports on retry.
+        let recovered = run(&flaky, &mut sign_in, &state, &paths).unwrap();
+        assert_eq!(recovered.library.imported.len(), 1);
+        assert_eq!(recovered.library.imported[0].title, "Safe Save");
+    }
 }

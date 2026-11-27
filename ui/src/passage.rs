@@ -284,10 +284,10 @@ impl Inkling {
             r.sel = Some((start, end));
         }
         let (id, all) = (r.book.id.clone(), r.highlights.clone());
-        if let Ok(library) = &self.books.library
-            && let Err(e) = library.set_highlights(&id, &all)
-        {
-            self.books.errors = vec![format!("Couldn't keep your highlights ({e}).")];
+        match self.books.library.as_ref().map(|library| library.set_highlights(&id, &all)) {
+            Ok(Ok(())) => self.sync_soon(cx),
+            Ok(Err(e)) => self.books.errors = vec![format!("Couldn't keep your highlights ({e}).")],
+            Err(_) => {}
         }
         cx.notify();
     }

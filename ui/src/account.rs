@@ -272,6 +272,16 @@ impl Inkling {
         for (id, position, at) in outcome.positions {
             let _ = library.take_position(&id, position, at);
         }
+        for (id, highlights) in outcome.highlights {
+            let mut merged = library.highlights(&id);
+            for h in highlights {
+                if !merged.iter().any(|existing| (existing.chapter, existing.start, existing.end, &existing.words) == (h.chapter, h.start, h.end, &h.words)) {
+                    merged.push(h);
+                }
+            }
+            merged.sort_by_key(|h| (h.chapter, h.start, h.made));
+            let _ = library.set_highlights(&id, &merged);
+        }
         let added = !outcome.imported.is_empty();
         for prepared in outcome.imported {
             let _ = library.add(&prepared);
