@@ -318,18 +318,13 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             XCTAssertTrue(app.otherElements["feedback-panel"].waitForExistence(timeout: 5), "the handle opens the panel")
             sleep(1)
             let attach = app.switches["feedback-attach"]
-            attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
-            if !isOn(attach) {
-                attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
-            }
-            XCTAssertTrue(isOn(attach), "Attach is on")
+            XCTAssertTrue(turn(attach, on: true), "Attach is on")
             let clip = app.staticTexts["feedback-clip"]
             XCTAssertTrue(clip.waitForExistence(timeout: 5))
             XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "the clip is made, with its touches: \(clip.label)")
-            attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
-            XCTAssertTrue(clip.waitForNonExistence(timeout: 3), "Attach off drops the clip")
-            attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
-            XCTAssertTrue(isOn(attach))
+            XCTAssertTrue(turn(attach, on: false), "Attach is off")
+            XCTAssertTrue(clip.waitForNonExistence(timeout: 5), "Attach off drops the clip")
+            XCTAssertTrue(turn(attach, on: true), "Attach is on again")
             XCTAssertTrue(clip.waitForExistence(timeout: 5))
             XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "Attach on again makes the same capture's clip: \(clip.label)")
             let field = app.textFields["feedback-text"]
@@ -364,10 +359,15 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
     }
 
-    /// Waits up to 3 seconds for `toggle` to be on.
-    @MainActor private func isOn(_ toggle: XCUIElement) -> Bool {
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: toggle)
-        return XCTWaiter.wait(for: [expectation], timeout: 3) == .completed
+    /// Taps `toggle`'s switch until it is `on`, at most three times, and says whether it got there.
+    @MainActor private func turn(_ toggle: XCUIElement, on: Bool) -> Bool {
+        let wanted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", on ? "1" : "0"), object: toggle)
+        for _ in 0..<3 {
+            if toggle.value as? String == (on ? "1" : "0") { return true }
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            if XCTWaiter.wait(for: [wanted], timeout: 3) == .completed { return true }
+        }
+        return false
     }
 
     /// Waits up to `timeout` seconds for `element`'s label to contain `words`.
