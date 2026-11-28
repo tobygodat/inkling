@@ -65,7 +65,7 @@ nonisolated final class MotionMetrics: XCTestCase {
     @MainActor func testListsScroll() throws {
         let app = launch()
         app.tabBars.buttons["Library"].tap()
-        XCTAssertTrue(row(app, "Walking").waitForExistence(timeout: 10))
+        XCTAssertTrue(row(app, "Walden").waitForExistence(timeout: 10))
         measure(metrics: metrics(app), options: options) {
             fling(app, up: true)
             fling(app, up: false)

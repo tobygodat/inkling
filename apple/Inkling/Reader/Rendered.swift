@@ -468,17 +468,28 @@ nonisolated struct Renderer {
 
 #if os(macOS)
 typealias PlatformImage = NSImage
+typealias PlatformView = NSView
 typealias PlatformFontDescriptor = NSFontDescriptor
 #else
 typealias PlatformImage = UIImage
+typealias PlatformView = UIView
 typealias PlatformFontDescriptor = UIFontDescriptor
 #endif
 
 /// A picture no wider than its file and no wider than the line it lands on, so a column narrower
-/// than the look's page width still holds it.
+/// than the look's page width still holds it. Drawn by a real image view through TextKit 2's
+/// `NSTextAttachmentViewProvider` so the GPU scales it during scroll instead of resampling it on
+/// the CPU, and so AppKit draws it without an eager bitmap on `NSTextAttachment.image`.
 nonisolated final class FittedAttachment: NSTextAttachment {
     var natural = CGSize.zero
     var picture: Picture?
+
+    override var usesTextAttachmentView: Bool { picture != nil }
+
+    override func viewProvider(for parentView: PlatformView?, location: any NSTextLocation, textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
+        guard picture != nil else { return super.viewProvider(for: parentView, location: location, textContainer: textContainer) }
+        return PictureViewProvider(textAttachment: self, parentView: parentView, textLayoutManager: textContainer?.textLayoutManager, location: location)
+    }
 
     override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any] = [:], location: any NSTextLocation, textContainer: NSTextContainer?) -> PlatformImage? {
         picture?.image ?? super.image(for: bounds, attributes: attributes, location: location, textContainer: textContainer)
@@ -487,6 +498,37 @@ nonisolated final class FittedAttachment: NSTextAttachment {
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
         let width = min(natural.width, proposedLineFragment.width)
         return CGRect(x: 0, y: 0, width: width, height: natural.height * width / max(natural.width, 1))
+    }
+}
+
+nonisolated private final class PictureViewProvider: NSTextAttachmentViewProvider {
+    override init(textAttachment: NSTextAttachment, parentView: PlatformView?, textLayoutManager: NSTextLayoutManager?, location: any NSTextLocation) {
+        super.init(textAttachment: textAttachment, parentView: parentView, textLayoutManager: textLayoutManager, location: location)
+        tracksTextAttachmentViewBounds = true
+    }
+
+    override func loadView() {
+        let picture = (textAttachment as? FittedAttachment)?.picture
+        view = MainActor.assumeIsolated {
+            #if os(macOS)
+            let imageView = NSImageView()
+            imageView.image = picture?.image
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            return imageView
+            #else
+            let imageView = UIImageView(image: picture?.image)
+            imageView.contentMode = .scaleAspectFit
+            imageView.isUserInteractionEnabled = false
+            return imageView
+            #endif
+        }
+    }
+
+    override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
+        if let attachment = textAttachment as? FittedAttachment {
+            return attachment.attachmentBounds(for: attributes, location: location, textContainer: textContainer, proposedLineFragment: proposedLineFragment, position: position)
+        }
+        return super.attachmentBounds(for: attributes, location: location, textContainer: textContainer, proposedLineFragment: proposedLineFragment, position: position)
     }
 }
 
