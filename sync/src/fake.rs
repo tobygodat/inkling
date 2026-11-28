@@ -46,6 +46,15 @@ pub struct State {
     pub feeds: Vec<FeedRow>,
     pub highlights: BTreeMap<String, Vec<HighlightRow>>,
     pub readwise: bool,
+    /// Every feedback record a dev build sent, as it was sent. Its clip is in `files`.
+    pub feedback: Vec<Value>,
+}
+
+impl State {
+    /// A file the fake keeps, such as `feedback/<id>/clip.mp4`.
+    pub fn file(&self, key: &str) -> Option<Vec<u8>> {
+        self.files.get(key).and_then(|b| STANDARD.decode(b).ok())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -401,6 +410,23 @@ fn sync(s: &mut State, method: Method, parts: &[&str], body: &[u8]) -> Response 
             s.documents.insert(id.to_string(), doc);
             ok(json!({ "version": current + 1 }))
         }
+        (Method::Put, ["feedback", id, "clip"]) => {
+            if s.feedback.iter().any(|f| f["id"] == *id) {
+                return status(409, json!({ "error": "That feedback is already sent." }));
+            }
+            file_in(s, format!("feedback/{id}/clip.mp4"), body)
+        }
+        (Method::Post, ["feedback"]) => {
+            let id = input["id"].as_str().unwrap_or_default().to_string();
+            if s.feedback.iter().any(|f| f["id"] == id.as_str()) {
+                return ok(json!({ "id": id, "forwarded": false }));
+            }
+            if !input["clip"].is_null() && !s.files.contains_key(&format!("feedback/{id}/clip.mp4")) {
+                return status(409, json!({ "error": "Upload the clip first." }));
+            }
+            s.feedback.push(input);
+            status(201, json!({ "id": id, "forwarded": false }))
+        }
         (Method::Get, ["readwise"]) => ok(json!({ "connected": s.readwise })),
         (Method::Put, ["readwise"]) => {
             if input["token"].as_str().is_none_or(|t| t.trim().is_empty()) {
@@ -427,7 +453,7 @@ fn file_in(s: &mut State, key: String, body: &[u8]) -> Response {
 }
 
 fn file_out(s: &State, key: &str) -> Response {
-    match s.files.get(key).and_then(|b| STANDARD.decode(b).ok()) {
+    match s.file(key) {
         Some(bytes) => Response { status: 200, body: bytes },
         None => status(404, json!({ "error": "Not found." })),
     }

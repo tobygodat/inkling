@@ -41,6 +41,35 @@ impl From<Feed> for FeedInfo {
     }
 }
 
+/// A dev build's feedback as Swift hands it over (TOB-571). `id` comes from [`new_feedback_id`].
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FeedbackRecord {
+    pub id: String,
+    pub text: String,
+    pub form_factor: String,
+    pub window_width: u32,
+    pub window_height: u32,
+    pub screen: String,
+    pub place: String,
+    pub version: String,
+    pub build: String,
+    pub bundle: String,
+}
+
+/// The clip a feedback carries: an MP4 on disk, and what it holds.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FeedbackClip {
+    pub path: String,
+    pub seconds: f64,
+    pub touches: u32,
+}
+
+/// A new feedback id, `<unix seconds>-<8 chars of a-z and 2-7>`, as the GPUI app's.
+#[uniffi::export]
+pub fn new_feedback_id() -> String {
+    inkling_core::feedback::FeedbackId::new(std::time::SystemTime::now()).to_string()
+}
+
 /// Summary of what one sync applied locally, so the UI refreshes only what changed.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct SyncReport {
@@ -337,6 +366,29 @@ impl SyncClient {
     /// Unfollows a feed on the server. Articles already in the library stay.
     pub fn unfollow_feed(&self, id: String) -> Result<(), InklingError> {
         self.with_sign_in(|transport, sign_in| sync::unfollow_feed(transport, sign_in, &id))
+    }
+
+    /// Sends a dev build's feedback and its clip to the server, which tells the inkling Captain.
+    /// Sending the same id again is safe.
+    pub fn send_feedback(&self, feedback: FeedbackRecord, clip: Option<FeedbackClip>) -> Result<(), InklingError> {
+        let id = inkling_core::feedback::FeedbackId::parse(&feedback.id).map_err(|message| InklingError::InvalidRequest { message })?;
+        let bytes = match &clip {
+            Some(clip) => Some(std::fs::read(&clip.path).map_err(|e| InklingError::Storage { message: format!("The clip couldn’t be read ({e}).") })?),
+            None => None,
+        };
+        let record = sync::feedback::Feedback {
+            id,
+            text: feedback.text,
+            form_factor: feedback.form_factor,
+            window: sync::feedback::Window { width: feedback.window_width, height: feedback.window_height },
+            screen: feedback.screen,
+            place: feedback.place,
+            version: feedback.version,
+            build: feedback.build,
+            bundle: feedback.bundle,
+        };
+        let attached = clip.zip(bytes.as_deref()).map(|(c, b)| (sync::feedback::Clip { seconds: c.seconds, touches: c.touches }, b));
+        self.with_sign_in(|transport, sign_in| sync::feedback::send(transport, sign_in, &record, attached))
     }
 }
 

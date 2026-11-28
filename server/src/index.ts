@@ -1,5 +1,6 @@
 // inkling-server: the OAuth authorization server, the remote MCP endpoint at /mcp, the devices' sync
-// API under /v1, the Readwise inbox (ADR 0004), and the iPhone builds' signed links under /builds.
+// API under /v1, the Readwise inbox (ADR 0004), the iPhone builds' signed links under /builds, and
+// the dev builds' feedback clips under /feedback.
 // One Worker on Cloudflare's free plan, so every request stays well inside 10 ms of CPU: no book is
 // parsed here.
 
@@ -7,6 +8,7 @@ import { OAuthAuthorizationServer, OAuthResourceServer } from "@cloudflare/worke
 import { authorize, googleCallback } from "./authorize";
 import { serveBuilds } from "./builds";
 import type { Env, Owner } from "./env";
+import { forwardPending, serveClip } from "./feedback";
 import { pollFeeds } from "./feeds";
 import { Refused, json } from "./http";
 import { serveMcp } from "./mcp";
@@ -101,6 +103,8 @@ export default {
 
       if (under(pathname, "/builds")) return await serveBuilds(request, env);
 
+      if (under(pathname, "/feedback")) return await serveClip(request, env);
+
       if (pathname === "/save") return await serveSave(request, env);
 
       if (pathname === "/authorize") return await authorize(request, env, s.auth.getOAuthApi(env));
@@ -121,6 +125,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(poll(env));
     ctx.waitUntil(pollFeeds(env));
+    ctx.waitUntil(forwardPending(env));
     ctx.waitUntil(servers(env).auth.purgeExpiredData(env).then(() => undefined));
   },
 

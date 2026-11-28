@@ -17,6 +17,7 @@ export default defineConfig(async () => ({
           GOOGLE_CLIENT_SECRET: "test-secret",
           BUILD_UPLOAD_TOKEN: "test-upload-token",
           SAVE_TOKEN: "test-save-token",
+          FEEDBACK_WEBHOOK_URL: "https://webhook.example/inkling",
           NEWSLETTER_ADDRESS: "read@tobygodat.com",
         },
       },

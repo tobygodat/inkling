@@ -43,8 +43,8 @@ export async function signUrl(env: Env, path: string, expires: number): Promise<
   return `${env.PUBLIC_URL}${path}?expires=${expires}&signature=${toHex(signature)}`;
 }
 
-/** The link's expiry, once its signature matches its path and it hasn't passed. */
-async function verify(env: Env, url: URL): Promise<number> {
+/** The link's expiry, once its signature matches its path and it hasn't passed. `expired` is what a passed link answers. */
+export async function verify(env: Env, url: URL, expired: string): Promise<number> {
   const expires = Number(url.searchParams.get("expires"));
   const signature = url.searchParams.get("signature") ?? "";
 
@@ -54,7 +54,7 @@ async function verify(env: Env, url: URL): Promise<number> {
     throw new Refused(403, "That link was changed, so it doesn’t work.");
   }
 
-  if (expires * 1000 <= Date.now()) throw new Refused(410, "That link has expired. Make a new build for a new link.");
+  if (expires * 1000 <= Date.now()) throw new Refused(410, expired);
 
   return expires;
 }
@@ -145,7 +145,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   const [, id, file] = url.pathname.match(ROUTE) ?? [];
 
   if (id === undefined || (request.method !== "GET" && request.method !== "HEAD")) throw new Refused(404, "There’s nothing here.");
-  const expires = await verify(env, url);
+  const expires = await verify(env, url, "That link has expired. Make a new build for a new link.");
 
   if (file === "/Inkling.ipa") {
     const object = await env.BUILDS.get(objectKey(id));

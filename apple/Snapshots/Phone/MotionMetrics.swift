@@ -163,6 +163,9 @@ nonisolated final class MotionMetrics: XCTestCase {
             "INKLING_DEMO": environment["INKLING_DEMO"] ?? "",
             "INKLING_FIXTURES": environment["INKLING_FIXTURES"] ?? "",
         ]
+        if let feedback = environment["INKLING_DEV_FEEDBACK"] {
+            app.launchEnvironment["INKLING_DEV_FEEDBACK"] = feedback
+        }
         app.launch()
         return app
     }

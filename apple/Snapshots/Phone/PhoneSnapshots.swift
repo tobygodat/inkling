@@ -287,6 +287,106 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
     }
 
+    /// The dev feedback handle (TOB-571): signed in, read for a few seconds, open the panel from the
+    /// right edge, attach the last 10 seconds and send. Nothing reaches the fake server before Send;
+    /// after it, the record holds the words, the reader's place and a clip that is an MP4.
+    @MainActor func testDevFeedbackSendsTheLastTenSeconds() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        for name in ["light", "dark"] {
+            appearance = name
+            let dir = "\(base)/feedback-\(name)"
+            let serverPath = "\(dir)/fake-server.json"
+            let app = launch(data: dir, demo: true, devFeedback: true)
+            let handle = app.buttons["feedback-handle"]
+            XCTAssertTrue(handle.waitForExistence(timeout: 5), "a dev build shows the handle")
+            XCTAssertGreaterThan(handle.frame.maxX, app.frame.maxX - 2, "the handle sits on the right edge")
+            tapTab(app, "Profile")
+            app.buttons["sign-in-google"].tap()
+            XCTAssertTrue(app.buttons["copy-newsletter-address"].waitForExistence(timeout: 10), "signed in")
+            tapTab(app, "Inbox")
+            sleep(1)
+            shoot("\(name)-feedback-handle")
+
+            row(app, "An Apology for Idlers").tap()
+            let reader = app.textViews["reader"]
+            XCTAssertTrue(reader.waitForExistence(timeout: 10))
+            sleep(1)
+            reader.swipeUp(velocity: .slow)
+            sleep(1)
+            reader.swipeDown(velocity: .slow)
+            sleep(1)
+
+            handle.tap()
+            XCTAssertTrue(app.otherElements["feedback-panel"].waitForExistence(timeout: 5), "the handle opens the panel")
+            sleep(1)
+            let attach = app.switches["feedback-attach"]
+            XCTAssertTrue(turn(attach, on: true), "Attach is on")
+            let clip = app.staticTexts["feedback-clip"]
+            XCTAssertTrue(clip.waitForExistence(timeout: 5))
+            XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "the clip is made, with its touches: \(clip.label)")
+            XCTAssertTrue(turn(attach, on: false), "Attach is off")
+            XCTAssertTrue(clip.waitForNonExistence(timeout: 5), "Attach off drops the clip")
+            XCTAssertTrue(turn(attach, on: true), "Attach is on again")
+            XCTAssertTrue(clip.waitForExistence(timeout: 5))
+            XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "Attach on again makes the same capture's clip: \(clip.label)")
+            let field = app.textFields["feedback-text"]
+            field.tap()
+            field.typeText("The reader's bar hides too soon after a slow scroll.")
+            app.staticTexts["Feedback"].tap()
+            sleep(1)
+            XCTAssertTrue(try server(serverPath).feedback.isEmpty, "nothing reaches the server before Send")
+            shoot("\(name)-feedback-panel")
+
+            app.buttons["feedback-send"].tap()
+            // The fake server rewrites its whole file on every request, and the first sync after
+            // sign-in uploads the demo library through it, so a slow runner queues the send.
+            XCTAssertTrue(app.otherElements["feedback-sent"].waitForExistence(timeout: 90), "Send says it was sent: \(app.staticTexts["feedback-problem"].exists ? app.staticTexts["feedback-problem"].label : "no problem shown")")
+            sleep(1)
+            shoot("\(name)-feedback-sent")
+
+            let (records, files) = try server(serverPath)
+            XCTAssertEqual(records.count, 1, "one record reached the server")
+            let record = records.first ?? [:]
+            XCTAssertEqual(record["text"] as? String, "The reader's bar hides too soon after a slow scroll.")
+            XCTAssertEqual(record["screen"] as? String, "reader")
+            XCTAssertTrue((record["place"] as? String)?.contains("An Apology for Idlers") == true, "the record says where it was sent from")
+            let sent = record["clip"] as? [String: Any] ?? [:]
+            let seconds = sent["seconds"] as? Double ?? 0
+            XCTAssertTrue(seconds > 3 && seconds <= 10.01, "the clip covers the seconds before the panel opened, at most 10")
+            XCTAssertGreaterThan(sent["touches"] as? Int ?? 0, 0, "the clip counts the touches")
+            let mp4 = Data(base64Encoded: files["feedback/\(record["id"] as? String ?? "")/clip.mp4"] ?? "") ?? Data()
+            XCTAssertEqual(String(decoding: mp4.dropFirst(4).prefix(4), as: UTF8.self), "ftyp", "the clip is an MP4")
+
+            app.buttons["feedback-done"].tap()
+            XCTAssertTrue(handle.waitForExistence(timeout: 5), "Done puts the handle back")
+            app.terminate()
+        }
+    }
+
+    /// Taps `toggle`'s switch until it is `on`, at most three times, and says whether it got there.
+    @MainActor private func turn(_ toggle: XCUIElement, on: Bool) -> Bool {
+        for _ in 0..<3 {
+            if toggle.value as? String == (on ? "1" : "0") { return true }
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            let wanted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", on ? "1" : "0"), object: toggle)
+            if XCTWaiter.wait(for: [wanted], timeout: 3) == .completed { return true }
+        }
+        return false
+    }
+
+    /// Waits up to `timeout` seconds for `element`'s label to contain `words`.
+    @MainActor private func wait(for element: XCUIElement, label words: String, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", words), object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// The feedback records and files in the fake server's file, or none before its first request.
+    private func server(_ path: String) throws -> (feedback: [[String: Any]], files: [String: String]) {
+        guard FileManager.default.fileExists(atPath: path) else { return ([], [:]) }
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(filePath: path))) as? [String: Any] ?? [:]
+        return (json["feedback"] as? [[String: Any]] ?? [], json["files"] as? [String: String] ?? [:])
+    }
+
     /// The caret on a new line is the size it stays once the line has text (TOB-566), measured in
     /// the screenshot as the tallest upright run of ink in the editor.
     @MainActor func testCaretKeepsOneSizeOnANewLine() throws {
@@ -622,9 +722,12 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         return tallest
     }
 
-    @MainActor private func launch(data: String, demo: Bool) -> XCUIApplication {
+    @MainActor private func launch(data: String, demo: Bool, devFeedback: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = ["INKLING_DATA_DIR": data, "INKLING_FAKE_AI": "1", "INKLING_APPEARANCE": appearance]
+        if devFeedback {
+            app.launchEnvironment["INKLING_DEV_FEEDBACK"] = "1"
+        }
         if demo {
             app.launchEnvironment["INKLING_DEMO"] = environment["INKLING_DEMO"]
             app.launchEnvironment["INKLING_FIXTURES"] = environment["INKLING_FIXTURES"]

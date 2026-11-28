@@ -17,6 +17,11 @@ struct RootView: View {
             PhoneRoot()
             #endif
         }
+        #if os(iOS)
+        .overlay {
+            if DevFeedback.shows { DevFeedbackOverlay() }
+        }
+        #endif
         .environment(\.palette, chrome.palette(scheme))
         .tint(Color(chrome.palette(scheme).ink))
         .sheet(isPresented: $navigator.savingLink) {

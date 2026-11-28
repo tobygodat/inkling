@@ -127,6 +127,34 @@ Set up Cloudflare Email Routing on `tobygodat.com` once, after deploying the Wor
    `NEWSLETTER_ADDRESS` or its `+tag` form).
 4. Run `cd server && bun run deploy` to deploy the Worker and apply `migrations/0003_worker.sql`.
 
+## Dev feedback
+
+The native app's dev builds send feedback from the handle on the iPhone's right edge (TOB-571).
+A signed-in device puts the clip of its last 10 seconds, when one is attached, at
+`PUT /v1/feedback/<id>/clip` (an MP4 of at most 25 MB), then the record at `POST /v1/feedback`.
+The Worker keeps both in the R2 bucket `inkling-feedback` as `<id>/clip.mp4` and
+`<id>/record.json`, and posts this notice to `FEEDBACK_WEBHOOK_URL`:
+
+```json
+{ "kind": "inkling.feedback", "id": "1794460000-k7q2m3xd", "text": "…", "sent_at": "2026-11-28T06:30:00Z",
+  "form_factor": "phone", "window": { "width": 402, "height": 874 }, "screen": "reader",
+  "place": "Inbox › Walking, Chapter 1 of 1 · 34%", "version": "0.1.0", "build": "20261128.0630",
+  "bundle": "com.tobygodat.inkling.dev", "clip": { "seconds": 10, "touches": 12 },
+  "received_at": "2026-11-28T06:30:02.512Z", "clip_url": "https://…/feedback/<id>/clip.mp4?expires=…&signature=…" }
+```
+
+`clip` and `clip_url` are `null` without a clip. `clip_url` is signed like the build links and
+works for 7 days. A record sent again under its id changes nothing and posts nothing. When the
+webhook is unset or doesn't answer 2xx, the record waits in R2, and the 30-minute cron posts it
+again until it goes through.
+
+Set it up once, before the next deploy (the deploy fails while the bucket is missing):
+
+1. `bunx wrangler r2 bucket create inkling-feedback`
+2. `bunx wrangler secret put FEEDBACK_WEBHOOK_URL`, with the webhook URL the inkling Captain
+   gives. It is a credential, so it goes in no file.
+3. `bun run deploy`. Only Toby runs it.
+
 ## Over-the-air builds
 
 `apple/ota.sh` uploads a development-signed .ipa of the native SwiftUI iPhone app (`apple/`,

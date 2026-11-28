@@ -8,6 +8,8 @@ export interface Env extends GoogleConfig {
   FILES: KVNamespace;
   /** The newest five iPhone builds, as `builds/<id>.ipa` (TOB-518). */
   BUILDS: R2Bucket;
+  /** Dev builds' feedback, as `<id>/record.json` and `<id>/clip.mp4` (TOB-571). */
+  FEEDBACK: R2Bucket;
   /** The Worker's address and the OAuth issuer, with no trailing slash. */
   PUBLIC_URL: string;
   /** 32 random bytes in base64: the key for the Readwise token. */
@@ -18,6 +20,8 @@ export interface Env extends GoogleConfig {
   BUILD_UPLOAD_TOKEN?: string;
   /** Bearer or form token for `POST /save` from a bookmarklet or Shortcut. Unset, `/save` refuses every request. */
   SAVE_TOKEN?: string;
+  /** Where each feedback's notice is posted: the inkling Captain's webhook. Unset, records wait in R2 for it. */
+  FEEDBACK_WEBHOOK_URL?: string;
   /** The address Cloudflare Email Routing delivers newsletters to. Defaults to `read@tobygodat.com`. */
   NEWSLETTER_ADDRESS?: string;
 }
