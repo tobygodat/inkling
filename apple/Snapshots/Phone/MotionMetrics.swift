@@ -14,7 +14,15 @@ nonisolated final class MotionMetrics: XCTestCase {
         guard let base = ProcessInfo.processInfo.environment["INKLING_MOTION_DATA"] else {
             throw XCTSkip("apple/motion.sh sets INKLING_MOTION_DATA")
         }
-        data = "\(base)/\(name.filter(\.isLetter))"
+        let target = "\(base)/\(name.filter(\.isLetter))"
+        let seed = "\(base)/seed"
+        let fm = FileManager.default
+        if fm.fileExists(atPath: "\(seed)/library/library.json") {
+            try? fm.removeItem(atPath: target)
+            try fm.copyItem(atPath: seed, toPath: target)
+            try? fm.removeItem(atPath: "\(target)/frames")
+        }
+        data = target
     }
 
     private var options: XCTMeasureOptions {
@@ -39,6 +47,7 @@ nonisolated final class MotionMetrics: XCTestCase {
             fling(app, up: false)
             settle()
         }
+        assertOpened("Pride")
     }
 
     @MainActor func testReaderScrollsAnArticleWithPictures() throws {
@@ -85,13 +94,14 @@ nonisolated final class MotionMetrics: XCTestCase {
     /// Opening a long book a third of the way through, where it was left, and going back.
     @MainActor func testOpenALongBookAtItsPlace() throws {
         try pushAndPop("Pride")
+        assertOpened("Pride")
     }
 
     @MainActor func testSheetsOpenAndClose() throws {
         let app = launch()
-        let reader = open(app, "Walking")
+        let frame = open(app, "Walking")
         let appearance = spot(app, app.buttons["appearance"])
-        let above = spot(app, CGPoint(x: reader.frame.midX, y: reader.frame.minY + reader.frame.height * 0.15))
+        let above = spot(app, CGPoint(x: frame.midX, y: frame.minY + frame.height * 0.15))
         measure(metrics: metrics(app), options: options) {
             appearance.tap()
             settle()
@@ -102,11 +112,15 @@ nonisolated final class MotionMetrics: XCTestCase {
 
     @MainActor func testReaderGestures() throws {
         let app = launch()
-        let reader = open(app, "Pride")
-        let middle = spot(app, CGPoint(x: reader.frame.midX, y: reader.frame.midY))
+        let frame = open(app, "Walden")
+        let middle = spot(app, CGPoint(x: frame.midX, y: frame.midY))
         let contents = spot(app, app.buttons["contents"])
         app.buttons["contents"].tap()
-        let chapters = ["CHAPTER V.", "CHAPTER XX."].map { spot(app, app.buttons[$0]) }
+        let second = app.buttons["Economy"]
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        let first = app.buttons["Where I Lived, and What I Lived For"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let chapters = [spot(app, second), spot(app, first)]
         middle.tap()
         settle()
         var turn = 0
@@ -177,6 +191,13 @@ nonisolated final class MotionMetrics: XCTestCase {
         }
     }
 
+    /// Touches delivered through SpringBoard hit the foreground app by screen coordinates without
+    /// triggering `XCTElementSnapshotRequest` on Inkling's `UITextView` (whose `accessibilityElements`
+    /// is O(paragraphs × characters) on long books and otherwise pollutes or hangs measured blocks).
+    @MainActor private var screen: XCUIApplication {
+        XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    }
+
     /// A point on screen, found once, so the measured runs never query the app's elements: a query
     /// makes the app describe every element on its main thread, the whole text of a book included.
     @MainActor private func spot(_ app: XCUIApplication, _ element: XCUIElement) -> XCUICoordinate {
@@ -184,7 +205,7 @@ nonisolated final class MotionMetrics: XCTestCase {
     }
 
     @MainActor private func spot(_ app: XCUIApplication, _ point: CGPoint) -> XCUICoordinate {
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y))
+        screen.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y))
     }
 
     /// A quick flick that lets go while moving, so the list or the text coasts on.
@@ -193,20 +214,32 @@ nonisolated final class MotionMetrics: XCTestCase {
     }
 
     @MainActor private func drag(_ app: XCUIApplication, up: Bool, velocity: XCUIGestureVelocity) {
-        let low = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-        let high = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        let low = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+        let high = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
         (up ? low : high).press(forDuration: 0.01, thenDragTo: up ? high : low, withVelocity: velocity, thenHoldForDuration: 0)
     }
 
-    @MainActor private func open(_ app: XCUIApplication, _ title: String) -> XCUIElement {
-        if title == "Pride" { app.tabBars.buttons["Library"].tap() }
+    @MainActor private func open(_ app: XCUIApplication, _ title: String) -> CGRect {
+        if title == "Pride" || title == "Walden" { app.tabBars.buttons["Library"].tap() }
         let item = row(app, title)
         XCTAssertTrue(item.waitForExistence(timeout: 10))
         item.tap()
-        let reader = app.textViews["reader"]
-        XCTAssertTrue(reader.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["appearance"].waitForExistence(timeout: 20))
         sleep(2)
-        return reader
+        return app.frame
+    }
+
+    /// Confirms the long book actually opened and wrote its `opened` timestamp to `library.json`.
+    private func assertOpened(_ titlePrefix: String) {
+        guard let dir = data,
+              let raw = try? Data(contentsOf: URL(filePath: "\(dir)/library/library.json")),
+              let json = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+              let entries = json["books"] as? [[String: Any]] else {
+            XCTFail("library.json missing after opening \(titlePrefix)")
+            return
+        }
+        let opened = entries.first { ($0["title"] as? String)?.hasPrefix(titlePrefix) == true }?["opened"] as? NSNumber
+        XCTAssertGreaterThan(opened?.intValue ?? 0, 0, "\(titlePrefix) was opened in the reader")
     }
 }
 

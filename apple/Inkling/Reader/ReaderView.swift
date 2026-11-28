@@ -8,6 +8,8 @@ struct ReaderView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let item: Item
     @State private var model: ReaderModel?
     @State private var failed: String?
@@ -34,13 +36,13 @@ struct ReaderView: View {
             }
         }
         #if os(iOS)
-        .overlay { EdgeFades(ground: Color(palette.ground), bottomShown: model?.chromeHidden != true) }
+        .overlay { EdgeFades(ground: Color(palette.ground), model: model) }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         #endif
         .overlay(alignment: .top) {
-            if let model { ProgressLine(progress: model.progress, palette: palette) }
+            if let model { ProgressLine(model: model, palette: palette) }
         }
-        .animation(.easeOut(duration: 0.2), value: model.map(ObjectIdentifier.init))
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.22), value: model.map(ObjectIdentifier.init))
         .environment(\.palette, palette)
         .toolbar {
             if let model {
@@ -64,14 +66,14 @@ struct ReaderView: View {
             }
         }
         #if os(iOS)
-        .toolbarVisibility(model?.chromeHidden == true ? .hidden : .visible, for: .navigationBar, .tabBar)
+        .modifier(ChromeVisibility(model: model))
         #endif
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("")
         #else
         .navigationTitle(item.title)
-        .navigationSubtitle(model.map(Place.words) ?? "")
+        .modifier(Subtitle(model: model))
         #endif
         #if os(iOS)
         .sheet(isPresented: $choosing) {
@@ -79,7 +81,7 @@ struct ReaderView: View {
                 .presentationDetents([.height(330)])
         }
         #endif
-        .task(id: Setting(id: item.id, look: look, dark: palette.isDark, width: width)) { await load(look: look, palette: palette) }
+        .task(id: Setting(id: item.id, look: look, dark: palette.isDark, width: width, scale: displayScale)) { await load(look: look, palette: palette) }
         #if os(iOS)
         .onChange(of: look.tone, initial: true) { navigator.readerScheme = Self.scheme(of: look.tone, palette: palette) }
         .onChange(of: model?.chromeHidden) { navigator.immersed = model?.chromeHidden == true }
@@ -132,7 +134,8 @@ struct ReaderView: View {
                 lineHeight: CGFloat(look.lineSpacing) / 100 * lineScale,
                 titleSize: title * CGFloat(look.textSize) / 21,
                 palette: palette,
-                column: column
+                column: column,
+                scale: displayScale
             )
             let byline = item.kind == .article ? [item.author, item.site, item.minutes.map { "\($0) min" }].compactMap(\.self).joined(separator: "  ·  ") : nil
             let folder = URL(filePath: shelf.library.folder())
@@ -162,6 +165,7 @@ struct ReaderView: View {
         let look: Look
         let dark: Bool
         let width: CGFloat
+        let scale: CGFloat
     }
 
     /// The Light or Dark a paper tone asks of the bars around it. Auto asks nothing: its paper
@@ -183,41 +187,63 @@ struct ReaderView: View {
 }
 
 /// How far through, in muted ink in the bar above the text: the time left in an article, the
-/// chapter and the share read in a book.
+/// chapter and the share read in a book. Reads only `model.placeText` so scrolling doesn't redraw
+/// the navigation bar until the visible label changes.
 private struct Place: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: ReaderModel
     let palette: Palette
 
     var body: some View {
-        Text(Self.words(model))
+        let text = model.placeText
+        Text(text)
             .font(.inter(13, weight: .medium, relativeTo: .footnote))
             .monospacedDigit()
             .foregroundStyle(Color(palette.muted))
-            .contentTransition(.numericText())
-            .animation(.snappy(duration: 0.25), value: Self.words(model))
+            .contentTransition(reduceMotion ? .identity : .numericText())
+            .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: text)
             .accessibilityIdentifier("place")
-    }
-
-    static func words(_ model: ReaderModel) -> String {
-        let percent = "\(Int((model.progress * 100).rounded()))%"
-        if model.item.kind == .article {
-            guard let left = model.minutesLeft, model.progress < 0.98 else { return "Finished" }
-            return left == 0 ? percent : "\(left) min left"
-        }
-        return "Chapter \(model.chapter + 1) of \(model.rendered.chapters.count) · \(percent)"
     }
 }
 
+#if os(macOS)
+/// How far through, under the title. Its own view, so only it redraws as the reader scrolls.
+private struct Subtitle: ViewModifier {
+    let model: ReaderModel?
+
+    func body(content: Content) -> some View {
+        content.navigationSubtitle(model?.placeText ?? "")
+    }
+}
+#endif
+
 #if os(iOS)
+extension Animation {
+    /// The reader's bars going and coming as it reads on and back.
+    static let bars = Animation.snappy(duration: 0.24, extraBounce: 0)
+}
+
+/// Keeps `model.chromeHidden` out of `ReaderView.body` so hiding or showing the bars never
+/// invalidates the text view around it.
+private struct ChromeVisibility: ViewModifier {
+    let model: ReaderModel?
+
+    func body(content: Content) -> some View {
+        content.toolbarVisibility(model?.chromeHidden == true ? .hidden : .visible, for: .navigationBar, .tabBar)
+    }
+}
+
 /// The text dims into the paper at the edges, so a line never reads through the bars' glass. At
 /// the top the text stops under the progress hairline, and the fade takes the line passing under it
 /// over the inset the column keeps above its first line, so nothing at rest is dimmed. The fade at
 /// the bottom goes with the bars.
 private struct EdgeFades: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let ground: Color
-    let bottomShown: Bool
+    let model: ReaderModel?
 
     var body: some View {
+        let bottomShown = model?.chromeHidden != true
         VStack(spacing: 0) {
             fade(from: .top).frame(height: 26)
             Spacer(minLength: 0)
@@ -228,7 +254,7 @@ private struct EdgeFades: View {
             }
             .ignoresSafeArea()
             .opacity(bottomShown ? 1 : 0)
-            .animation(.easeInOut(duration: 0.25), value: bottomShown)
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .bars, value: bottomShown)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -284,23 +310,21 @@ private struct Contents: View {
     }
 }
 
-/// How far through, as a hairline across the top of the reader.
+/// How far through, as a hairline across the top of the reader. It moves with the text, frame by
+/// frame, using a horizontal scale so scrolling triggers no layout pass.
 private struct ProgressLine: View {
-    let progress: Double
+    let model: ReaderModel
     let palette: Palette
 
     var body: some View {
         Rectangle()
             .fill(Color(palette.hairline))
             .frame(height: 2)
-            .overlay(alignment: .leading) {
-                GeometryReader { space in
-                    Rectangle()
-                        .fill(Color(palette.ink).opacity(0.55))
-                        .frame(width: space.size.width * progress)
-                }
+            .overlay {
+                Rectangle()
+                    .fill(Color(palette.ink).opacity(0.55))
+                    .scaleEffect(x: max(0, min(1, model.progress)), y: 1, anchor: .leading)
             }
-            .animation(.linear(duration: 0.15), value: progress)
             .accessibilityHidden(true)
     }
 }

@@ -7,6 +7,7 @@ import UIKit
 /// it.
 final class FrameProbe {
     private static var running: FrameProbe?
+    static var isActive: Bool { running != nil }
     private let file: FileHandle
     private let writer = DispatchQueue(label: "inkling.frame-probe")
     private var frames: [Double] = []

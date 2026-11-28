@@ -1,6 +1,8 @@
 import Foundation
+import ImageIO
 import InklingCore
 import Markdown
+import os
 
 #if os(macOS)
 import AppKit
@@ -19,6 +21,8 @@ nonisolated struct Rendered: @unchecked Sendable {
     let titles: [String]
     /// The runs of text that come straight from the Markdown, in order.
     let runs: [Run]
+    /// The pictures, in the order they come.
+    var pictures: [Picture] = []
 
     struct Run {
         let chapter: Int
@@ -48,7 +52,13 @@ nonisolated struct Rendered: @unchecked Sendable {
     }
 
     func chapter(at character: Int) -> Int {
-        chapters.lastIndex { $0.location <= character } ?? 0
+        guard !chapters.isEmpty else { return 0 }
+        var low = 0, high = chapters.count
+        while low + 1 < high {
+            let middle = (low + high) / 2
+            if chapters[middle].location <= character { low = middle } else { high = middle }
+        }
+        return low
     }
 
     /// The passage a selection covers, kept to the chapter it starts in.
@@ -76,7 +86,8 @@ nonisolated struct Rendered: @unchecked Sendable {
     }
 }
 
-/// How the text is set: the look's face, size and spacing, the palette, and the column's width.
+/// How the text is set: the look's face, size and spacing, the palette, the column's width, and
+/// the screen's pixels to a point, which pictures are decoded for.
 nonisolated struct Typesetting: @unchecked Sendable {
     var face: String
     var size: CGFloat
@@ -84,6 +95,7 @@ nonisolated struct Typesetting: @unchecked Sendable {
     var titleSize: CGFloat
     var palette: Palette
     var column: CGFloat
+    var scale: CGFloat = 2
 }
 
 /// Draws Markdown chapters (ADR 0006) for the reader. Runs off the main thread.
@@ -95,6 +107,8 @@ nonisolated struct Renderer {
 
     private var out = NSMutableAttributedString()
     private var runs: [Rendered.Run] = []
+    private var pictures: [Picture] = []
+    private var fontCache: [FontKey: PlatformFont] = [:]
     private var chapter = 0
     private var lines: [Int] = [0]
     private var titled = false
@@ -102,6 +116,12 @@ nonisolated struct Renderer {
     private var notes = 0
     /// Bytes the next run of text leaves out: a footnote definition's `[^n]: `.
     private var dropping = 0
+
+    private struct FontKey: Hashable {
+        let size: CGFloat
+        let bold: Bool
+        let italic: Bool
+    }
 
     init(set: Typesetting, folder: URL, byline: String?) {
         self.set = set
@@ -118,7 +138,7 @@ nonisolated struct Renderer {
             renderer.chapter(index, chapter, in: book, next: titles.indices.contains(index + 1) ? titles[index + 1] : nil)
             spans.append(NSRange(location: start, length: renderer.out.length - start))
         }
-        return Rendered(text: renderer.out, chapters: spans, titles: titles, runs: renderer.runs)
+        return Rendered(text: renderer.out, chapters: spans, titles: titles, runs: renderer.runs, pictures: renderer.pictures)
     }
 
     /// The link "Next: …" carries at a chapter's end.
@@ -285,12 +305,11 @@ nonisolated struct Renderer {
     /// A picture centred in the column, no wider than its file, with its caption under it.
     private mutating func figure(_ image: Markdown.Image, indent: CGFloat) {
         let centred = paragraph(align: .center, before: set.size * 0.4, after: set.size * 0.5, lineHeight: 1)
-        if let source = image.source, let picture = PlatformImage(contentsOfFile: folder.appending(path: source).path) {
+        if let source = image.source, let picture = Picture(at: folder.appending(path: source), location: out.length, column: set.column, scale: set.scale) {
+            pictures.append(picture)
             let attachment = FittedAttachment()
-            attachment.image = picture
-            let size = picture.size
-            let scale = min(1, set.column / max(size.width, 1), set.column * 0.9 / max(size.height, 1))
-            attachment.natural = CGSize(width: size.width * scale, height: size.height * scale)
+            attachment.picture = picture
+            attachment.natural = picture.size
             let picture = NSMutableAttributedString(attachment: attachment)
             picture.addAttributes(attributes(font: font(size: set.size), color: set.palette.ink, paragraph: centred), range: NSRange(location: 0, length: picture.length))
             out.append(picture)
@@ -402,7 +421,7 @@ nonisolated struct Renderer {
         return lines[location.line - 1] + location.column - 1
     }
 
-    private func attributes(_ style: Style, _ paragraph: NSParagraphStyle) -> [NSAttributedString.Key: Any] {
+    private mutating func attributes(_ style: Style, _ paragraph: NSParagraphStyle) -> [NSAttributedString.Key: Any] {
         let face = style.code ? PlatformFont.monospacedSystemFont(ofSize: style.size * 0.86, weight: .regular) : font(size: style.size, weight: style.weight, italic: style.italic)
         var attrs = attributes(font: face, color: style.color, paragraph: paragraph)
         if style.code { attrs[.backgroundColor] = set.palette.segment }
@@ -434,8 +453,12 @@ nonisolated struct Renderer {
         return style
     }
 
-    private func font(size: CGFloat, weight: PlatformFont.Weight = .regular, italic: Bool = false) -> PlatformFont {
-        Fonts.reading(set.face, size: size, bold: weight != .regular, italic: italic)
+    private mutating func font(size: CGFloat, weight: PlatformFont.Weight = .regular, italic: Bool = false) -> PlatformFont {
+        let key = FontKey(size: size, bold: weight != .regular, italic: italic)
+        if let cached = fontCache[key] { return cached }
+        let made = Fonts.reading(set.face, size: size, bold: key.bold, italic: italic)
+        fontCache[key] = made
+        return made
     }
 
     private func interface(size: CGFloat, weight: PlatformFont.Weight = .regular) -> PlatformFont {
@@ -455,9 +478,110 @@ typealias PlatformFontDescriptor = UIFontDescriptor
 /// than the look's page width still holds it.
 nonisolated final class FittedAttachment: NSTextAttachment {
     var natural = CGSize.zero
+    var picture: Picture?
+
+    override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any] = [:], location: any NSTextLocation, textContainer: NSTextContainer?) -> PlatformImage? {
+        picture?.image ?? super.image(for: bounds, attributes: attributes, location: location, textContainer: textContainer)
+    }
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
         let width = min(natural.width, proposedLineFragment.width)
         return CGRect(x: 0, y: 0, width: width, height: natural.height * width / max(natural.width, 1))
+    }
+}
+
+/// A picture in the text, decoded at the size it is drawn only as the reader nears it, off the main
+/// thread, and kept in a cache the system may empty. A file left to decode as it is drawn stalls
+/// the scroll the moment it comes in, and decoding every picture of an illustrated book up front
+/// would hold hundreds of megabytes.
+nonisolated final class Picture: @unchecked Sendable {
+    /// Where it is in the text.
+    let location: Int
+    /// Its size in points: its own, fitted into the column and 90% of the column's height.
+    let size: CGSize
+    private let url: URL
+    private let pixels: CGFloat
+    private let key: NSString
+    private let preparing = OSAllocatedUnfairLock(initialState: false)
+    // NSCache is safe to use from any thread.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.totalCostLimit = 64 << 20
+        return cache
+    }()
+    private static let decoder = DispatchQueue(label: "inkling.pictures", qos: .userInitiated)
+
+    init?(at url: URL, location: Int, column: CGFloat, scale: CGFloat) {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              var width = (properties[kCGImagePropertyPixelWidth] as? NSNumber).map({ CGFloat($0.doubleValue) }),
+              var height = (properties[kCGImagePropertyPixelHeight] as? NSNumber).map({ CGFloat($0.doubleValue) }) else { return nil }
+        if let orientation = properties[kCGImagePropertyOrientation] as? NSNumber, orientation.intValue >= 5 { swap(&width, &height) }
+        let sourcePixels = max(width, height)
+        #if os(macOS)
+        // AppKit sizes a picture by its resolution, as NSImage(contentsOfFile:) does.
+        if let dpi = (properties[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue, dpi > 0 { width *= 72 / dpi }
+        if let dpi = (properties[kCGImagePropertyDPIHeight] as? NSNumber)?.doubleValue, dpi > 0 { height *= 72 / dpi }
+        #endif
+        let fit = min(1, column / max(width, 1), column * 0.9 / max(height, 1))
+        self.location = location
+        self.url = url
+        size = CGSize(width: width * fit, height: height * fit)
+        // Never upscale a small source image beyond its native pixel dimensions.
+        pixels = min(sourcePixels, (max(size.width, size.height) * max(scale, 1)).rounded(.up))
+        key = "\(pixels)@\(url.path)" as NSString
+    }
+
+    /// The picture as drawn, decoded now if it wasn't ready.
+    var image: PlatformImage? {
+        Self.cache.object(forKey: key) ?? decode()
+    }
+
+    /// Decodes the picture in the background, unless it is ready or already queued.
+    func prepare() {
+        guard Self.cache.object(forKey: key) == nil else { return }
+        let shouldQueue = preparing.withLock { active -> Bool in
+            guard !active else { return false }
+            active = true
+            return true
+        }
+        guard shouldQueue else { return }
+        Self.decoder.async { [self] in
+            defer { preparing.withLock { $0 = false } }
+            if Self.cache.object(forKey: key) == nil { _ = decode() }
+        }
+    }
+
+    private func decode() -> PlatformImage? {
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: pixels,
+        ] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        #if os(macOS)
+        let image = NSImage(cgImage: decoded, size: size)
+        #else
+        let image = UIImage(cgImage: decoded, scale: CGFloat(decoded.width) / max(size.width, 1), orientation: .up)
+        #endif
+        Self.cache.setObject(image, forKey: key, cost: decoded.bytesPerRow * decoded.height)
+        return image
+    }
+}
+
+extension Rendered {
+    /// Readies the pictures a few screens either side of `character`, so each is decoded before it
+    /// scrolls in.
+    func preparePictures(around character: Int) {
+        guard !pictures.isEmpty else { return }
+        let near = (character - 4_000)...(character + 12_000)
+        var low = 0, high = pictures.count
+        while low < high {
+            let middle = (low + high) / 2
+            if pictures[middle].location < near.lowerBound { low = middle + 1 } else { high = middle }
+        }
+        for picture in pictures[low...].prefix(while: { near.contains($0.location) }) { picture.prepare() }
     }
 }
