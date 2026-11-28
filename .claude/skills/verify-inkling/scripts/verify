@@ -1,0 +1,158 @@
+#!/bin/bash
+# The verify-inkling skill's helper: one run per checkout, its evidence in target/verify/<run>/evidence.
+#   verify launch               boot this run's own Simulator and a local Worker
+#   verify doctor               read-only: is this run's instance worth driving?
+#   verify iphone <test>…       apple/snap.sh iphone on this run's Simulator
+#   verify mac <test>…          apple/snap.sh mac, offscreen
+#   verify worker <file>…       the Worker's workerd tests
+#   verify ota                  apple/ota.sh to the local Worker, then the link, page, manifest and .ipa
+#   verify cleanup              stop what launch started; the evidence stays
+set -euo pipefail
+root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$root"
+export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH" WRANGLER_SEND_METRICS=false
+runs="$root/target/verify"
+
+die() { echo "error: $*" >&2; exit 1; }
+load() {
+  [ -e "$runs/current" ] || die "no run is up; run verify launch"
+  run="$runs/$(readlink "$runs/current")"
+  # shellcheck disable=SC1091
+  . "$run/state"
+}
+note() { echo "$1=$2" >>"$run/state"; }
+expect() {
+  if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got '$2', wanted '$3'"; failed=1; fi
+}
+
+launch() {
+  [ ! -e "$runs/current" ] || die "run $(readlink "$runs/current") is up in this checkout; verify cleanup first"
+  id=$(date -u +%Y%m%dT%H%M%SZ)
+  run="$runs/$id"
+  mkdir -p "$run/evidence"
+  ln -sfn "$id" "$runs/current"
+  : >"$run/state"
+  note id "$id"
+  commit=$(git rev-parse HEAD)
+  note commit "$commit"
+  scratch=$(mktemp -d -t verify-inkling)
+  note scratch "$scratch"
+
+  books/fetch-fixtures.sh >/dev/null
+  apple/core.sh >"$run/core.log" 2>&1 || die "apple/core.sh failed; see $run/core.log"
+  (cd server && bun install --frozen-lockfile >/dev/null)
+
+  port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  openssl rand -hex 32 >"$scratch/upload-token"
+  (cd server && node_modules/.bin/wrangler d1 migrations apply inkling --local --persist-to "$scratch/worker") >"$run/worker.log" 2>&1
+  # Its own session, so cleanup stops wrangler and workerd by the group this run made.
+  (cd server && exec python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+    node_modules/.bin/wrangler dev --local --ip 127.0.0.1 --port "$port" --persist-to "$scratch/worker" \
+    --show-interactive-dev-session=false \
+    --var "PUBLIC_URL:http://127.0.0.1:$port" --var "SECRET_KEY:$(openssl rand -base64 32)" \
+    --var "BUILD_UPLOAD_TOKEN:$(cat "$scratch/upload-token")") >>"$run/worker.log" 2>&1 </dev/null &
+  note worker_pid "$!"
+  note port "$port"
+
+  # The newest iPhone Pro on the newest runtime that supports it.
+  pick=$(xcrun simctl list runtimes iOS --json | jq -r '[.runtimes[] | select(.isAvailable) | . as $r | .supportedDeviceTypes[]
+    | select(.name | test("^iPhone [0-9]+ Pro$"))
+    | {runtime: $r.identifier, model: .identifier, order: [($r.version | split(".") | map(tonumber)), (.name | ltrimstr("iPhone ") | rtrimstr(" Pro") | tonumber)]}]
+    | sort_by(.order) | last | "\(.model) \(.runtime)"')
+  # shellcheck disable=SC2086
+  udid=$(xcrun simctl create "verify-inkling-$id" $pick)
+  note udid "$udid"
+  xcrun simctl boot "$udid"
+  xcrun simctl bootstatus "$udid" >/dev/null
+  # A new Simulator's first keyboard shows the slide-to-type tip over the Ask composer.
+  xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true
+
+  for _ in $(seq 90); do
+    curl -fsS "http://127.0.0.1:$port/" 2>/dev/null | grep -q "Inkling's server" && break
+    sleep 1
+  done
+  echo "launched run $id: Simulator $udid, Worker http://127.0.0.1:$port"
+}
+
+doctor() {
+  load
+  failed=0
+  sim=$(xcrun simctl list devices --json | jq -r --arg u "$udid" '.devices[][] | select(.udid == $u) | "\(.name) \(.state)"')
+  listener=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
+  issuer=$(curl -fsS "http://127.0.0.1:$port/.well-known/oauth-authorization-server" 2>/dev/null | jq -r .issuer || true)
+  expect "the Simulator is this run's and booted" "$sim" "verify-inkling-$id Booted"
+  expect "the Worker's process is up" "$(kill -0 "$worker_pid" 2>/dev/null && echo up)" up
+  expect "port $port is held by this run's Worker" "$([ -z "$listener" ] || ps -o pgid= -p "$listener" | tr -d ' ')" "$worker_pid"
+  expect "the Worker's issuer is local, not production" "$issuer" "http://127.0.0.1:$port"
+  expect "ffi, core, sync and books are as launch built them" "$(git diff --quiet "$commit" -- ffi core sync books && echo same)" same
+  [ "$failed" = 0 ] || exit 1
+}
+
+iphone() {
+  load
+  INKLING_SNAP_OUT="$run/evidence" apple/snap.sh iphone "$udid" "$@" 2>&1 | tee -a "$run/evidence/iphone.log"
+}
+
+mac() {
+  load
+  INKLING_SNAP_OUT="$run/evidence" apple/snap.sh mac "$@" 2>&1 | tee -a "$run/evidence/mac.log"
+}
+
+worker() {
+  load
+  (cd server && bun run test "$@") 2>&1 | tee -a "$run/evidence/worker-tests.log"
+}
+
+ota() {
+  load
+  ev="$run/evidence/ota"
+  local="http://127.0.0.1:$port"
+  mkdir -p "$ev"
+  INKLING_SERVER="$local" INKLING_OTA_TOKEN="$(cat "$scratch/upload-token")" apple/ota.sh 2>&1 | tee "$ev/ota.log"
+  link=$(tail -1 "$ev/ota.log")
+  case "$link" in "$local/builds/"*) ;; *) die "apple/ota.sh printed no link on the local Worker" ;; esac
+  failed=0
+  fetch() { curl -sS -D "$ev/$2.headers" -o "$3" -w '%{http_code}' "$1"; }
+  exec > >(tee "$ev/checks.txt")
+
+  expect "install page answers" "$(fetch "$link" install.html "$ev/install.html")" 200
+  expect "install page names Inkling Dev" "$(grep -q 'Install Inkling Dev' "$ev/install.html" && echo yes)" yes
+  expect "install page is no-store" "$(grep -ci '^cache-control: no-store' "$ev/install.html.headers")" 1
+  manifest=$(python3 -c 'import html, re, sys, urllib.parse as u; href = html.unescape(re.search(r"href=\"(itms-services://[^\"]+)\"", open(sys.argv[1]).read())[1]); print(u.parse_qs(u.urlparse(href).query)["url"][0])' "$ev/install.html")
+  expect "manifest answers" "$(fetch "$manifest" manifest.plist "$ev/manifest.plist")" 200
+  expect "manifest's bundle ID" "$(plutil -extract items.0.metadata.bundle-identifier raw -o - "$ev/manifest.plist")" com.tobygodat.inkling.dev
+  ipa=$(plutil -extract items.0.assets.0.url raw -o - "$ev/manifest.plist")
+  expect ".ipa answers" "$(fetch "$ipa" Inkling.ipa "$scratch/Inkling.ipa")" 200
+  expect ".ipa is the one ota.sh built" "$(shasum -a 256 <"$scratch/Inkling.ipa")" "$(shasum -a 256 <target/apple-ota/export/Inkling.ipa)"
+  expect "a changed signature is refused" "$(fetch "${link%?}$([ "${link: -1}" = 0 ] && echo 1 || echo 0)" tampered "$ev/tampered.json")" 403
+
+  # Safari's first launch on a new Simulator can outlast openurl's timeout; the second open lands.
+  xcrun simctl openurl "$udid" "$link" 2>/dev/null || xcrun simctl openurl "$udid" "$link"
+  sleep 5
+  xcrun simctl io "$udid" screenshot "$ev/install-page.png" >/dev/null
+  [ "$failed" = 0 ] || exit 1
+}
+
+cleanup() {
+  [ -e "$runs/current" ] || { echo "no run is up"; return; }
+  load
+  if [ -n "${worker_pid:-}" ] && kill -0 "$worker_pid" 2>/dev/null; then
+    kill -TERM -- "-$worker_pid" 2>/dev/null || true
+    for _ in $(seq 10); do kill -0 "$worker_pid" 2>/dev/null || break; sleep 1; done
+    kill -KILL -- "-$worker_pid" 2>/dev/null || true
+  fi
+  if [ -n "${udid:-}" ] && xcrun simctl list devices | grep -q "verify-inkling-$id ($udid)"; then
+    xcrun simctl shutdown "$udid" 2>/dev/null || true
+    xcrun simctl delete "$udid"
+  fi
+  [ -z "${scratch:-}" ] || rm -rf "$scratch"
+  rm "$runs/current"
+  echo "cleaned up run $id; evidence kept in $run/evidence"
+}
+
+case "${1:-}" in
+  launch | doctor | cleanup) "$1" ;;
+  iphone | mac | worker) cmd=$1; shift; "$cmd" "$@" ;;
+  ota) ota ;;
+  *) sed -n '2,9p' "$0" >&2; exit 2 ;;
+esac
