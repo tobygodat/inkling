@@ -28,6 +28,19 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             XCTAssertTrue(app.searchFields.firstMatch.isHittable, "search is at the top of the Inbox")
             shoot("\(name)-inbox")
 
+            row(app, "Walking").tap()
+            let walking = app.textViews["reader"]
+            XCTAssertTrue(walking.waitForExistence(timeout: 10))
+            sleep(1)
+            walking.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                .press(forDuration: 0.05, thenDragTo: walking.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+            sleep(1)
+            XCTAssertGreaterThan(colouredShare(in: CGRect(x: 0.15, y: 0.15, width: 0.7, height: 0.7)), 0.12, "Walking's painting draws in the \(name) reader")
+            shoot("\(name)-reader-picture")
+            showChrome(app)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(row(app, "An Apology for Idlers").waitForExistence(timeout: 5))
+
             row(app, "An Apology for Idlers").tap()
             let reader = app.textViews["reader"]
             XCTAssertTrue(reader.waitForExistence(timeout: 10))
@@ -526,6 +539,33 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         let context = CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         context?.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         return (0.299 * CGFloat(rgba[0]) + 0.587 * CGFloat(rgba[1]) + 0.114 * CGFloat(rgba[2])) / 255
+    }
+
+    /// Share of sampled pixels in `region` (normalised `0...1`) that carry real colour rather than
+    /// achromatic paper or ink, used to assert that an inline painting actually drew.
+    @MainActor private func colouredShare(in region: CGRect) -> Double {
+        guard let cg = XCUIScreen.main.screenshot().image.cgImage else { return 0 }
+        let rect = CGRect(
+            x: (CGFloat(cg.width) * region.minX).rounded(),
+            y: (CGFloat(cg.height) * region.minY).rounded(),
+            width: max(1, (CGFloat(cg.width) * region.width).rounded()),
+            height: max(1, (CGFloat(cg.height) * region.height).rounded())
+        )
+        guard let crop = cg.cropping(to: rect) else { return 0 }
+        let width = crop.width, height = crop.height
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var coloured = 0, total = 0
+        for y in stride(from: 0, to: height, by: 4) {
+            for x in stride(from: 0, to: width, by: 4) {
+                let i = (y * width + x) * 4
+                let r = Int(rgba[i]), g = Int(rgba[i + 1]), b = Int(rgba[i + 2])
+                if max(r, g, b) - min(r, g, b) > 18 { coloured += 1 }
+                total += 1
+            }
+        }
+        return total > 0 ? Double(coloured) / Double(total) : 0
     }
 
     @MainActor private func launch(data: String, demo: Bool) -> XCUIApplication {

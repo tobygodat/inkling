@@ -12,10 +12,32 @@ import UIKit
 enum Layout {
     static func top(of character: Int, in layout: NSTextLayoutManager) -> CGFloat? {
         let document = layout.documentRange
-        guard let location = layout.location(document.location, offsetBy: character),
-              let before = NSTextRange(location: document.location, end: location) else { return nil }
-        layout.ensureLayout(for: before)
+        if character <= 0 {
+            #if os(iOS)
+            // Fresh opens start at the top; only relocate when jumping back from a later viewport.
+            if let start = layout.textViewportLayoutController.viewportRange?.location,
+               start.compare(document.location) != .orderedSame {
+                let origin = layout.textViewportLayoutController.relocateViewport(to: document.location)
+                layout.textViewportLayoutController.layoutViewport()
+                return layout.textLayoutFragment(for: document.location)?.layoutFragmentFrame.minY ?? origin
+            }
+            #endif
+            return 0
+        }
+        guard let location = layout.location(document.location, offsetBy: character) else { return nil }
+        #if os(iOS)
+        // Relocate TextKit 2's viewport directly to `location` without laying out the whole prefix
+        // from character 0, so opening or jumping into a long book doesn't stall the main thread.
+        let origin = layout.textViewportLayoutController.relocateViewport(to: location)
+        layout.textViewportLayoutController.layoutViewport()
+        return layout.textLayoutFragment(for: location)?.layoutFragmentFrame.minY ?? origin
+        #else
+        let end = layout.location(location, offsetBy: 4_000) ?? document.endLocation
+        if let window = NSTextRange(location: location, end: end) {
+            layout.ensureLayout(for: window)
+        }
         return layout.textLayoutFragment(for: location)?.layoutFragmentFrame.minY
+        #endif
     }
 
     static func character(at y: CGFloat, in layout: NSTextLayoutManager) -> Int? {
@@ -60,6 +82,11 @@ struct ReaderText: UIViewRepresentable {
         view.attributedText = model.rendered.text
         view.delegate = context.coordinator
         view.accessibilityIdentifier = "reader"
+        if FrameProbe.isActive {
+            // Keep XCUITest gesture synthesis from triggering UIKit's O(paragraphs × chars)
+            // UITextViewAccessibility._accessibilityParagraphElements snapshot during measurement.
+            view.accessibilityElementsHidden = true
+        }
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
         tap.delegate = context.coordinator
         view.addGestureRecognizer(tap)
@@ -87,28 +114,89 @@ struct ReaderText: UIViewRepresentable {
         let palette: Palette
         weak var view: ColumnTextView?
         private var painted: [NSRange] = []
-        private var lastY: CGFloat = 0
+        private var paintedPassages: [Passage] = []
+        private var lastOffsetY: CGFloat = 0
+        private var dragTravel: CGFloat = 0
+        /// A chapter jump gliding or dipping out and in, until it settles or a finger stops it.
+        private var dip: UIViewPropertyAnimator?
 
         init(model: ReaderModel, palette: Palette) {
             self.model = model
             self.palette = palette
         }
 
+        /// Paints the highlights when they change. It runs on every update, so it compares the
+        /// passages before it maps any of them into the text.
         func repaint() {
+            guard model.highlights != paintedPassages, let view else { return }
             let ranges = model.highlightRanges
-            guard ranges != painted, let view else { return }
             Layout.paint(view.textStorage, base: model.rendered.text, from: painted, to: ranges, color: palette.highlight)
             painted = ranges
+            paintedPassages = model.highlights
+        }
+
+        /// Stops any in-flight chapter jump at its live on-screen position so touching or starting
+        /// another jump never snaps to the old target.
+        private func stopDip(restoreAlpha: Bool = false) {
+            guard let dip, let view else { self.dip = nil; return }
+            if dip.isRunning {
+                let presentation = view.layer.presentation()
+                let liveY = presentation?.bounds.origin.y ?? view.contentOffset.y
+                let liveTransform = presentation?.affineTransform() ?? view.transform
+                let liveAlpha = CGFloat(presentation?.opacity ?? Float(view.alpha))
+                dip.stopAnimation(true)
+                view.contentOffset.y = liveY
+                view.transform = liveTransform
+                view.alpha = liveAlpha
+            }
+            self.dip = nil
+            if restoreAlpha, (view.alpha < 1 || view.transform != .identity) {
+                let restore = UIViewPropertyAnimator(duration: 0.2, timingParameters: UISpringTimingParameters(duration: 0.2, bounce: 0))
+                restore.addAnimations {
+                    view.alpha = 1
+                    view.transform = .identity
+                }
+                restore.startAnimation()
+                self.dip = restore
+            }
+        }
+
+        /// A finger on the text takes it from wherever a jump has got to.
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            stopDip(restoreAlpha: true)
+            lastOffsetY = scrollView.contentOffset.y
+            dragTravel = 0
+        }
+
+        /// Bars hiding or showing shift `adjustedContentInset.top`; resync so the inset change
+        /// never looks like the user scrolled the other way.
+        func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) {
+            lastOffsetY = scrollView.contentOffset.y
+            dragTravel = 0
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             report()
-            let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
-            defer { lastY = y }
-            guard scrollView.isTracking || scrollView.isDecelerating else { return }
-            if y < 40 || y - lastY < -6 {
+            let delta = scrollView.contentOffset.y - lastOffsetY
+            lastOffsetY = scrollView.contentOffset.y
+            let top = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            if top < 40 && (scrollView.isTracking || scrollView.isDecelerating) {
+                dragTravel = 0
                 show(true)
-            } else if y - lastY > 6 {
+                return
+            }
+            // Only accumulate travel while the finger is driving the scroll so bottom rubber-band
+            // bounce-back never flips the bars back open.
+            guard scrollView.isTracking else { return }
+            if (delta > 0 && dragTravel < 0) || (delta < 0 && dragTravel > 0) {
+                dragTravel = 0
+            }
+            dragTravel += delta
+            if dragTravel < -16 {
+                dragTravel = 0
+                show(true)
+            } else if dragTravel > 16 {
+                dragTravel = 0
                 show(false)
             }
         }
@@ -133,24 +221,40 @@ struct ReaderText: UIViewRepresentable {
                 view.setNeedsLayout()
                 return
             }
+            stopDip()
             let still = UIAccessibility.isReduceMotionEnabled
             let distance = y - view.contentOffset.y
             if motion == .glide, !still, abs(distance) < view.bounds.height * 2 {
-                view.setContentOffset(CGPoint(x: view.contentOffset.x, y: y), animated: true)
+                let glide = UIViewPropertyAnimator(duration: 0.32, timingParameters: UISpringTimingParameters(duration: 0.32, bounce: 0))
+                glide.addAnimations {
+                    view.alpha = 1
+                    view.transform = .identity
+                    view.contentOffset.y = y
+                }
+                glide.startAnimation()
+                dip = glide
                 return
             }
             let rise: CGFloat = still ? 0 : (distance >= 0 ? 14 : -14)
             let out = UIViewPropertyAnimator(duration: 0.12, curve: .easeOut) { view.alpha = 0 }
-            out.addCompletion { _ in
-                view.contentOffset.y = y - rise
-                let into = UIViewPropertyAnimator(duration: 0.26, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.23, y: 1), controlPoint2: CGPoint(x: 0.32, y: 1)))
+            out.addCompletion { [weak self] position in
+                guard position == .end, let self else { return }
+                // Jump contentOffset once while invisible, then rise with a GPU layer transform
+                // instead of animating contentOffset frame by frame.
+                view.contentOffset.y = y
+                view.transform = rise == 0 ? .identity : CGAffineTransform(translationX: 0, y: rise)
+                let into = still
+                    ? UIViewPropertyAnimator(duration: 0.18, curve: .easeOut)
+                    : UIViewPropertyAnimator(duration: 0.28, timingParameters: UISpringTimingParameters(duration: 0.28, bounce: 0))
                 into.addAnimations {
                     view.alpha = 1
-                    view.contentOffset.y = y
+                    view.transform = .identity
                 }
                 into.startAnimation()
+                dip = into
             }
             out.startAnimation()
+            dip = out
         }
 
         func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
@@ -172,9 +276,11 @@ struct ReaderText: UIViewRepresentable {
 
         func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
+        /// The bars go on a spring, so reading back halfway turns them round from where they are.
+        /// Reduce Motion puts them away and back without sliding.
         private func show(_ shown: Bool) {
             guard model.chromeHidden == shown else { return }
-            withAnimation(.easeInOut(duration: 0.25)) { model.chromeHidden = !shown }
+            withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .bars) { model.chromeHidden = !shown }
         }
 
         /// Reports the place from the line at the top of the column, below the inset kept above it.
@@ -184,6 +290,7 @@ struct ReaderText: UIViewRepresentable {
             let atEnd = view.contentOffset.y + view.bounds.height >= view.contentSize.height - 2
             if let character = Layout.character(at: y, in: layout) {
                 model.scrolled(toCharacter: character, atEnd: atEnd && view.contentOffset.y > 0)
+                model.rendered.preparePictures(around: character)
             }
         }
 
@@ -228,7 +335,8 @@ final class ColumnTextView: UITextView {
     /// kept, so the line clears the fade under the bars.
     func offset(for character: Int) -> CGFloat? {
         guard let layout = textLayoutManager, let top = Layout.top(of: character, in: layout) else { return nil }
-        let most = max(contentSize.height - bounds.height + adjustedContentInset.bottom, -adjustedContentInset.top)
+        let height = max(contentSize.height, layout.usageBoundsForTextContainer.height + textContainerInset.top + textContainerInset.bottom)
+        let most = max(height - bounds.height + adjustedContentInset.bottom, -adjustedContentInset.top)
         return min(max(top - adjustedContentInset.top, -adjustedContentInset.top), most)
     }
 }
@@ -293,17 +401,22 @@ struct ReaderText: NSViewRepresentable {
         weak var text: ColumnTextView?
         weak var scroll: NSScrollView?
         private var painted: [NSRange] = []
+        private var paintedPassages: [Passage] = []
+        private var jumpToken = 0
 
         init(model: ReaderModel, palette: Palette) {
             self.model = model
             self.palette = palette
         }
 
+        /// Paints the highlights when they change. It runs on every update, so it compares the
+        /// passages before it maps any of them into the text.
         func repaint() {
+            guard model.highlights != paintedPassages, let storage = text?.textStorage else { return }
             let ranges = model.highlightRanges
-            guard ranges != painted, let storage = text?.textStorage else { return }
             Layout.paint(storage, base: model.rendered.text, from: painted, to: ranges, color: palette.highlight)
             painted = ranges
+            paintedPassages = model.highlights
         }
 
         /// Moves the text so the pending character's line sits at the top of the column, with the
@@ -312,20 +425,27 @@ struct ReaderText: NSViewRepresentable {
             guard let text, let scroll, let character = text.pending, text.bounds.width > 0, let layout = text.textLayoutManager else { return }
             text.pending = nil
             guard let top = Layout.top(of: character, in: layout) else { return }
+            let needed = layout.usageBoundsForTextContainer.height + text.textContainerInset.height * 2
+            if text.frame.height < needed {
+                text.setFrameSize(NSSize(width: text.frame.width, height: needed))
+            }
             let most = max(text.frame.height - scroll.contentView.bounds.height, -scroll.contentInsets.top)
             let y = min(max(top - scroll.contentInsets.top, -scroll.contentInsets.top), most)
             let clip = scroll.contentView
             let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             let distance = y - clip.bounds.minY
+            jumpToken += 1
+            let token = jumpToken
             let settle: @MainActor () -> Void = { scroll.reflectScrolledClipView(clip) }
             switch motion {
             case .instant:
+                scroll.alphaValue = 1
                 clip.scroll(to: NSPoint(x: 0, y: y))
                 settle()
             case .glide where !still && abs(distance) < clip.bounds.height * 2:
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.4
-                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.65, 0, 0.35, 1)
+                    context.duration = 0.36
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
                     clip.animator().setBoundsOrigin(NSPoint(x: 0, y: y))
                 } completionHandler: { MainActor.assumeIsolated { settle() } }
             case .glide, .fade:
@@ -334,12 +454,13 @@ struct ReaderText: NSViewRepresentable {
                     context.duration = 0.12
                     context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                     scroll.animator().alphaValue = 0
-                } completionHandler: {
+                } completionHandler: { [weak self] in
                     MainActor.assumeIsolated {
+                        guard let self, self.jumpToken == token else { return }
                         clip.scroll(to: NSPoint(x: 0, y: y - rise))
                         settle()
                         NSAnimationContext.runAnimationGroup { context in
-                            context.duration = 0.26
+                            context.duration = still ? 0.18 : 0.26
                             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
                             scroll.animator().alphaValue = 1
                             clip.animator().setBoundsOrigin(NSPoint(x: 0, y: y))
@@ -357,6 +478,7 @@ struct ReaderText: NSViewRepresentable {
             let atEnd = visible.maxY >= text.frame.height - 2 && visible.minY > 0
             if let character = Layout.character(at: y, in: layout) {
                 model.scrolled(toCharacter: character, atEnd: atEnd)
+                model.rendered.preparePictures(around: character)
             }
         }
 

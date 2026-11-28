@@ -43,6 +43,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.tobygodat.inkling.native
         PRODUCT_NAME: Inkling
         GENERATE_INFOPLIST_FILE: YES
+        # The keys Xcode has no build setting for, merged into the generated Info.plist.
+        INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Inkling
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

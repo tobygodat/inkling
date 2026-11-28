@@ -54,7 +54,10 @@ final class MacSnapshots {
                 if section == .inbox { navigator.selection = shelf.inbox[0].id }
                 if section == .library { navigator.selection = shelf.books.first { $0.title.hasPrefix(name == "light" ? "Walden" : "Pride") }?.id }
                 if section == .writing { navigator.document = shelf.docs.first?.id }
-                try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
+                let captured = try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
+                if section == .inbox {
+                    #expect(Self.colouredShare(in: captured, region: CGRect(x: 0.52, y: 0.62, width: 0.40, height: 0.32)) > 0.2, "Walking's painting draws in the \(name) reader")
+                }
             }
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
             try await shoot(SettingsView(initialTab: .reading).environment(shelf).environment(Navigator()), "\(name)-settings", appearance, size: CGSize(width: 660, height: 420))
@@ -579,7 +582,8 @@ final class MacSnapshots {
     /// Renders `view` in a window ordered in far off the screen, never key and never active, and
     /// takes the window server's own image of it, so the sidebar's glass and the toolbar draw as
     /// they do on screen.
-    private func shoot(_ view: some View, _ name: String, _ appearance: NSAppearance.Name, size: CGSize = CGSize(width: 1280, height: 800), titled: Bool = true) async throws {
+    @discardableResult
+    private func shoot(_ view: some View, _ name: String, _ appearance: NSAppearance.Name, size: CGSize = CGSize(width: 1280, height: 800), titled: Bool = true) async throws -> CGImage {
         let style: NSWindow.StyleMask = titled ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView] : [.titled, .fullSizeContentView]
         let window = Offscreen(contentRect: CGRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: appearance)
@@ -598,6 +602,33 @@ final class MacSnapshots {
         try png.write(to: out.appending(path: "\(name).png"))
         window.orderOut(nil)
         window.close()
+        return image
+    }
+
+    /// Share of sampled pixels in `region` (normalised `0...1`) that carry real colour rather than
+    /// achromatic paper or ink, used to assert that an inline painting actually drew.
+    private static func colouredShare(in image: CGImage, region: CGRect) -> Double {
+        let rect = CGRect(
+            x: (CGFloat(image.width) * region.minX).rounded(),
+            y: (CGFloat(image.height) * region.minY).rounded(),
+            width: max(1, (CGFloat(image.width) * region.width).rounded()),
+            height: max(1, (CGFloat(image.height) * region.height).rounded())
+        )
+        guard let crop = image.cropping(to: rect) else { return 0 }
+        let width = crop.width, height = crop.height
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var coloured = 0, total = 0
+        for y in stride(from: 0, to: height, by: 4) {
+            for x in stride(from: 0, to: width, by: 4) {
+                let i = (y * width + x) * 4
+                let r = Int(rgba[i]), g = Int(rgba[i + 1]), b = Int(rgba[i + 2])
+                if max(r, g, b) - min(r, g, b) > 18 { coloured += 1 }
+                total += 1
+            }
+        }
+        return total > 0 ? Double(coloured) / Double(total) : 0
     }
 }
 

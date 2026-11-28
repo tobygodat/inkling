@@ -3,6 +3,12 @@ import InklingCore
 import Observation
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
 /// The library as the screens see it: every item, the sections made from them, and the calls that
 /// change them. Every call into Rust that touches the disk runs off the main thread.
 @Observable
@@ -31,7 +37,10 @@ final class Shelf {
     /// A failure to show the reader or writer, in Rust's own words.
     var failure: String?
     @ObservationIgnored private var places: [String: (chapter: Int, fraction: Double)] = [:]
+    @ObservationIgnored private var keepUntil: ContinuousClock.Instant = .now
     @ObservationIgnored private var keeping: Task<Void, Never>?
+    @ObservationIgnored private var excerptCache: [String: (changedMs: UInt64, excerpt: String?)] = [:]
+    private static let positionsQueue = DispatchQueue(label: "inkling.positions", qos: .utility)
 
     init(folder: URL, session: URLSession = .shared, fakeServer: URL? = nil) throws {
         self.folder = folder
@@ -58,6 +67,7 @@ final class Shelf {
         docs = documents.list()
         account.attach(shelf: self)
         asker.shelf = self
+        warmThumbnails()
     }
 
     /// The data folder core names: `INKLING_DATA_DIR` when set, as every headless run sets it, else
@@ -125,6 +135,11 @@ final class Shelf {
 
     func reload() {
         items = library.items()
+        warmThumbnails()
+    }
+
+    private func warmThumbnails() {
+        Thumbnails.warm(items.flatMap { [$0.picture, $0.cover].compactMap(\.self) })
     }
 
     // MARK: - Documents
@@ -166,7 +181,7 @@ final class Shelf {
         let text = readDocument(doc.id)
         attempt { try documents.remove(id: doc.id) }
         deletedDoc = (doc, text)
-        withAnimation(.snappy(duration: 0.25)) { reloadDocuments() }
+        withAnimation(Self.reduceMotion ? nil : .snappy(duration: 0.25)) { reloadDocuments() }
         account.syncSoon()
     }
 
@@ -174,36 +189,47 @@ final class Shelf {
         guard let removed = deletedDoc else { return nil }
         deletedDoc = nil
         attempt { try documents.restore(id: removed.info.id, text: removed.text, changedMs: removed.info.changedMs) }
-        withAnimation(.snappy(duration: 0.25)) { reloadDocuments() }
+        withAnimation(Self.reduceMotion ? nil : .snappy(duration: 0.25)) { reloadDocuments() }
         account.syncSoon()
         return removed.info.id
     }
 
     /// The first non-empty body line after the title, stripped of Markdown marks for the list row.
+    /// Cached by `(id, changedMs)` so scrolling the document list never reads Markdown files off disk.
     func documentExcerpt(_ id: String) -> String? {
+        let changedMs = docs.first { $0.id == id }?.changedMs ?? 0
+        if let cached = excerptCache[id], cached.changedMs == changedMs {
+            return cached.excerpt
+        }
         let text = readDocument(id)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        guard lines.count > 1 else { return nil }
-        let raw = lines[1]
-            .replacingOccurrences(of: "**", with: "")
-            .replacingOccurrences(of: "__", with: "")
-            .replacingOccurrences(of: "*", with: "")
-            .replacingOccurrences(of: "`", with: "")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "#>- "))
-        return raw.isEmpty ? nil : raw
+        let result: String?
+        if lines.count > 1 {
+            let raw = lines[1]
+                .replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "__", with: "")
+                .replacingOccurrences(of: "*", with: "")
+                .replacingOccurrences(of: "`", with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "#>- "))
+            result = raw.isEmpty ? nil : raw
+        } else {
+            result = nil
+        }
+        excerptCache[id] = (changedMs, result)
+        return result
     }
 
     func setArchived(_ item: Item, _ archived: Bool) {
         attempt { try library.setArchived(id: item.id, archived: archived) }
-        withAnimation(.snappy(duration: 0.28)) { reload() }
+        withAnimation(Self.reduceMotion ? nil : .snappy(duration: 0.28)) { reload() }
         account.syncSoon()
     }
 
     func setInbox(_ item: Item, _ inbox: Bool) {
         attempt { try library.setInbox(id: item.id, inbox: inbox) }
-        withAnimation(.snappy(duration: 0.28)) { reload() }
+        withAnimation(Self.reduceMotion ? nil : .snappy(duration: 0.28)) { reload() }
         account.syncSoon()
     }
 
@@ -215,7 +241,7 @@ final class Shelf {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
             _ = try await Self.offMain { try library.addFile(path: url.path) }
-            withAnimation(.snappy(duration: 0.28)) { reload() }
+            withAnimation(Self.reduceMotion ? nil : .snappy(duration: 0.28)) { reload() }
             account.syncSoon()
         } catch {
             failure = Self.words(error)
@@ -248,7 +274,7 @@ final class Shelf {
         do {
             let item = try await Self.offMain { try library.saveArticle(url: address, html: html, fetcher: pictures) }
             if item.archived > 0 { try? library.setArchived(id: item.id, archived: false) }
-            withAnimation(.snappy(duration: 0.28)) { reload() }
+            withAnimation(Self.reduceMotion ? nil : .snappy(duration: 0.28)) { reload() }
             account.syncSoon()
             return item
         } catch {
@@ -258,36 +284,85 @@ final class Shelf {
 
     func open(_ id: String) async throws -> Book {
         let library = library
-        let book = try await Self.offMain { try library.book(id: id) }
-        try? library.opened(id: id)
-        return book
+        return try await Self.offMain {
+            let book = try library.book(id: id)
+            try? library.opened(id: id)
+            return book
+        }
     }
 
-    /// Notes the reader's place at once and keeps it on disk once scrolling pauses.
+    /// The latest place noted while scrolling, before it flushes to `items` and disk.
+    func pendingPlace(for id: String) -> (chapter: Int, fraction: Double)? {
+        places[id]
+    }
+
+    /// Notes the reader's place at once and keeps it once scrolling pauses. The items change only
+    /// then: every view of the library reads them, and a change on each scrolled frame would
+    /// redraw them all under the reader.
     func keepPlace(_ id: String, chapter: Int, fraction: Double) {
         places[id] = (chapter, fraction)
-        keeping?.cancel()
+        keepUntil = ContinuousClock.now + .milliseconds(600)
+        guard keeping == nil else { return }
         keeping = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            self?.flushPlaces()
-        }
-        if let at = items.firstIndex(where: { $0.id == id }) {
-            items[at].chapter = UInt32(chapter)
-            items[at].fraction = Float(fraction)
-            let chapters = max(Double(items[at].chapters), 1)
-            items[at].progress = Float(min(1, (Double(chapter) + fraction) / chapters))
+            while !Task.isCancelled {
+                guard let remaining = self.map({ ContinuousClock.now.duration(to: $0.keepUntil) }) else { return }
+                if remaining <= .zero { break }
+                try? await Task.sleep(for: remaining)
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.keeping = nil
+            self.flushPlaces(synchronously: false)
         }
     }
 
-    /// Writes every place not yet kept, as the reader closes and the app goes to the background.
+    /// Writes every place not yet kept, as scrolling pauses, the reader closes and the app goes to
+    /// the background, and shows it in the item's row.
     func flushPlaces(triggerSync: Bool = true) {
-        guard !places.isEmpty else { return }
-        for (id, place) in places {
-            try? library.setPosition(id: id, chapter: UInt32(place.chapter), fraction: Float(place.fraction))
-        }
+        flushPlaces(synchronously: true, triggerSync: triggerSync)
+    }
+
+    private func flushPlaces(synchronously: Bool, triggerSync: Bool = true) {
+        keeping?.cancel()
+        keeping = nil
+        let batch = places
         places = [:]
+        for (id, place) in batch {
+            if let at = items.firstIndex(where: { $0.id == id }) {
+                let chapter = UInt32(place.chapter)
+                let fraction = Float(place.fraction)
+                let chapters = max(Double(items[at].chapters), 1)
+                let progress = Float(min(1, (Double(place.chapter) + place.fraction) / chapters))
+                if items[at].chapter != chapter || items[at].fraction != fraction || items[at].progress != progress {
+                    items[at].chapter = chapter
+                    items[at].fraction = fraction
+                    items[at].progress = progress
+                }
+            }
+        }
+        guard !batch.isEmpty else {
+            if synchronously { Self.positionsQueue.sync {} }
+            return
+        }
+        let library = library
+        let write: @Sendable () -> Void = {
+            for (id, place) in batch {
+                try? library.setPosition(id: id, chapter: UInt32(place.chapter), fraction: Float(place.fraction))
+            }
+        }
+        if synchronously {
+            Self.positionsQueue.sync(execute: write)
+        } else {
+            Self.positionsQueue.async(execute: write)
+        }
         if triggerSync { account.syncSoon() }
+    }
+
+    private static var reduceMotion: Bool {
+        #if os(macOS)
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #else
+        UIAccessibility.isReduceMotionEnabled
+        #endif
     }
 
     func highlights(_ id: String) -> [Passage] {

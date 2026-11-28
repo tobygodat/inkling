@@ -175,16 +175,35 @@ private struct Progress: View {
 }
 
 /// Pictures for the rows, decoded once at the size a row draws them, off the full-size files.
+/// `warm` decodes them off the main thread as the library loads, so a row coming into a scrolling
+/// list finds its picture ready.
 enum Thumbnails {
     private static var cache: [String: Image] = [:]
 
     static func image(_ path: String) -> Image? {
         if let image = cache[path] { return image }
-        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 300] as CFDictionary
-        guard let source = CGImageSourceCreateWithURL(URL(filePath: path) as CFURL, nil),
-              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        guard let thumbnail = decode(path) else { return nil }
         let image = Image(decorative: thumbnail, scale: 1)
         cache[path] = image
         return image
+    }
+
+    static func warm(_ paths: [String]) {
+        let missing = paths.filter { cache[$0] == nil }
+        guard !missing.isEmpty else { return }
+        Task {
+            let decoded = await Task.detached(priority: .utility) {
+                missing.compactMap { path in decode(path).map { (path, $0) } }
+            }.value
+            for (path, thumbnail) in decoded where cache[path] == nil {
+                cache[path] = Image(decorative: thumbnail, scale: 1)
+            }
+        }
+    }
+
+    nonisolated private static func decode(_ path: String) -> CGImage? {
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true, kCGImageSourceThumbnailMaxPixelSize: 300] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(URL(filePath: path) as CFURL, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
     }
 }

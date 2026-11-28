@@ -12,6 +12,9 @@ final class ReaderModel {
     /// The chapter and how far through it, as the reader scrolls.
     private(set) var chapter: Int
     private(set) var fraction: Double
+    /// The formatted place shown in the bar. Stored so the bar only redraws when its words change,
+    /// not on every scrolled frame.
+    private(set) var placeText: String
     /// Where the text should scroll to once, on opening or when a highlight is chosen.
     var jump: Int?
     /// How the text gets to `jump`.
@@ -30,14 +33,18 @@ final class ReaderModel {
         self.rendered = rendered
         self.shelf = shelf
         highlights = shelf.highlights(item.id)
-        chapter = min(Int(item.chapter), max(rendered.chapters.count - 1, 0))
-        fraction = Double(item.fraction)
-        jump = rendered.chapters.isEmpty ? nil : character(chapter: chapter, fraction: fraction)
+        let saved = shelf.pendingPlace(for: item.id)
+        let initialChapter = min(saved?.chapter ?? Int(item.chapter), max(rendered.chapters.count - 1, 0))
+        let initialFraction = saved?.fraction ?? Double(item.fraction)
+        chapter = initialChapter
+        fraction = initialFraction
+        placeText = Self.formatPlace(item: item, chapter: initialChapter, chapters: rendered.chapters.count, fraction: initialFraction)
+        jump = rendered.chapters.isEmpty ? nil : character(chapter: initialChapter, fraction: initialFraction)
+        jump.map(rendered.preparePictures(around:))
     }
 
     var progress: Double {
-        let chapters = max(rendered.chapters.count, 1)
-        return min(1, (Double(chapter) + fraction) / Double(chapters))
+        Self.progress(chapter: chapter, chapters: rendered.chapters.count, fraction: fraction)
     }
 
     var minutesLeft: Int? {
@@ -56,7 +63,24 @@ final class ReaderModel {
         guard chapterNow != self.chapter || abs(fractionNow - self.fraction) > 0.002 else { return }
         self.chapter = chapterNow
         self.fraction = fractionNow
+        let words = Self.formatPlace(item: item, chapter: chapterNow, chapters: rendered.chapters.count, fraction: fractionNow)
+        if words != placeText { placeText = words }
         shelf.keepPlace(item.id, chapter: chapterNow, fraction: fractionNow)
+    }
+
+    private static func progress(chapter: Int, chapters: Int, fraction: Double) -> Double {
+        min(1, (Double(chapter) + fraction) / Double(max(chapters, 1)))
+    }
+
+    private static func formatPlace(item: Item, chapter: Int, chapters: Int, fraction: Double) -> String {
+        let progress = Self.progress(chapter: chapter, chapters: chapters, fraction: fraction)
+        let percent = "\(Int((progress * 100).rounded()))%"
+        if item.kind == .article {
+            guard let minutes = item.minutes, progress < 0.98 else { return "Finished" }
+            let left = max(0, Int((Double(minutes) * (1 - progress)).rounded(.up)))
+            return left == 0 ? percent : "\(left) min left"
+        }
+        return "Chapter \(chapter + 1) of \(chapters) · \(percent)"
     }
 
     func character(chapter: Int, fraction: Double) -> Int {
@@ -93,7 +117,9 @@ final class ReaderModel {
     }
 
     func go(to passage: Passage) {
-        jump = rendered.range(of: passage)?.location
+        guard let location = rendered.range(of: passage)?.location else { return }
+        motion = .fade
+        jump = location
     }
 
     var chapters: Int { rendered.chapters.count }

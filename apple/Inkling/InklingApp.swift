@@ -9,6 +9,7 @@ struct InklingApp: App {
     init() {
         Fonts.register()
         #if os(iOS)
+        FrameProbe.startIfAsked()
         if let title = UIFont(name: Fonts.serifSemibold, size: 34) {
             UINavigationBar.appearance().largeTitleTextAttributes = [.font: UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: title)]
         }
