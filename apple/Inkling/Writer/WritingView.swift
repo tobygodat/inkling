@@ -334,9 +334,9 @@ struct ProviderPanel: View {
             .pickerStyle(.segmented)
             .settingsCard(palette)
 
-            SwiftUI.Section("API Key") {
+            SwiftUI.Section {
                 HStack {
-                    SecureField(hasKey ? "Saved in Keychain" : "Paste your \(providerLabel(provider: selected)) key", text: $apiKey)
+                    SecureField("", text: $apiKey, prompt: palette.prompt(hasKey ? "Saved in Keychain" : "Paste your \(providerLabel(provider: selected)) key"))
                         .accessibilityIdentifier("provider-key-field")
                     if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button("Save") { saveKey() }
@@ -353,13 +353,17 @@ struct ProviderPanel: View {
                             .font(.inter(12, relativeTo: .caption))
                     }
                 }
+            } header: {
+                palette.caption("API Key")
             }
             .settingsCard(palette)
 
-            SwiftUI.Section("Model") {
-                TextField(providerDefaultModel(provider: selected), text: $modelName)
+            SwiftUI.Section {
+                TextField("", text: $modelName, prompt: palette.prompt(providerDefaultModel(provider: selected)))
                     .onSubmit { saveModel() }
                     .accessibilityIdentifier("provider-model-field")
+            } header: {
+                palette.caption("Model")
             }
             .settingsCard(palette)
 

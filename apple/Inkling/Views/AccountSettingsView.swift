@@ -41,7 +41,7 @@ struct AccountSettingsView: View {
                     .settingsCard(palette)
                 }
 
-                SwiftUI.Section("Account") {
+                SwiftUI.Section {
                     LabeledContent("Google") {
                         HStack(spacing: 12) {
                             if account.syncing {
@@ -57,6 +57,8 @@ struct AccountSettingsView: View {
                             .disabled(account.syncing)
                             .accessibilityIdentifier("sync-now")
                     }
+                } header: {
+                    palette.caption("Account")
                 }
                 .settingsCard(palette)
 
@@ -73,7 +75,7 @@ struct AccountSettingsView: View {
                         }
                     } else if showingReadwiseField {
                         HStack(spacing: 8) {
-                            SecureField("", text: $readwiseToken, prompt: Text("Readwise access token"))
+                            SecureField("", text: $readwiseToken, prompt: palette.prompt("Readwise access token"))
                                 .labelsHidden()
                                 .autocorrectionDisabled()
                                 #if os(iOS)
@@ -107,9 +109,9 @@ struct AccountSettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Readwise")
+                    palette.caption("Readwise")
                 } footer: {
-                    Text("Your access token from readwise.io/access_token goes straight to your Inkling server and is never stored on this device.")
+                    palette.caption("Your access token from readwise.io/access_token goes straight to your Inkling server and is never stored on this device.")
                 }
                 .settingsCard(palette)
 
@@ -126,7 +128,7 @@ struct AccountSettingsView: View {
                         .accessibilityIdentifier("copy-agents-address")
                     }
                 } footer: {
-                    Text("Connect Claude or ChatGPT to your library and drafts over MCP.")
+                    palette.caption("Connect Claude or ChatGPT to your library and drafts over MCP.")
                 }
                 .settingsCard(palette)
 
@@ -235,7 +237,7 @@ struct FeedsFormSections: View {
     var body: some View {
         SwiftUI.Section {
             HStack(spacing: 8) {
-                TextField("", text: $feedURL, prompt: Text("Feed or site URL"))
+                TextField("", text: $feedURL, prompt: palette.prompt("Feed or site URL"))
                     .labelsHidden()
                     .autocorrectionDisabled()
                     #if os(iOS)
@@ -267,9 +269,9 @@ struct FeedsFormSections: View {
                     .accessibilityIdentifier("feed-problem")
             }
         } header: {
-            Text("Follow a Feed")
+            palette.caption("Follow a Feed")
         } footer: {
-            Text("Paste an RSS or Atom feed address, or a site’s address to discover its feed.")
+            palette.caption("Paste an RSS or Atom feed address, or a site’s address to discover its feed.")
         }
         .settingsCard(palette)
 
@@ -314,9 +316,9 @@ struct FeedsFormSections: View {
                 }
             }
         } header: {
-            Text("Followed Feeds")
+            palette.caption("Followed Feeds")
         } footer: {
-            Text("New posts arrive in your Inbox on sync. Unfollowing keeps articles already in your library.")
+            palette.caption("New posts arrive in your Inbox on sync. Unfollowing keeps articles already in your library.")
         }
         .settingsCard(palette)
     }

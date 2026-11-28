@@ -86,7 +86,7 @@ struct ProfileView: View {
                 }
             } footer: {
                 if !account.signedIn {
-                    Text("Sync your library and drafts, follow feeds and receive newsletters.")
+                    palette.caption("Sync your library and drafts, follow feeds and receive newsletters.")
                 }
             }
             .settingsCard(palette)
@@ -97,8 +97,10 @@ struct ProfileView: View {
             .settingsCard(palette)
 
             if account.signedIn {
-                SwiftUI.Section("Newsletters") {
+                SwiftUI.Section {
                     NewsletterRow()
+                } header: {
+                    palette.caption("Newsletters")
                 }
                 .settingsCard(palette)
             }
@@ -144,11 +146,15 @@ struct ProfileSettingsView: View {
         NavigationStack {
             Form {
                 if shelf.account.signedIn {
-                    SwiftUI.Section("Newsletters") { NewsletterRow() }
+                    SwiftUI.Section { NewsletterRow() } header: {
+                        palette.caption("Newsletters")
+                    }
                     .settingsCard(palette)
                 }
-                SwiftUI.Section("Reading") {
+                SwiftUI.Section {
                     ReadingRows()
+                } header: {
+                    palette.caption("Reading")
                 }
                 .settingsCard(palette)
             }
