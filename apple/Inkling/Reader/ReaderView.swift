@@ -63,6 +63,18 @@ struct ReaderView: View {
             }
             .ignoresSafeArea()
         }
+        #if os(iOS)
+        .overlay {
+            // Appearance leaves the page undimmed, so the paper shows as it is, and a tap on the
+            // page still puts the panel away.
+            if choosing {
+                Color.clear
+                    .contentShape(.rect)
+                    .ignoresSafeArea()
+                    .onTapGesture { choosing = false }
+            }
+        }
+        #endif
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.22), value: model.map(ObjectIdentifier.init))
         .environment(\.palette, palette)
         .toolbar {
