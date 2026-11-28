@@ -14,18 +14,33 @@ struct ReaderView: View {
     @State private var model: ReaderModel?
     @State private var failed: String?
     @State private var choosing = false
+    @State private var listing = false
     /// The reader's width on iPhone, which a picture is fitted to.
     @State private var width: CGFloat = 0
+    /// The paper the text on screen is drawn on. A new one takes over only with the text redrawn in
+    /// it, so the screen never shows the text in one paper on another.
+    @State private var drawn: Drawn?
+    /// The page as it was before each change of paper, still washing away.
+    @State private var spreads: [Spread] = []
+    /// The item as the bridge opened it, kept so a new look redraws it without reading it again.
+    @State private var opened: Book?
+    /// The look the text on screen was laid out in, but for its paper.
+    @State private var measure: Measure?
 
     var body: some View {
         let look = shelf.look
-        let palette = Self.palette(look.tone, shelf: shelf, scheme: scheme)
+        let wanted = Self.palette(look.tone, shelf: shelf, scheme: scheme)
+        let palette = drawn?.palette ?? wanted
         ZStack(alignment: .bottom) {
             Color(palette.ground).ignoresSafeArea()
             if let model {
                 ReaderText(model: model, palette: palette, column: CGFloat(look.pageWidth))
                     .id(ObjectIdentifier(model))
+                    #if os(iOS)
+                    .ignoresSafeArea()
+                    #else
                     .ignoresSafeArea(edges: .bottom)
+                    #endif
                     .transition(.opacity)
             } else if let failed {
                 Text(failed)
@@ -42,6 +57,12 @@ struct ReaderView: View {
         .overlay(alignment: .top) {
             if let model { ProgressLine(model: model, palette: palette) }
         }
+        .overlay {
+            ForEach(spreads) { spread in
+                SpreadOverlay(spread: spread, model: model) { spreads.removeAll { $0.id == spread.id } }
+            }
+            .ignoresSafeArea()
+        }
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.22), value: model.map(ObjectIdentifier.init))
         .environment(\.palette, palette)
         .toolbar {
@@ -49,13 +70,16 @@ struct ReaderView: View {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) { Place(model: model, palette: palette) }
                 ToolbarItemGroup(placement: .primaryAction) {
-                    if model.chapters > 1 { Contents(model: model) }
+                    if model.chapters > 1 { contentsButton }
                     appearanceButton
                     Highlights(model: model)
                 }
                 #else
                 if model.chapters > 1 {
-                    ToolbarItem(placement: .primaryAction) { Contents(model: model) }
+                    ToolbarItem(placement: .primaryAction) {
+                        contentsButton
+                            .popover(isPresented: $listing, arrowEdge: .bottom) { ContentsPanel(model: model).frame(height: min(420, 64 + CGFloat(model.chapters) * 44)) }
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     appearanceButton
@@ -80,10 +104,16 @@ struct ReaderView: View {
             AppearancePanel()
                 .presentationDetents([.height(330)])
         }
+        .sheet(isPresented: $listing) {
+            if let model {
+                ContentsPanel(model: model)
+                    .presentationDetents([.height(330), .large])
+            }
+        }
         #endif
-        .task(id: Setting(id: item.id, look: look, dark: palette.isDark, width: width, scale: displayScale)) { await load(look: look, palette: palette) }
+        .task(id: Setting(id: item.id, look: look, dark: wanted.isDark, width: width, scale: displayScale)) { await load(look: look, palette: wanted) }
         #if os(iOS)
-        .onChange(of: look.tone, initial: true) { navigator.readerScheme = Self.scheme(of: look.tone, palette: palette) }
+        .onChange(of: drawn, initial: true) { navigator.readerScheme = Self.scheme(of: drawn?.tone ?? look.tone, palette: palette) }
         .onChange(of: model?.chromeHidden) { navigator.immersed = model?.chromeHidden == true }
         .onDisappear {
             navigator.readerScheme = nil
@@ -106,6 +136,11 @@ struct ReaderView: View {
         model.go(to: wanted.passage)
     }
 
+    private var contentsButton: some View {
+        Button("Contents", systemImage: "list.bullet") { listing = true }
+            .accessibilityIdentifier("contents")
+    }
+
     private var appearanceButton: some View {
         Button("Appearance", systemImage: "textformat.size") { choosing = true }
             .accessibilityIdentifier("appearance")
@@ -116,7 +151,13 @@ struct ReaderView: View {
         guard width > 0 else { return }
         #endif
         do {
-            let book = try await shelf.open(item.id)
+            let book: Book
+            if let opened, opened.id == item.id {
+                book = opened
+            } else {
+                book = try await shelf.open(item.id)
+                opened = book
+            }
             #if os(macOS)
             let scale: CGFloat = 1
             let lineScale: CGFloat = 1
@@ -141,8 +182,25 @@ struct ReaderView: View {
             let folder = URL(filePath: shelf.library.folder())
             let rendered = try await Shelf.offMain { Renderer.render(book, set: set, folder: folder, byline: byline) }
             guard !Task.isCancelled else { return }
-            let opened = ReaderModel(item: shelf.item(item.id) ?? item, rendered: rendered, shelf: shelf)
-            opened.done = { [item, shelf, navigator, dismiss] in
+            let old = model
+            var form = look
+            form.tone = .light
+            let measure = Measure(look: form, width: width, scale: displayScale)
+            defer { self.measure = measure }
+            if let old, old.item.id == item.id, measure == self.measure, let before = drawn, before.palette != palette {
+                // Only the paper changed: the text on screen takes the new colours where it stands,
+                // under the page as it was, which then washes away.
+                if let image = old.snapshot?() { spreads.insert(Spread(image: image), at: 0) }
+                var still = Transaction()
+                still.disablesAnimations = true
+                withTransaction(still) {
+                    drawn = Drawn(tone: look.tone, palette: palette)
+                    old.recolour(rendered)
+                }
+                return
+            }
+            let reader = ReaderModel(item: shelf.item(item.id) ?? item, rendered: rendered, shelf: shelf, at: old?.item.id == item.id ? old?.anchor : nil)
+            reader.done = { [item, shelf, navigator, dismiss] in
                 shelf.setArchived(item, true)
                 #if os(iOS)
                 dismiss()
@@ -150,12 +208,38 @@ struct ReaderView: View {
                 navigator.selection = nil
                 #endif
             }
-            model = opened
-            shelf.asker.place = .reading(opened)
+            let now = Drawn(tone: look.tone, palette: palette)
+            if let before = drawn, before.palette != palette, let image = old?.snapshot?() {
+                // The page as it was goes on top before the text under it is redrawn, then washes
+                // away. One still washing stays above it, so a change of mind carries on from there.
+                spreads.insert(Spread(image: image), at: 0)
+                var still = Transaction()
+                still.disablesAnimations = true
+                withTransaction(still) {
+                    drawn = now
+                    model = reader
+                }
+            } else {
+                drawn = now
+                model = reader
+            }
+            shelf.asker.place = .reading(reader)
             showPassage()
         } catch {
             failed = Shelf.words(error)
         }
+    }
+
+    /// Everything about the look that moves the text: all of it but the paper.
+    private struct Measure: Equatable {
+        let look: Look
+        let width: CGFloat
+        let scale: CGFloat
+    }
+
+    private struct Drawn: Equatable {
+        let tone: Tone
+        let palette: Palette
     }
 
     /// What the text is drawn from: a new look, Light and Dark changing, or on iPhone the reader's
@@ -234,9 +318,9 @@ private struct ChromeVisibility: ViewModifier {
 }
 
 /// The text dims into the paper at the edges, so a line never reads through the bars' glass. At
-/// the top the text stops under the progress hairline, and the fade takes the line passing under it
-/// over the inset the column keeps above its first line, so nothing at rest is dimmed. The fade at
-/// the bottom goes with the bars.
+/// the top the text stops under the progress hairline, where `ColumnTextView` covers it, and the
+/// fade takes the line passing under it over the inset the column keeps above its first line, so
+/// nothing at rest is dimmed. The fade at the bottom goes with the bars.
 private struct EdgeFades: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let ground: Color
@@ -269,44 +353,119 @@ private struct EdgeFades: View {
 }
 #endif
 
-/// The chapters in order, and the chapter before and after this one on the side nearest the
-/// button: below the list on iPhone, where the menu rises from the bottom bar, and above it on the
-/// Mac.
-private struct Contents: View {
-    let model: ReaderModel
+/// One change of paper: the page as it was, washing away over the text redrawn in the new one.
+private struct Spread: Identifiable {
+    let id = UUID()
+    let image: PlatformImage
+    /// The phases and drifts of the front's waves, new each time so no two spreads look alike.
+    let seed = (0..<14).map { _ in Double.random(in: 0...(2 * .pi)) }
+}
+
+/// The page in its old paper over the new one, washed away from where the paper was chosen: from
+/// the top of Appearance's panel on iPhone, and from the toolbar on the Mac. Its front is soft
+/// and uneven, like shallow water spreading over a surface, and it takes a second, so the eye can
+/// follow it. A finger on the text hurries it away, since the page under it is about to move.
+/// Reduce Motion crossfades instead.
+private struct SpreadOverlay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let spread: Spread
+    let model: ReaderModel?
+    let done: () -> Void
+    @State private var progress: CGFloat = 0
+    @State private var shown: CGFloat = 1
 
     var body: some View {
-        Menu {
-            #if os(iOS)
-            chapters
-            Divider()
-            steps
-            #else
-            steps
-            Divider()
-            chapters
-            #endif
-        } label: {
-            Label("Contents", systemImage: "list.bullet")
+        GeometryReader { space in
+            image
+                .resizable()
+                .frame(width: space.size.width, height: space.size.height)
+                .mask {
+                    Rectangle()
+                        .overlay {
+                            Front(progress: reduceMotion ? 0 : progress, origin: Self.origin(in: space.size), seed: spread.seed)
+                                .fill(.black)
+                                .blendMode(.destinationOut)
+                        }
+                        .compositingGroup()
+                        .blur(radius: 26)
+                }
+                .opacity(shown)
         }
-        .menuOrder(.fixed)
-        .accessibilityIdentifier("contents")
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { if model?.ready == true { wash() } }
+        .onChange(of: model?.ready) { if model?.ready == true { wash() } }
+        .onChange(of: model?.touches) {
+            withAnimation(.easeOut(duration: 0.15)) { shown = 0 } completion: { done() }
+        }
     }
 
-    private var chapters: some View {
-        Picker("Chapters", selection: Binding(get: { model.chapter }, set: { model.go(toChapter: $0, .fade) })) {
-            ForEach(model.rendered.titles.indices, id: \.self) { index in
-                Text(model.rendered.titles[index]).tag(index)
+    /// Starts once the text under it stands at its place, so it never uncovers a page still being
+    /// laid out.
+    private func wash() {
+        if reduceMotion {
+            withAnimation(.easeOut(duration: 0.3)) { shown = 0 } completion: { done() }
+        } else {
+            withAnimation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 1.1)) { progress = 1 } completion: { done() }
+        }
+    }
+
+    private var image: Image {
+        #if os(iOS)
+        Image(uiImage: spread.image)
+        #else
+        Image(nsImage: spread.image)
+        #endif
+    }
+
+    private static func origin(in size: CGSize) -> CGPoint {
+        #if os(iOS)
+        CGPoint(x: size.width / 2, y: size.height - 330)
+        #else
+        CGPoint(x: size.width - 40, y: -40)
+        #endif
+    }
+}
+
+/// How far the new paper has spread: a circle from `origin` whose edge seven slow waves push out
+/// and hold back, so it runs ahead in tongues and lags in bays, and the waves drift as it goes. At
+/// `progress` 1 it has passed every corner, its blur included.
+private nonisolated struct Front: Shape {
+    var progress: CGFloat
+    let origin: CGPoint
+    let seed: [Double]
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)]
+        let reach = corners.map { hypot($0.x - origin.x, $0.y - origin.y) }.max() ?? 0
+        let radius = progress * (reach * 1.22 + 60)
+        let points = (0..<96).map { step -> CGPoint in
+            let angle = Double(step) / 96 * 2 * .pi
+            var swell = 0.0
+            for wave in 0..<7 {
+                let k = Double(wave + 2)
+                swell += sin(k * angle + seed[wave] + Double(progress) * (1.4 + seed[wave + 7])) * 0.085 / k.squareRoot()
             }
+            let r = radius * (1 + swell)
+            return CGPoint(x: origin.x + r * cos(angle), y: origin.y + r * sin(angle))
         }
-        .pickerStyle(.inline)
-    }
-
-    @ViewBuilder private var steps: some View {
-        Button("Previous Chapter", systemImage: "chevron.backward") { model.go(toChapter: model.chapter - 1, .fade) }
-            .disabled(model.chapter == 0)
-        Button("Next Chapter", systemImage: "chevron.forward") { model.go(toChapter: model.chapter + 1, .fade) }
-            .disabled(model.chapter + 1 >= model.chapters)
+        var path = Path()
+        guard radius > 0 else { return path }
+        path.move(to: points[0])
+        for i in points.indices {
+            let p0 = points[(i + points.count - 1) % points.count], p1 = points[i]
+            let p2 = points[(i + 1) % points.count], p3 = points[(i + 2) % points.count]
+            path.addCurve(to: p2,
+                          control1: CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6),
+                          control2: CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6))
+        }
+        path.closeSubpath()
+        return path
     }
 }
 

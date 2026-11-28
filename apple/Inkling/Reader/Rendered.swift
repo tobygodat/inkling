@@ -17,7 +17,7 @@ nonisolated struct Rendered: @unchecked Sendable {
     let text: NSAttributedString
     /// Each chapter's characters in `text`, in UTF-16 units.
     let chapters: [NSRange]
-    /// Each chapter's title: the book's, else its first heading, else its number.
+    /// What each chapter is called in Contents, the place and "Next: …": core's `label`.
     let titles: [String]
     /// The runs of text that come straight from the Markdown, in order.
     let runs: [Run]
@@ -131,7 +131,7 @@ nonisolated struct Renderer {
 
     static func render(_ book: Book, set: Typesetting, folder: URL, byline: String?) -> Rendered {
         var renderer = Renderer(set: set, folder: folder, byline: byline)
-        let titles = book.chapters.enumerated().map { title(of: $1, at: $0) }
+        let titles = book.chapters.map(\.label)
         var spans: [NSRange] = []
         for (index, chapter) in book.chapters.enumerated() {
             let start = renderer.out.length
@@ -156,12 +156,6 @@ nonisolated struct Renderer {
     /// Whether a link is one the reader follows itself rather than one out of the book.
     static func isOwn(_ link: URL) -> Bool {
         chapter(of: link) != nil || link == done
-    }
-
-    private static func title(of chapter: Chapter, at index: Int) -> String {
-        let heading = chapter.text.split(separator: "\n").first { $0.hasPrefix("#") }?.drop { $0 == "#" }
-        let title = (chapter.title ?? heading.map(String.init) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "Chapter \(index + 1)" : title
     }
 
     /// Each footnote mark `[^n]`, which CommonMark reads as text or as a link, with its brackets
@@ -189,10 +183,11 @@ nonisolated struct Renderer {
             append(title + "\n", attributes(font: font(size: set.size * 1.35, weight: .semibold), color: set.palette.ink, paragraph: paragraph(before: 0, after: set.size * 0.9, lineHeight: 1.25)))
         }
         for block in document.children { self.block(block, indent: 0) }
-        if let next { nextLine(next, chapter: index + 1) } else { doneLine() }
+        if let next { nextLine(next, chapter: index + 1) } else if book.kind == .article { doneLine() }
     }
 
-    /// "Done" after the last chapter, centred in the UI face like "Next: …": it archives the item.
+    /// "Done" at an article's end, centred in the UI face like "Next: …": it archives the article. A
+    /// book ends without it, because finishing a book is no reason to put it away.
     private mutating func doneLine() {
         let style = paragraph(align: .center, before: set.size * 2.2, after: set.size * 3.6, lineHeight: 1.5)
         var label = attributes(font: interface(size: max(13, set.size * 0.7), weight: .semibold), color: set.palette.ink, paragraph: style)

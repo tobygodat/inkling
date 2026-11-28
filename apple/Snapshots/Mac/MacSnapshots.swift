@@ -162,6 +162,11 @@ final class MacSnapshots {
         let link = try #require(rendered.text.attribute(.link, at: next.location, effectiveRange: nil) as? URL)
         #expect(Renderer.chapter(of: link) == 1)
         #expect(text.range(of: "Next:", options: [], range: rendered.chapters[1]).location == NSNotFound, "the last chapter leads nowhere")
+        var archives = false
+        rendered.text.enumerateAttribute(.link, in: NSRange(location: 0, length: rendered.text.length)) { value, _, _ in
+            if value as? URL == Renderer.done { archives = true }
+        }
+        #expect(!archives, "a book ends without Done, which would archive it")
         model.go(toChapter: 1, .glide)
         #expect(model.jump == rendered.chapters[1].location && model.motion == .glide)
         model.jump = nil
@@ -180,6 +185,7 @@ final class MacSnapshots {
             try shelf.library.setPosition(id: walden.id, chapter: 0, fraction: 0.62)
             shelf.reload()
             try await shoot(root(navigator), "\(name)-reader-chapters", appearance)
+            try await shoot(ContentsPanel(model: model), "\(name)-contents", appearance, size: CGSize(width: 360, height: 420), titled: false)
         }
         try shelf.library.setPosition(id: walden.id, chapter: 0, fraction: 0)
         shelf.reload()
