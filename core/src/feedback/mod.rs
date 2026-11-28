@@ -167,6 +167,11 @@ impl FeedbackId {
         let nonce = std::array::from_fn(|i| (bits >> (35 - 5 * i)) as u8 & 31);
         FeedbackId::from_parts(now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()), nonce)
     }
+
+    /// The send time as a body's `sent_at`: RFC 3339 UTC.
+    pub fn sent_at_rfc3339(self) -> String {
+        post::rfc3339(self.sent_at())
+    }
 }
 
 /// The UI's whole interface to feedback.

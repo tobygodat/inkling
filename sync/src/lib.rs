@@ -7,6 +7,7 @@ pub mod account;
 mod api;
 pub mod documents;
 pub mod fake;
+pub mod feedback;
 pub mod library;
 mod transport;
 

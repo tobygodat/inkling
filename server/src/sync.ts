@@ -10,6 +10,7 @@ import { insufficientScope, type OAuthResourceContext } from "@cloudflare/worker
 import { z } from "zod";
 import { getDocument, listDocuments, putDocument } from "./documents";
 import type { Env, Owner } from "./env";
+import { feedbackId, postFeedback, putClip } from "./feedback";
 import { followFeed, listFeeds, unfollowFeed } from "./feeds";
 import { listBookHighlights, listHighlights, upsertHighlights } from "./highlights";
 import { BOOK_ID, COVER_NAME, DOCUMENT_ID, FEED_ID, IMAGE_NAME, INCOMING_ID, MAX_FILE_BYTES, Refused, json, readJson, whole } from "./http";
@@ -106,6 +107,10 @@ export async function serveSync(request: Request, env: Env, ctx: OAuthResourceCo
   }
 
   if ((m = at(/^\/v1\/feeds\/([^/]+)$/u)) && method === "DELETE") return unfollowFeed(env, feedId(m[1]));
+
+  if (pathname === "/v1/feedback" && method === "POST") return postFeedback(request, env);
+
+  if ((m = at(/^\/v1\/feedback\/([^/]+)\/clip$/u)) && method === "PUT") return putClip(request, env, feedbackId(m[1]));
 
   if (pathname === "/v1/readwise") {
     if (method === "GET") return json(await readwiseStatus(env));

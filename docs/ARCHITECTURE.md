@@ -119,6 +119,18 @@ draws every screen; every read and write goes through `InklingCore`.
 - `AppearancePanel` sets reading's tone, face, size and line height through `Looks.set_reading`.
   It opens from the reader (a popover on the Mac, a sheet on iPhone) and is the Mac's Reading
   settings. `Shelf.look` is the look on show; a new one redraws the reader at its place.
+- `DevFeedback` (TOB-571) is the dev builds' feedback on iPhone: a handle on the right edge that
+  opens a panel from that side. It shows on a Debug build or the `com.tobygodat.inkling.dev`
+  bundle (`devFeedbackShows` in `InklingCore`), never on a Release build under another id; a
+  headless run shows it only with `INKLING_DEV_FEEDBACK`. While the app is active it keeps the
+  window, drawn at 1x five times a second and kept as JPEG, and every touch from a gesture
+  recognizer that never takes one, each in a `RecentBuffer` of the last 10 seconds, in memory.
+  Opening the panel freezes both. "Attach the last 10 seconds" writes them into an MP4 in the temp
+  folder at 15 frames a second with each touch drawn as a dot and a trail. Only Send uploads:
+  `SyncClient.send_feedback` puts the clip at `/v1/feedback/<id>/clip`, then posts the record
+  (the GPUI feedback body's fields, plus `place`, `bundle` and `clip`) with the device's sign-in.
+  The Worker keeps both in R2 and posts a notice to `FEEDBACK_WEBHOOK_URL`, the inkling Captain's
+  webhook, with a signed link to the clip (`server/README.md`).
 - `apple/snap.sh` is the proof: `InklingMacSnapshots` compiles the app's sources into a test bundle
   and renders each screen in a window off every screen, which the window server captures;
   `InklingPhoneSnapshots` drives the iPhone app on a Simulator with XCUITest. Both seed a temp data
