@@ -53,7 +53,8 @@ struct AskBar: View {
     }
 }
 
-/// The conversation and the composer under it: a sheet on iPhone, the bar grown upward on the Mac.
+/// The conversation and the composer under it: the bar grown upward, above the keyboard on iPhone
+/// and at the foot of the page on the Mac. With no conversation yet it is the composer alone.
 struct AskPanel: View {
     @Environment(Shelf.self) private var shelf
     @Environment(Navigator.self) private var navigator
@@ -66,19 +67,17 @@ struct AskPanel: View {
         let asker = shelf.asker
         let empty = asker.turns.isEmpty && asker.pending == nil && asker.problem == nil
         VStack(spacing: 0) {
-            if !empty || isPhone {
+            if !empty {
                 transcript(asker)
-                if !isPhone {
-                    Divider().overlay(Color(palette.hairline))
-                }
+                Divider().overlay(Color(palette.hairline))
             }
-
             Composer(focused: $focused)
-                .padding(.horizontal, isPhone ? 12 : 0)
-                .padding(.bottom, isPhone ? 12 : 0)
         }
-        .background(Color(isPhone ? palette.ground : palette.surface))
-        .onAppear { focused = asker.turns.isEmpty }
+        .background(Color(palette.surface))
+        .onAppear { focused = isPhone || asker.turns.isEmpty }
+        .onChange(of: focused) {
+            if isPhone, !focused, empty, asker.draft.isEmpty { asker.composing = false }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ask-panel")
     }
@@ -123,10 +122,8 @@ struct AskPanel: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
-            #if os(macOS)
             .background(Color(palette.ground))
-            .frame(height: min(max(height, 1), 440))
-            #endif
+            .frame(height: min(max(height, 1), isPhone ? 300 : 440))
     }
 
     private func open(_ citation: Citation) {
@@ -144,25 +141,30 @@ private struct Composer: View {
 
     var body: some View {
         @Bindable var asker = shelf.asker
-        let empty = asker.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        #if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            if asker.selected != nil || !asker.attached.isEmpty {
+                chips(asker)
+            }
+            field(asker)
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
+                .padding(.bottom, 4)
+            HStack(spacing: 4) {
+                add
+                provider
+                Spacer(minLength: 0)
+                send(asker)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(Color(palette.surface))
+        #else
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        Chip(symbol: symbol(asker.place), words: asker.label)
-                        if asker.selected != nil {
-                            Chip(symbol: "text.cursor", words: "Selection", on: asker.withSelection) { asker.withSelection.toggle() }
-                                .accessibilityIdentifier("ask-selection")
-                        }
-                        ForEach(asker.attached, id: \.id) { item in
-                            Chip(symbol: item.kind == .article ? "doc.text" : "book.closed", words: item.title, on: true) {
-                                asker.attached.removeAll { $0.id == item.id }
-                            }
-                        }
-                    }
-                }
-                .scrollClipDisabled()
-                #if os(macOS)
+                chips(asker)
                 Button {
                     asker.composing = false
                 } label: {
@@ -175,79 +177,113 @@ private struct Composer: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close")
                 .accessibilityIdentifier("ask-close")
-                #endif
             }
-
-            TextField(asker.prompt, text: $asker.draft, axis: vertical ? .vertical : .horizontal)
-                .lineLimit(1...6)
-                .textFieldStyle(.plain)
-                .font(.inter(16, relativeTo: .body))
-                .foregroundStyle(Color(palette.ink))
-                .focused(focused)
-                .onSubmit { asker.send() }
-                .submitLabel(.send)
-                .accessibilityIdentifier("ask-field")
-
+            field(asker)
             HStack(spacing: 8) {
-                Button {
-                    asker.openAdd()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .medium))
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color(palette.segment)))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color(palette.ink))
-                .accessibilityLabel("Add to question")
-                .accessibilityIdentifier("ask-composer-add")
-
-                Button {
-                    asker.choosingProvider = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(providerLabel(provider: shelf.ai.provider()))
-                            .font(.inter(13, weight: .medium, relativeTo: .footnote))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundStyle(Color(palette.muted))
-                    .padding(.horizontal, 10)
-                    .frame(height: 32)
-                    .background(Capsule().fill(Color(palette.segment)))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("ask-provider")
-
+                add
+                provider
                 Spacer(minLength: 0)
-
-                Button {
-                    if asker.busy { asker.cancel() } else { asker.send() }
-                } label: {
-                    Image(systemName: asker.busy ? "stop.fill" : "arrow.up")
-                        .font(.system(size: asker.busy ? 11 : 14, weight: .bold))
-                        .foregroundStyle(Color(empty && !asker.busy ? palette.muted : palette.surface))
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color(empty && !asker.busy ? palette.segment : palette.ink)))
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .buttonStyle(.plain)
-                .disabled(empty && !asker.busy)
-                .accessibilityLabel(asker.busy ? "Stop" : "Send")
-                .accessibilityIdentifier("ask-send")
+                send(asker)
             }
         }
-        .padding(vertical ? 12 : 14)
-        .background {
-            if vertical {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(palette.surface))
-                    .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color(palette.hairline), lineWidth: 1) }
-            } else {
-                Color(palette.surface)
-            }
-        }
+        .padding(14)
+        .background(Color(palette.surface))
+        #endif
     }
+
+    /// What goes with the question: the screen, the selection, attached books. On iPhone the
+    /// field's own words name the screen, so the row shows only once there is more.
+    private func chips(_ asker: Asker) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Chip(symbol: symbol(asker.place), words: asker.label)
+                if asker.selected != nil {
+                    Chip(symbol: "text.cursor", words: "Selection", on: asker.withSelection) { asker.withSelection.toggle() }
+                        .accessibilityIdentifier("ask-selection")
+                }
+                ForEach(asker.attached, id: \.id) { item in
+                    Chip(symbol: item.kind == .article ? "doc.text" : "book.closed", words: item.title, on: true) {
+                        asker.attached.removeAll { $0.id == item.id }
+                    }
+                }
+            }
+        }
+        .scrollClipDisabled()
+    }
+
+    /// One line to start, growing with the question up to a few.
+    private func field(_ asker: Asker) -> some View {
+        @Bindable var asker = asker
+        return TextField(asker.prompt, text: $asker.draft, axis: vertical ? .vertical : .horizontal)
+            .lineLimit(1...5)
+            .textFieldStyle(.plain)
+            .font(.inter(16, relativeTo: .body))
+            .foregroundStyle(Color(palette.ink))
+            .focused(focused)
+            .onSubmit { asker.send() }
+            .submitLabel(.send)
+            .accessibilityIdentifier("ask-field")
+    }
+
+    private var add: some View {
+        Button {
+            shelf.asker.openAdd()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color(palette.segment)))
+                .frame(width: target, height: target)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color(palette.ink))
+        .accessibilityLabel("Add to question")
+        .accessibilityIdentifier("ask-composer-add")
+    }
+
+    private var provider: some View {
+        Button {
+            shelf.asker.choosingProvider = true
+        } label: {
+            HStack(spacing: 4) {
+                Text(providerLabel(provider: shelf.ai.provider()))
+                    .font(.inter(13, weight: .medium, relativeTo: .footnote))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(Color(palette.muted))
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(Capsule().fill(Color(palette.segment)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("ask-provider")
+    }
+
+    private func send(_ asker: Asker) -> some View {
+        let empty = asker.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return Button {
+            if asker.busy { asker.cancel() } else { asker.send() }
+        } label: {
+            Image(systemName: asker.busy ? "stop.fill" : "arrow.up")
+                .font(.system(size: asker.busy ? 11 : 14, weight: .bold))
+                .foregroundStyle(Color(empty && !asker.busy ? palette.muted : palette.surface))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color(empty && !asker.busy ? palette.segment : palette.ink)))
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: target, height: target)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(empty && !asker.busy)
+        .accessibilityLabel(asker.busy ? "Stop" : "Send")
+        .accessibilityIdentifier("ask-send")
+    }
+
+    /// No control on iPhone is under 44 pt; inline buttons are 32 on the Mac.
+    private var target: CGFloat { vertical ? 44 : 32 }
 
     private var vertical: Bool {
         #if os(iOS)
@@ -573,8 +609,16 @@ private struct AttachList: View {
 /// and the composer, or the + sheet.
 struct MacAskDock: View {
     @Environment(Shelf.self) private var shelf
+    @Environment(Navigator.self) private var navigator
     @Environment(\.palette) private var palette
     @Environment(\.accessibilityReduceMotion) private var still
+    /// Where each scrolled view was last, to tell a scroll on from a scroll back. Not observed,
+    /// so scrolling redraws nothing until the bar folds or opens.
+    @State private var offsets = Offsets()
+
+    private final class Offsets {
+        var y: [ObjectIdentifier: CGFloat] = [:]
+    }
 
     /// DESIGN.md's one motion: 200 ms on a quick ease-out, growing from the bar it came from.
     private var grow: AnyTransition {
@@ -603,10 +647,20 @@ struct MacAskDock: View {
                 AskBar()
                     .frame(height: 44)
                     .glassEffect(.regular.tint(Color(palette.surface).opacity(palette.isDark ? 0.65 : 0.78)), in: Capsule())
+                    .frame(maxWidth: navigator.askFolded ? 220 : .infinity)
                     .transition(.opacity)
             }
         }
         .frame(maxWidth: 620)
+        .animation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.2), value: navigator.askFolded)
+        .onReceive(NotificationCenter.default.publisher(for: NSView.boundsDidChangeNotification)) { note in
+            guard let clip = note.object as? NSClipView, let page = clip.documentView, page.isFlipped,
+                  page.frame.height > clip.bounds.height else { return }
+            let id = ObjectIdentifier(clip), y = clip.bounds.origin.y
+            defer { offsets.y[id] = y }
+            guard let last = offsets.y[id], abs(y - last) > 2, !asker.composing, !asker.adding else { return }
+            if navigator.askFolded != (y > last) { navigator.askFolded = y > last }
+        }
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
         .animation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.2), value: asker.composing)
@@ -615,6 +669,41 @@ struct MacAskDock: View {
             ProviderPanel()
                 .frame(width: 420, height: 300)
         }
+    }
+}
+#endif
+
+#if os(iOS)
+/// The composer on iPhone, as in Capy's: a card sitting on the keyboard that opens as one line and
+/// grows with the question, with the conversation above it once there is one. It is never a
+/// sheet and never dims the page. A tap above it closes it, and so does putting the keyboard away
+/// before anything is asked.
+struct PhoneAskDock: View {
+    @Environment(Shelf.self) private var shelf
+    @Environment(\.palette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var still
+
+    var body: some View {
+        let asker = shelf.asker
+        ZStack(alignment: .bottom) {
+            if asker.composing {
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { asker.composing = false }
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+                AskPanel()
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay { RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Color(palette.hairline), lineWidth: 1) }
+                    .shadow(color: .black.opacity(palette.isDark ? 0.35 : 0.1), radius: 20, y: 6)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+                    .accessibilityAction(.escape) { asker.composing = false }
+                    .transition(still ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.2), value: asker.composing)
     }
 }
 #endif

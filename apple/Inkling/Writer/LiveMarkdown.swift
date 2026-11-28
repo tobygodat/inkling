@@ -226,6 +226,12 @@ final class LiveMarkdownStyler {
         guard length > 0 else { return defaultTypingAttributes }
         let string = storage.string as NSString
         let probe = min(max(location, 0), length)
+        // A caret after the draft's last newline is on a new, empty line of body text (or code
+        // inside an open fence), not on the line before it, whose heading or quote it would
+        // otherwise take until the first character is typed.
+        if probe == length, string.character(at: length - 1) == 0x0A, fenceOpenAfterLine.last != true {
+            return defaultTypingAttributes
+        }
         let lineRange = string.lineRange(for: NSRange(location: min(probe, length - 1), length: 0))
         let contentRange = trimmedNewline(lineRange, in: string)
         if let heading = parseHeading(in: string, range: contentRange), probe > contentRange.location + heading.prefixLen {

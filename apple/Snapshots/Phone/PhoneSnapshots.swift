@@ -26,6 +26,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             }
             XCTAssertTrue(app.buttons["ask-bar"].waitForExistence(timeout: 5), "the Ask bar sits above the tabs")
             XCTAssertTrue(app.searchFields.firstMatch.isHittable, "search is at the top of the Inbox")
+            toTop(app)
             shoot("\(name)-inbox")
 
             row(app, "Walking").tap()
@@ -97,6 +98,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             app.navigationBars.buttons.element(boundBy: 0).tap()
             tapTab(app, "Inbox")
             sleep(1)
+            toTop(app)
             shoot("\(name)-inbox-comfortable")
             tapTab(app, "Profile")
             app.buttons["profile-appearance"].tap()
@@ -385,6 +387,33 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
     }
 
+    /// The caret on a new line is the size it stays once the line has text (TOB-566), measured in
+    /// the screenshot as the tallest upright run of ink in the editor.
+    @MainActor func testCaretKeepsOneSizeOnANewLine() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        appearance = "light"
+        let app = launch(data: "\(base)/caret", demo: false)
+        app.tabBars.buttons["Writing"].tap()
+        let new = app.buttons["new-document"]
+        XCTAssertTrue(new.waitForExistence(timeout: 5))
+        new.tap()
+        let editor = app.textViews["editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.tap()
+        editor.typeText("# A quiet desk\n")
+        let afterHeading = caretHeight(in: editor.frame, app: app)
+        editor.typeText("W")
+        let typed = caretHeight(in: editor.frame, app: app)
+        XCTAssertGreaterThan(typed, 30, "the caret was found: \(typed) px")
+        XCTAssertLessThanOrEqual(abs(afterHeading - typed), 3, "the line after a heading has a \(afterHeading) px caret, then \(typed) px once typed in")
+        editor.typeText("\n\n> A quote\n")
+        let afterQuote = caretHeight(in: editor.frame, app: app)
+        editor.typeText("W")
+        let typedAfterQuote = caretHeight(in: editor.frame, app: app)
+        XCTAssertLessThanOrEqual(abs(afterQuote - typedAfterQuote), 3, "the line after a quote has a \(afterQuote) px caret, then \(typedAfterQuote) px once typed in")
+        app.terminate()
+    }
+
     /// Headless proof of Google sign-in, fake-server sync, Inbox with feed items, follow/unfollow
     /// feeds, Readwise connection (token never stored on device) and document round-trip in Light and Dark.
     @MainActor func testSignInSyncInboxFeedsAndReadwise() throws {
@@ -668,6 +697,31 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         return total > 0 ? Double(coloured) / Double(total) : 0
     }
 
+    /// The tallest upright run of ink pixels in `frame`, the caret's height, over a few frames so a
+    /// blink can't hide it.
+    @MainActor private func caretHeight(in frame: CGRect, app: XCUIApplication) -> Int {
+        var tallest = 0
+        for _ in 0..<6 {
+            guard let cg = XCUIScreen.main.screenshot().image.cgImage else { continue }
+            let scale = CGFloat(cg.width) / app.frame.width
+            let rect = CGRect(x: frame.minX * scale, y: frame.minY * scale, width: frame.width * scale, height: min(frame.height, 360) * scale).integral
+            guard let crop = cg.cropping(to: rect) else { continue }
+            let width = crop.width, height = crop.height
+            var rgba = [UInt8](repeating: 0, count: width * height * 4)
+            guard let context = CGContext(data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+            for x in 0..<width {
+                var run = 0
+                for y in 0..<height {
+                    let i = (y * width + x) * 4
+                    if max(rgba[i], rgba[i + 1], rgba[i + 2]) < 110 { run += 1; tallest = max(tallest, run) } else { run = 0 }
+                }
+            }
+            usleep(120_000)
+        }
+        return tallest
+    }
+
     @MainActor private func launch(data: String, demo: Bool) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = ["INKLING_DATA_DIR": data, "INKLING_FAKE_AI": "1", "INKLING_APPEARANCE": appearance]
@@ -689,6 +743,12 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             }
         }
         target.tap()
+    }
+
+    /// The list scrolled to its top, with the large title, so the Inbox's shots are taken alike.
+    @MainActor private func toTop(_ app: XCUIApplication) {
+        for _ in 0..<2 { app.collectionViews.firstMatch.swipeDown(velocity: .fast) }
+        sleep(1)
     }
 
     @MainActor private func row(_ app: XCUIApplication, _ title: String) -> XCUIElement {

@@ -62,6 +62,14 @@ final class MacSnapshots {
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
             try await shoot(SettingsView(initialTab: .reading).environment(shelf).environment(Navigator()), "\(name)-settings", appearance, size: CGSize(width: 660, height: 420))
             try await shoot(SettingsView(initialTab: .profile).environment(shelf).environment(Navigator()), "\(name)-settings-profile", appearance, size: CGSize(width: 660, height: 460))
+            for (pushed, view) in [("archive", AnyView(ArchiveView())), ("highlights", AnyView(HighlightsView()))] {
+                let page = NavigationStack { view }
+                    .frame(width: 640, height: 400)
+                    .environment(shelf)
+                    .environment(Navigator())
+                    .environment(\.palette, palette(appearance))
+                try await shoot(page, "\(name)-settings-\(pushed)", appearance, size: CGSize(width: 660, height: 460))
+            }
         }
         var comfortable = shelf.look
         comfortable.density = .comfortable
@@ -75,6 +83,54 @@ final class MacSnapshots {
         }
         comfortable.density = .compact
         shelf.setLook(comfortable)
+    }
+
+    @Test func theAskBarFoldsWhileThePageScrollsOn() async throws {
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let navigator = Navigator()
+            navigator.section = .inbox
+            navigator.selection = shelf.inbox[0].id
+            try await shoot(root(navigator), "\(name)-ask-folded", appearance) { window in
+                let reader = try #require(Self.scrollViews(in: window.contentView).first { $0.documentView is NSTextView }, "the reader scrolls")
+                @MainActor func scroll(by dy: CGFloat) async throws {
+                    let clip = reader.contentView
+                    clip.scroll(to: CGPoint(x: 0, y: max(0, clip.bounds.origin.y + dy)))
+                    reader.reflectScrolledClipView(clip)
+                    try await Task.sleep(for: .milliseconds(500))
+                }
+                try await scroll(by: 1)
+                #expect(!navigator.askFolded)
+                try await scroll(by: 600)
+                #expect(navigator.askFolded, "reading on folds the bar")
+                try await scroll(by: -200)
+                #expect(!navigator.askFolded, "scrolling back opens it out")
+                try await scroll(by: 300)
+            }
+            #expect(navigator.askFolded)
+        }
+    }
+
+    private static func scrollViews(in view: NSView?) -> [NSScrollView] {
+        guard let view else { return [] }
+        let own = (view as? NSScrollView).map { [$0] } ?? []
+        return own + view.subviews.flatMap { scrollViews(in: $0) }
+    }
+
+    @Test func aCancelledQuestionNeverAnswersTheNextOne() async throws {
+        let asker = shelf.asker
+        let idlers = try #require(shelf.inbox.first { $0.title == "An Apology for Idlers" })
+        let walking = try #require(shelf.inbox.first { $0.title == "Walking" })
+        asker.attached = [idlers]
+        asker.ask("Is idleness a virtue?")
+        asker.cancel()
+        asker.attached = [walking]
+        asker.ask("Why walk in the woods?")
+        for _ in 0..<250 where asker.busy { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        let turn = try #require(asker.turns.last)
+        #expect(asker.turns.count == 1, "the cancelled question keeps no turn")
+        #expect(turn.asked == "Why walk in the woods?")
+        #expect(turn.answer.hasPrefix("Walking"), "the answer is the second question's, not the cancelled one's: \(turn.answer)")
     }
 
     @Test func aLookIsKeptAndRedrawsTheReader() async throws {
@@ -281,6 +337,7 @@ final class MacSnapshots {
         reviewModel.acceptChange(0)
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let view = WritingView(documentId: doc.id, initialModel: reviewModel)
+                .safeAreaInset(edge: .bottom, spacing: 0) { MacAskDock() }
                 .environment(shelf)
                 .environment(Navigator())
             try await shoot(view, "\(name)-writing-review", appearance)
@@ -589,7 +646,7 @@ final class MacSnapshots {
     /// takes the window server's own image of it, so the sidebar's glass and the toolbar draw as
     /// they do on screen.
     @discardableResult
-    private func shoot(_ view: some View, _ name: String, _ appearance: NSAppearance.Name, size: CGSize = CGSize(width: 1280, height: 800), titled: Bool = true) async throws -> CGImage {
+    private func shoot(_ view: some View, _ name: String, _ appearance: NSAppearance.Name, size: CGSize = CGSize(width: 1280, height: 800), titled: Bool = true, before: @MainActor (NSWindow) async throws -> Void = { _ in }) async throws -> CGImage {
         let style: NSWindow.StyleMask = titled ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView] : [.titled, .fullSizeContentView]
         let window = Offscreen(contentRect: CGRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: appearance)
@@ -602,6 +659,7 @@ final class MacSnapshots {
         window.setFrameOrigin(CGPoint(x: -40000, y: -40000))
         window.orderFrontRegardless()
         try await Task.sleep(for: .seconds(2.5))
+        try await before(window)
         let image = try #require(Capture.window(window.windowNumber), "the window server gave no image of the window")
         let rep = NSBitmapImageRep(cgImage: image)
         let png = try #require(rep.representation(using: .png, properties: [:]))
@@ -674,6 +732,10 @@ private final class Offscreen: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+    /// Drawn as the focused window a person looks at, without taking focus: an inactive window
+    /// greys its toolbar, which no one using the app sees.
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
 }
 
 /// `CGWindowListCreateImage`, which the SDK no longer declares; a process may still take its own
