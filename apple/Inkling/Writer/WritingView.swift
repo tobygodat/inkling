@@ -347,7 +347,7 @@ struct ProviderPanel: View {
                     HStack {
                         Label("Key saved", systemImage: "checkmark.circle.fill")
                             .font(.inter(12, weight: .medium, relativeTo: .caption))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(palette.muted))
                         Spacer()
                         Button("Remove") { removeKey() }
                             .font(.inter(12, relativeTo: .caption))
@@ -370,7 +370,7 @@ struct ProviderPanel: View {
             if let statusMessage {
                 Text(statusMessage)
                     .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
             }
         }
         .settingsForm(palette)

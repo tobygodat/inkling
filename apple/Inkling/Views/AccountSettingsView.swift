@@ -136,7 +136,7 @@ struct AccountSettingsView: View {
                     SwiftUI.Section {
                         Text(problem)
                             .font(.inter(12, relativeTo: .caption))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(palette.muted))
                             .accessibilityIdentifier("account-problem")
                     }
                     .settingsCard(palette)
@@ -156,14 +156,14 @@ struct AccountSettingsView: View {
         VStack(spacing: 18) {
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color(palette.muted))
 
             VStack(spacing: 6) {
                 Text("Sign in to Inkling")
                     .font(.serif(22, weight: .semibold, relativeTo: .title2))
                 Text("Sync documents, books, reading places and highlights across your Mac and iPhone, follow RSS feeds, and connect Readwise.")
                     .font(.inter(13, relativeTo: .callout))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
             }
@@ -202,7 +202,7 @@ struct AccountSettingsView: View {
             if let problem = account.problem {
                 Text(problem)
                     .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
                     .accessibilityIdentifier("account-problem")
@@ -265,7 +265,7 @@ struct FeedsFormSections: View {
             if let problem = account.feedProblem {
                 Text(problem)
                     .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
                     .accessibilityIdentifier("feed-problem")
             }
         } header: {
@@ -279,7 +279,7 @@ struct FeedsFormSections: View {
             if account.feeds.isEmpty {
                 Text(account.feedsLoading ? "Loading feeds…" : "No feeds followed yet.")
                     .font(.inter(13, relativeTo: .callout))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
             } else {
                 ForEach(account.feeds, id: \.id) { feed in
                     HStack(spacing: 12) {
@@ -289,13 +289,13 @@ struct FeedsFormSections: View {
                                 .lineLimit(1)
                             Text(feed.url)
                                 .font(.inter(12, relativeTo: .caption))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color(palette.muted))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             if let error = feed.lastError, !error.isEmpty {
                                 Text(error)
                                     .font(.inter(11, relativeTo: .caption2))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color(palette.muted))
                                     .lineLimit(2)
                             }
                         }
