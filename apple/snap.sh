@@ -1,8 +1,11 @@
 #!/bin/bash
 # Renders every native screen in Light and Dark and asserts what they show (ADR 0007).
 #
-#   apple/snap.sh mac               offscreen on the Mac, in a test bundle: nothing takes focus
-#   apple/snap.sh iphone <udid>     on a booted Simulator, through XCUITest, headless
+#   apple/snap.sh mac [test…]              offscreen on the Mac, in a test bundle: nothing takes focus
+#   apple/snap.sh iphone <udid> [test…]    on a booted Simulator, through XCUITest, headless
+#
+# Named tests run alone: a Mac one as `signInSyncInboxFeedsAndReadwise()`, an iPhone one as
+# `testSignInSyncInboxFeedsAndReadwise`.
 #
 # Screenshots go to docs/screenshots/apple/<mac|iphone>/, or to INKLING_SNAP_OUT. Both run on a temp
 # data folder with the fake model, from the demo in apple/Demo and the fixture books. Runs only on
@@ -10,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$(pwd)
-where=${1:?usage: apple/snap.sh mac | iphone <udid>}
+where=${1:?usage: apple/snap.sh mac [test…] | iphone <udid> [test…]}
 out="${INKLING_SNAP_OUT:-$root/docs/screenshots/apple}"
 books/fetch-fixtures.sh >/dev/null
 xcodegen generate --spec apple/project.yml --project apple --quiet
@@ -26,17 +29,23 @@ status=0
 
 case "$where" in
   mac)
+    shift
+    only=()
+    for test in "$@"; do only+=("-only-testing:InklingMacSnapshots/MacSnapshots/$test"); done
     mkdir -p "$out/mac"
     TEST_RUNNER_INKLING_SNAP_OUT="$out" xcodebuild test -project apple/Inkling.xcodeproj -scheme MacSnapshots \
       -destination 'platform=macOS' -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
-      -resultBundlePath "$derived/mac.xcresult" -quiet || status=$?
+      -resultBundlePath "$derived/mac.xcresult" ${only[@]+"${only[@]}"} -quiet || status=$?
     ;;
   iphone)
-    udid=${2:?usage: apple/snap.sh iphone <udid>}
+    udid=${2:?usage: apple/snap.sh iphone <udid> [test…]}
+    shift 2
+    only=()
+    for test in "$@"; do only+=("-only-testing:InklingPhoneSnapshots/PhoneSnapshots/$test"); done
     xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3
     TEST_RUNNER_INKLING_SNAP_DATA="$temp/data" xcodebuild test -project apple/Inkling.xcodeproj -scheme PhoneSnapshots \
       -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
-      -resultBundlePath "$derived/iphone.xcresult" -quiet || status=$?
+      -resultBundlePath "$derived/iphone.xcresult" ${only[@]+"${only[@]}"} -quiet || status=$?
     xcrun simctl status_bar "$udid" clear
     mkdir -p "$out/iphone" "$temp/attachments"
     xcrun xcresulttool export attachments --path "$derived/iphone.xcresult" --output-path "$temp/attachments" >/dev/null
@@ -50,7 +59,7 @@ for test in json.load(open(f"{src}/manifest.json")):
             shutil.copy(f"{src}/{a['exportedFileName']}", f"{dst}/{name.removeprefix('iphone-')}.png")
 EOF
     ;;
-  *) echo "usage: apple/snap.sh mac | iphone <udid>" >&2; exit 2 ;;
+  *) echo "usage: apple/snap.sh mac [test…] | iphone <udid> [test…]" >&2; exit 2 ;;
 esac
 if [ "$status" -ne 0 ]; then
   echo "FAIL apple/snap.sh $where:" >&2

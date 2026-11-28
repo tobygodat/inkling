@@ -8,7 +8,8 @@
 # Xcode account is needed: the profile must be installed and the Apple Development identity in the
 # login Keychain. The upload token is read from the login Keychain (service inkling-ota, account
 # upload-token) and goes to curl on stdin, so it is never in a file, an argument or the log.
-# INKLING_SERVER overrides the Worker's address.
+# INKLING_SERVER overrides the Worker's address. INKLING_OTA_TOKEN replaces the Keychain token, for a
+# local Worker only: the verify-inkling skill's throwaway one.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$(pwd)"
@@ -23,7 +24,8 @@ bundle_id="com.tobygodat.inkling.dev"
 display_name="Inkling Dev"
 profile="Inkling Dev Development"
 
-security find-generic-password -s inkling-ota -a upload-token >/dev/null 2>&1 \
+token() { if [ -n "${INKLING_OTA_TOKEN:-}" ]; then echo "$INKLING_OTA_TOKEN"; else security find-generic-password -s inkling-ota -a upload-token -w; fi; }
+[ -n "${INKLING_OTA_TOKEN:-}" ] || security find-generic-password -s inkling-ota -a upload-token >/dev/null 2>&1 \
   || { echo "error: no upload-token in the login Keychain under inkling-ota; see ios/README.md" >&2; exit 1; }
 
 # Own bundle ID and display name so OTA installs sit beside TestFlight (com.tobygodat.inkling),
@@ -62,7 +64,7 @@ xcodebuild -exportArchive -archivePath "$archive" -exportOptionsPlist "$export_d
   -exportPath "$export_dir"
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleShortVersionString' "$archive/Info.plist")"
-response="$(security find-generic-password -s inkling-ota -a upload-token -w \
+response="$(token \
   | sed 's/^/Authorization: Bearer /' \
   | curl --silent --show-error --fail-with-body -H @- -H 'content-type: application/octet-stream' \
     --data-binary @"$export_dir/Inkling.ipa" "$server/builds?version=$version&build=$build")" \
