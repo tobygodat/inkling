@@ -326,6 +326,12 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             let clip = app.staticTexts["feedback-clip"]
             XCTAssertTrue(clip.waitForExistence(timeout: 5))
             XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "the clip is made, with its touches: \(clip.label)")
+            attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            XCTAssertTrue(clip.waitForNonExistence(timeout: 3), "Attach off drops the clip")
+            attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            XCTAssertTrue(isOn(attach))
+            XCTAssertTrue(clip.waitForExistence(timeout: 5))
+            XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "Attach on again makes the same capture's clip: \(clip.label)")
             let field = app.textFields["feedback-text"]
             field.tap()
             field.typeText("The reader's bar hides too soon after a slow scroll.")

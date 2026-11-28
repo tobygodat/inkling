@@ -79,6 +79,7 @@ final class DevFeedback {
         let touches = touches.entries
         let size = window.bounds.size
         let screen = screen
+        discardFrozen()
         frozen = Task { Frozen(screen: await screen?.freeze(at: end) ?? .none, touches: touches, end: end, size: size) }
         if phase == .sent {
             phase = .writing
@@ -149,8 +150,19 @@ final class DevFeedback {
         attach = false
         dropClip()
         attempt = nil
-        frozen = nil
+        discardFrozen()
         phase = .writing
+    }
+
+    /// Deletes the recording a capture froze, once nothing can make a clip from it again.
+    private func discardFrozen() {
+        guard let old = frozen else { return }
+        frozen = nil
+        Task {
+            if case .recording(let url) = await old.value.screen {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     /// Where the app was when the panel opened: the screen, and the item or document in words.
@@ -426,7 +438,6 @@ private nonisolated enum ClipWriter {
         }
         input.markAsFinished()
         await writer.finishWriting()
-        if case .recording(let screen) = frozen.screen { try? FileManager.default.removeItem(at: screen) }
         guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         let touched = strokes.filter { $0.samples[0].time >= start }.count
         return ClipFile(url: url, seconds: frozen.end - start, touches: touched, preview: last.flatMap(jpeg) ?? Data())
