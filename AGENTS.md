@@ -108,7 +108,8 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cd server && bun install && bun run lint && bun run check && bun run test` lints the Worker with
   oxlint and anti-slop, checks its types and runs its tests in workerd. Any change under `server/`
   runs them.
-- `cd server && bun run deploy` deploys the Worker and applies its migrations. Only Toby runs it.
+- `cd server && bun run deploy` deploys the Worker and applies its migrations, only from a clean
+  checkout of `origin/main`. CI runs it on every push to main, so a deploy request means merge to main.
 - `swift icon/make-icon.swift .` redraws the placeholder app icons: the iPhone one into
   `ios/app/Inkling/Assets.xcassets` and `icon/Inkling.icns` for the Mac.
 - `INKLING_KEY=<key> cargo run -p inkling-core --example ask -- <claude|gemini|chatgpt> "<instruction>" "<draft>"`

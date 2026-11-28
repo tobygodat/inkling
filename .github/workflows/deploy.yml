@@ -1,0 +1,39 @@
+name: Deploy
+
+# Deploys the Worker from main. It does nothing until the CLOUDFLARE_API_TOKEN secret exists.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never cancel a deploy halfway, between the Worker and its migrations.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy the Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      - uses: oven-sh/setup-bun@v2
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      - name: Install, lint, types and tests
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: bun install --frozen-lockfile && bun run lint && bun run check && bun run test
+
+      - name: Deploy
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: bun run deploy

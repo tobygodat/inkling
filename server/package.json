@@ -7,7 +7,7 @@
     "test": "vitest run",
     "check": "tsc --noEmit",
     "lint": "oxlint --deny-warnings",
-    "deploy": "wrangler deploy && wrangler d1 migrations apply inkling --remote"
+    "deploy": "sh tools/main-only.sh && wrangler deploy && wrangler d1 migrations apply inkling --remote"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",
