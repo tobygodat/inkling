@@ -107,7 +107,7 @@ impl Library {
                     n: out.len() as u32 + 1,
                     item: book.id.0.clone(),
                     title: book.title.clone(),
-                    place: if book.chapters.len() > 1 { chapter.title.clone().unwrap_or_else(|| format!("Chapter {}", found.chapter + 1)) } else { String::new() },
+                    place: if book.chapters.len() > 1 { chapter.label(found.chapter) } else { String::new() },
                     chapter: found.chapter as u32,
                     start: found.start as u64,
                     end: found.end as u64,

@@ -65,6 +65,51 @@ pub struct Chapter {
     pub text: String,
 }
 
+impl Chapter {
+    /// What the reader calls the chapter at `index`: its title as a reader would set it, else its
+    /// first heading, else "Chapter n". A title that is only a number takes the name from the
+    /// heading right after it, as in "1 · The Challenge of the Future".
+    pub fn label(&self, index: usize) -> String {
+        let heading = |line: &str| line.strip_prefix('#').map(|h| plain(h.trim_start_matches('#')));
+        let first = self.text.lines().find_map(heading);
+        let Some(title) = self.title.as_deref().map(display_title).or(first).filter(|t| !t.is_empty()) else {
+            return format!("Chapter {}", index + 1);
+        };
+        let mut blocks = self.text.lines().filter(|l| !l.trim().is_empty()).map(heading);
+        if is_number(&title)
+            && blocks.next().flatten().is_some()
+            && let Some(name) = blocks.next().flatten().filter(|n| !n.is_empty() && !is_number(n))
+        {
+            return format!("{title} · {name}");
+        }
+        title
+    }
+}
+
+/// A heading's words without the Markdown's escapes and emphasis, set as a reader would.
+fn plain(heading: &str) -> String {
+    let mut out = String::new();
+    let mut chars = heading.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.extend(chars.next()),
+            '*' | '_' => {}
+            c => out.push(c),
+        }
+    }
+    display_title(&out)
+}
+
+/// Whether a title is only a number, such as "1", "IV" or "Chapter 3", and names nothing.
+fn is_number(title: &str) -> bool {
+    let words: Vec<&str> = title.split_whitespace().collect();
+    let number = match words.as_slice() {
+        [n] | [_, n] if words.len() == 1 || ["chapter", "part", "book"].contains(&words[0].to_lowercase().as_str()) => n,
+        _ => return false,
+    };
+    number.chars().all(|c| c.is_ascii_digit()) || number.chars().all(|c| "IVXLCDMivxlcdm".contains(c))
+}
+
 /// A chapter as either version of the library wrote it: Markdown, or the blocks of a book stored
 /// before chapters were Markdown, which read as the same Markdown.
 #[derive(Deserialize)]
@@ -149,8 +194,11 @@ impl Position {
     }
 }
 
-/// A chapter title as a reader would set it: "CHAPTER I." becomes "Chapter I", and roman numerals
-/// stay in capitals.
+/// The short words a title keeps in lower case after its first word.
+const MINOR: [&str; 15] = ["a", "an", "the", "and", "but", "or", "nor", "for", "of", "in", "on", "at", "to", "by", "as"];
+
+/// A chapter title as a reader would set it: "CHAPTER I." becomes "Chapter I", "THE IDEOLOGY OF
+/// COMPETITION" becomes "The Ideology of Competition", and roman numerals stay in capitals.
 pub fn display_title(raw: &str) -> String {
     let t = raw.trim().trim_end_matches('.').trim();
     let letters: Vec<char> = t.chars().filter(|c| c.is_alphabetic()).collect();
@@ -160,10 +208,17 @@ pub fn display_title(raw: &str) -> String {
         return t.to_string();
     }
     t.split(' ')
-        .map(|w| {
+        .enumerate()
+        .map(|(i, w)| {
             let roman = !w.is_empty() && w.chars().all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M' | '.' | ','));
             if roman || w.chars().any(char::is_lowercase) {
                 return w.to_string();
+            }
+            if let Some(numeral) = w.strip_prefix("CHAPTER").filter(|n| !n.is_empty() && n.chars().all(|c| "IVXLCDM.".contains(c))) {
+                return format!("Chapter {numeral}");
+            }
+            if i > 0 && MINOR.contains(&w.to_lowercase().as_str()) {
+                return w.to_lowercase();
             }
             let mut cs = w.chars();
             match cs.next() {
@@ -192,6 +247,23 @@ mod tests {
         assert_eq!(book.chapters[1].text, "Two\n");
         let again: Book = serde_json::from_str(&serde_json::to_string(&book).unwrap()).unwrap();
         assert_eq!(again, book, "and is stored as Markdown from then on");
+    }
+
+    #[test]
+    fn a_chapter_titled_only_by_its_number_is_labelled_with_its_name() {
+        let chapter = |title: Option<&str>, text: &str| Chapter { title: title.map(str::to_owned), text: text.to_owned() };
+        let numbered = chapter(Some("1"), "# 1\n\n## THE CHALLENGE OF THE FUTURE\n\nWHENEVER I INTERVIEW someone.\n");
+        assert_eq!(numbered.label(2), "1 · The Challenge of the Future");
+        let escaped = chapter(Some("IV"), "# IV\n\n## Party Like It’s 1999\\!\n\nText.\n");
+        assert_eq!(escaped.label(0), "IV · Party Like It’s 1999!");
+        assert_eq!(chapter(Some("Chapter 3"), "# Chapter 3\n\nIt was a truth.\n").label(2), "Chapter 3", "no name follows the number");
+        assert_eq!(chapter(Some("7"), "# 7\n\nText.\n\n## A Later Section\n").label(0), "7", "a heading further on is not the name");
+        assert_eq!(chapter(Some("Economy"), "# Economy\n\n## Notes\n").label(0), "Economy", "a named chapter keeps its name");
+        assert_eq!(chapter(Some("CHAPTER I."), "# Chapter I\n\nText.\n").label(0), "Chapter I");
+        assert_eq!(chapter(Some("CHAPTERXXVII."), "# ChapterXXVII\n\nText.\n").label(0), "Chapter XXVII");
+        assert_eq!(chapter(None, "![A map](images/x/1.png)\n\n# SUPERINTELLIGENCE\n\nText.\n").label(0), "Superintelligence", "a heading after a picture still titles it");
+        assert_eq!(chapter(None, "# THE END OF THE WORLD\n\nText.\n").label(4), "The End of the World", "the first heading when the contents gave no title");
+        assert_eq!(chapter(None, "Text.\n").label(4), "Chapter 5");
     }
 
     #[test]

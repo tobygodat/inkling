@@ -7,7 +7,7 @@ import Observation
 @Observable
 final class ReaderModel {
     let item: Item
-    let rendered: Rendered
+    private(set) var rendered: Rendered
     private(set) var highlights: [Passage]
     /// The chapter and how far through it, as the reader scrolls.
     private(set) var chapter: Int
@@ -17,6 +17,17 @@ final class ReaderModel {
     private(set) var placeText: String
     /// Where the text should scroll to once, on opening or when a highlight is chosen.
     var jump: Int?
+    /// How far down its paragraph the line at the top was, when `jump` restores a place exactly.
+    var jumpWithin: CGFloat = 0
+    /// The line at the top of the column as the reader left it: what a redraw in a new look opens
+    /// at, so changing the paper or the size never moves the text.
+    @ObservationIgnored var anchor: Anchor?
+    /// Draws the text as it is on screen, for the new paper to spread over.
+    @ObservationIgnored var snapshot: (() -> PlatformImage?)?
+    /// Counts the times a finger lands on the text, which hurries a paper still spreading.
+    var touches = 0
+    /// Whether the text stands at its place yet, which a new paper waits for before it spreads.
+    var ready = false
     /// How the text gets to `jump`.
     var motion = Motion.instant
     /// The text selected, for Highlight in the menu bar and for the Ask bar.
@@ -28,7 +39,7 @@ final class ReaderModel {
     @ObservationIgnored var done: (() -> Void)?
     private let shelf: Shelf
 
-    init(item: Item, rendered: Rendered, shelf: Shelf) {
+    init(item: Item, rendered: Rendered, shelf: Shelf, at anchor: Anchor? = nil) {
         self.item = item
         self.rendered = rendered
         self.shelf = shelf
@@ -38,9 +49,16 @@ final class ReaderModel {
         let initialFraction = saved?.fraction ?? Double(item.fraction)
         chapter = initialChapter
         fraction = initialFraction
-        placeText = Self.formatPlace(item: item, chapter: initialChapter, chapters: rendered.chapters.count, fraction: initialFraction)
-        jump = rendered.chapters.isEmpty ? nil : character(chapter: initialChapter, fraction: initialFraction)
+        placeText = Self.formatPlace(item: item, titles: rendered.titles, chapter: initialChapter, fraction: initialFraction)
+        jump = rendered.chapters.isEmpty ? nil : anchor?.character ?? character(chapter: initialChapter, fraction: initialFraction)
+        jumpWithin = anchor?.within ?? 0
+        self.anchor = anchor
         jump.map(rendered.preparePictures(around:))
+    }
+
+    /// The same text drawn in a new paper, which the text on screen takes without moving.
+    func recolour(_ rendered: Rendered) {
+        self.rendered = rendered
     }
 
     var progress: Double {
@@ -63,7 +81,7 @@ final class ReaderModel {
         guard chapterNow != self.chapter || abs(fractionNow - self.fraction) > 0.002 else { return }
         self.chapter = chapterNow
         self.fraction = fractionNow
-        let words = Self.formatPlace(item: item, chapter: chapterNow, chapters: rendered.chapters.count, fraction: fractionNow)
+        let words = Self.formatPlace(item: item, titles: rendered.titles, chapter: chapterNow, fraction: fractionNow)
         if words != placeText { placeText = words }
         shelf.keepPlace(item.id, chapter: chapterNow, fraction: fractionNow)
     }
@@ -72,15 +90,15 @@ final class ReaderModel {
         min(1, (Double(chapter) + fraction) / Double(max(chapters, 1)))
     }
 
-    private static func formatPlace(item: Item, chapter: Int, chapters: Int, fraction: Double) -> String {
-        let progress = Self.progress(chapter: chapter, chapters: chapters, fraction: fraction)
+    private static func formatPlace(item: Item, titles: [String], chapter: Int, fraction: Double) -> String {
+        let progress = Self.progress(chapter: chapter, chapters: titles.count, fraction: fraction)
         let percent = "\(Int((progress * 100).rounded()))%"
         if item.kind == .article {
             guard let minutes = item.minutes, progress < 0.98 else { return "Finished" }
             let left = max(0, Int((Double(minutes) * (1 - progress)).rounded(.up)))
             return left == 0 ? percent : "\(left) min left"
         }
-        return "Chapter \(chapter + 1) of \(chapters) · \(percent)"
+        return titles.indices.contains(chapter) ? "\(titles[chapter]) · \(percent)" : percent
     }
 
     func character(chapter: Int, fraction: Double) -> Int {
@@ -138,5 +156,12 @@ final class ReaderModel {
     /// dip's fade.
     enum Motion {
         case instant, glide, fade
+    }
+
+    /// A line of the text: the paragraph it is in, by its first character, and how far down the
+    /// paragraph, as a share of its height so it holds in a new size too.
+    struct Anchor: Equatable {
+        var character: Int
+        var within: CGFloat
     }
 }

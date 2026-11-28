@@ -150,6 +150,8 @@ pub struct Source {
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct Chapter {
     pub title: Option<String>,
+    /// What the reader calls it in its contents, its place and "Next: …" (`Chapter::label`).
+    pub label: String,
     /// The chapter as Markdown (ADR 0006). A picture's path is relative to `Library::folder`.
     pub text: String,
 }
@@ -244,7 +246,7 @@ impl Library {
             author: book.author,
             kind: book.format.into(),
             source: book.source.map(|s| Source { url: s.url, site: s.site, published: s.published, excerpt: s.excerpt }),
-            chapters: book.chapters.into_iter().map(|c| Chapter { title: c.title, text: c.text }).collect(),
+            chapters: book.chapters.into_iter().enumerate().map(|(i, c)| Chapter { label: c.label(i), title: c.title, text: c.text }).collect(),
         })
     }
 

@@ -164,7 +164,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
 
             citation.tap()
             sleep(2)
-            XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), "the citation opens its passage: \(place(app))")
+            XCTAssertTrue(place(app).hasPrefix("Where I Lived, and What I Lived For · "), "the citation opens its passage: \(place(app))")
 
             app.tabBars.buttons["Inbox"].tap()
             sleep(1)
@@ -203,7 +203,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             XCTAssertTrue(reader.waitForExistence(timeout: 10))
             sleep(1)
             shoot("\(name)-reader-footnotes")
-            XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), place(app))
+            XCTAssertTrue(place(app).hasPrefix("Where I Lived, and What I Lived For · "), place(app))
 
             let next = reader.links.matching(NSPredicate(format: "label BEGINSWITH 'Next: Economy'")).firstMatch
             XCTAssertTrue(next.waitForExistence(timeout: 5), "the chapter ends with \"Next: …\"")
@@ -214,7 +214,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-reader-next")
             next.tap()
             sleep(2)
-            XCTAssertTrue(place(app).hasPrefix("Chapter 2 of 2"), "\"Next: …\" goes to the next chapter: \(place(app))")
+            XCTAssertTrue(place(app).hasPrefix("Economy · "), "\"Next: …\" goes to the next chapter: \(place(app))")
             shoot("\(name)-reader-next-chapter")
 
             app.buttons["contents"].tap()
@@ -223,9 +223,94 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-reader-contents")
             first.tap()
             sleep(2)
-            XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), "a chapter chosen in Contents opens: \(place(app))")
+            XCTAssertTrue(place(app).hasPrefix("Where I Lived, and What I Lived For · "), "a chapter chosen in Contents opens: \(place(app))")
             app.terminate()
         }
+    }
+
+    /// A long book where it was left: scrolling on and back, slowly and in flings, never moves the
+    /// text on screen other than with the finger, as the frame-by-frame probe the app writes shows,
+    /// and a new paper spreads over the page and leaves every line where it was.
+    @MainActor func testReaderKeepsItsPlace() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        let probe = "\(base)/place/probe.csv"
+        let app = XCUIApplication()
+        app.launchEnvironment = ["INKLING_DATA_DIR": "\(base)/place", "INKLING_FAKE_AI": "1", "INKLING_APPEARANCE": "light", "INKLING_SCROLL_PROBE": probe]
+        app.launchEnvironment["INKLING_DEMO"] = environment["INKLING_DEMO"]
+        app.launchEnvironment["INKLING_FIXTURES"] = environment["INKLING_FIXTURES"]
+        app.launch()
+        tapTab(app, "Library")
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "item-Pride")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["appearance"].waitForExistence(timeout: 20))
+        sleep(3)
+        // Touches go through SpringBoard by screen position, so no query asks the reader to
+        // describe the whole book.
+        let screen = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let low = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+        let high = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        low.press(forDuration: 0.05, thenDragTo: high, withVelocity: .slow, thenHoldForDuration: 0.5)
+        high.press(forDuration: 0.05, thenDragTo: low, withVelocity: .slow, thenHoldForDuration: 0.5)
+        sleep(1)
+        for _ in 0..<3 { high.press(forDuration: 0.01, thenDragTo: low, withVelocity: .fast, thenHoldForDuration: 0); sleep(2) }
+        for _ in 0..<3 { low.press(forDuration: 0.01, thenDragTo: high, withVelocity: .fast, thenHoldForDuration: 0); sleep(2) }
+        for _ in 0..<4 { high.press(forDuration: 0.01, thenDragTo: low, withVelocity: .fast, thenHoldForDuration: 0); sleep(1) }
+        sleep(3)
+        let jumps = try Self.jumps(in: String(contentsOfFile: probe, encoding: .utf8))
+        XCTAssertEqual(jumps, [], "the text moves on screen only with the scroll, never as the bars go or the book is laid out")
+
+        showChrome(app)
+        let before = inkRows()
+        shoot("light-reader-place")
+        app.buttons["appearance"].tap()
+        let sepia = app.buttons["tone-sepia"]
+        XCTAssertTrue(sepia.waitForExistence(timeout: 5))
+        sepia.tap()
+        sleep(2)
+        shoot("light-reader-place-sepia")
+        XCTAssertLessThanOrEqual(mismatch(before, inkRows()), 2, "the page in its new paper keeps every line where it was")
+        app.buttons["tone-night"].tap()
+        sleep(2)
+        shoot("light-reader-place-night")
+        // Light ink on dark paper blurs into a letter's edge row differently. A line moved by a
+        // single point changes two rows at each of its edges.
+        XCTAssertLessThanOrEqual(mismatch(before, inkRows()), 6, "and in a dark one")
+        app.terminate()
+    }
+
+    /// The frames the probe wrote where the reader's line moved in the layout or the reader itself
+    /// moved, and the line moved on screen with it: a jump the finger didn't make.
+    private static func jumps(in probe: String) throws -> [String] {
+        let rows = probe.split(separator: "\n").map { $0.split(separator: ",").map(String.init) }.filter { $0.count == 10 }
+        var found: [String] = []
+        for (was, now) in zip(rows, rows.dropFirst()) where now[4] == was[4] && now[7] == "0" {
+            let number = { (row: [String], at: Int) in Double(row[at]) ?? 0 }
+            let laidOut = number(now, 5) - number(was, 5), moved = number(now, 3) - number(was, 3)
+            let onScreen = number(now, 6) - number(was, 6)
+            if (abs(laidOut) > 0.5 || abs(moved) > 0.5) && abs(onScreen) > 1 {
+                found.append(String(format: "%.0f pt at %@", onScreen, now[0]))
+            }
+        }
+        return found
+    }
+
+    /// For each row of pixels across the column, between the bar and the middle of the screen,
+    /// whether a letter's ink is in it: where the lines are, whatever the paper.
+    @MainActor private func inkRows() -> [Bool] {
+        guard let cg = XCUIScreen.main.screenshot().image.cgImage,
+              let crop = cg.cropping(to: CGRect(x: 0, y: cg.height * 16 / 100, width: cg.width, height: cg.height * 30 / 100)) else { return [] }
+        let width = crop.width, height = crop.height
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let light = { (i: Int) in 0.299 * Double(rgba[i]) + 0.587 * Double(rgba[i + 1]) + 0.114 * Double(rgba[i + 2]) }
+        return (0..<height).map { y in
+            let paper = light((y * width + 6) * 4)
+            return stride(from: 0, to: width, by: 2).contains { abs(light((y * width + $0) * 4) - paper) > 60 }
+        }
+    }
+
+    private func mismatch(_ a: [Bool], _ b: [Bool]) -> Int {
+        a.isEmpty || a.count != b.count ? .max : zip(a, b).filter { $0 != $1 }.count
     }
 
     /// The native writing page and inline review in Light and Dark: documents list, live Markdown
