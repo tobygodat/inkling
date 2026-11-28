@@ -2,6 +2,7 @@
   // Inkling's server (ADR 0004): OAuth, the remote MCP endpoint, sync and the Readwise inbox.
   "name": "inkling-server",
   "main": "src/index.ts",
+  "account_id": "0e20b29a2b442eea1b78ae3c7f51b6c4",
   "compatibility_date": "2026-11-01",
   // Lets the authorization server fetch a client's metadata document (CIMD) only from public hosts.
   "compatibility_flags": ["global_fetch_strictly_public"],
