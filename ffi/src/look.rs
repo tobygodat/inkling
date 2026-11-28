@@ -51,6 +51,31 @@ impl From<Tone> for Mode {
     }
 }
 
+/// Tight two-line cards by default, or roomier cards with a larger cover and a one-line excerpt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum ListDensity {
+    Compact,
+    Comfortable,
+}
+
+impl From<inkling_core::ListDensity> for ListDensity {
+    fn from(d: inkling_core::ListDensity) -> Self {
+        match d {
+            inkling_core::ListDensity::Compact => ListDensity::Compact,
+            inkling_core::ListDensity::Comfortable => ListDensity::Comfortable,
+        }
+    }
+}
+
+impl From<ListDensity> for inkling_core::ListDensity {
+    fn from(d: ListDensity) -> Self {
+        match d {
+            ListDensity::Compact => inkling_core::ListDensity::Compact,
+            ListDensity::Comfortable => inkling_core::ListDensity::Comfortable,
+        }
+    }
+}
+
 /// How reading looks. Every number is clamped on the way in, as the panel's sliders are.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct Look {
@@ -64,6 +89,7 @@ pub struct Look {
     /// The column's widest, in points.
     pub page_width: u16,
     pub paged: bool,
+    pub density: ListDensity,
 }
 
 /// The colours the app draws, each `0xRRGGBB`. `DESIGN.md` names each one.
@@ -120,6 +146,7 @@ impl Looks {
             line_spacing: look.line_spacing.get(),
             page_width: look.page_width.get(),
             paged: settings.reading.pages == PageMode::Paged,
+            density: settings.reading.density.into(),
         }
     }
 
@@ -135,6 +162,7 @@ impl Looks {
             a.page_width = PageWidth::new(look.page_width.into());
         });
         settings.reading.pages = if look.paged { PageMode::Paged } else { PageMode::Scroll };
+        settings.reading.density = look.density.into();
         settings.save(&self.paths)?;
         Ok(())
     }
@@ -151,6 +179,7 @@ impl Looks {
             line_spacing: look.line_spacing.get(),
             page_width: look.page_width.get(),
             paged: false,
+            density: settings.reading.density.into(),
         }
     }
 
@@ -212,11 +241,22 @@ mod tests {
         let data = data.path().to_string_lossy().into_owned();
         let looks = Looks::open(data.clone());
         let default = looks.reading();
-        assert_eq!((default.tone, default.face.as_str(), default.text_size, default.line_spacing), (Tone::Light, "Source Serif 4", 21, 175));
+        assert_eq!(
+            (default.tone, default.face.as_str(), default.text_size, default.line_spacing, default.density),
+            (Tone::Light, "Source Serif 4", 21, 175, ListDensity::Compact)
+        );
         assert_eq!(looks.colors(Tone::Light).ground, 0xFBFBF9);
         assert_eq!(looks.colors(Tone::Dark).ink, 0xE8E6E1);
 
-        let sepia = Look { tone: Tone::Sepia, face: "Charter".into(), text_size: 99, line_spacing: 150, page_width: 640, paged: true };
+        let sepia = Look {
+            tone: Tone::Sepia,
+            face: "Charter".into(),
+            text_size: 99,
+            line_spacing: 150,
+            page_width: 640,
+            paged: true,
+            density: ListDensity::Comfortable,
+        };
         looks.set_reading(sepia.clone()).unwrap();
         let kept = Looks::open(data).reading();
         assert_eq!(kept, Look { text_size: 32, ..sepia }, "the size is clamped and the rest kept");

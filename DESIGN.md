@@ -55,7 +55,7 @@ writer picks one.
 - One centred column, at most 700 pt wide by default, 480 to 960 pt on the Appearance panel. No
   sidebar and no toolbar. The page's one control of its own is "‹ Documents" at the top, after the
   corner, as "‹ Library" sits on a book. On iPhone it gives its place to Done while the keyboard is up.
-- Mac, top to bottom: version bar (only during review), the page, quick actions, the ask field, a footer.
+- Mac, top to bottom: version bar (only during review), the page, then the Ask bar.
 - iPhone: the version bar at the top, the page, then a sheet for the change that was tapped.
 
 - Nothing sits beside the text column (or a book's), except the Appearance panel. It is 300 pt wide on the left
@@ -75,8 +75,31 @@ writer picks one.
   "Accept the rest".
 - **Change.** A removal, an insertion, or a pair. On Mac it carries inline accept and reject buttons,
   and "n more" when there are other wordings. On iPhone a tap selects it and a sheet offers Keep and Use.
-- **Quick actions.** Fix grammar, Find a word, Next line, Ideas.
-- **Ask field.** One line, with Send.
+- **Tabs (native app).** On iPhone four tabs: Inbox, Library, Writing and Profile. The Inbox
+  holds every article still to read with a filter, All · Saved · Newsletters · Feeds; the Library
+  holds books. Search is a field at the top of both. Each row in Inbox and Library is a tight
+  two-line card by default (Compact): title on line one, website/blog/author next to reading length
+  and progress on line two, and a cover on the right (lead image or site icon for articles, book
+  cover for books, with a quiet serif monogram tile when none is stored). A List density setting in
+  Profile's Appearance settings (Compact or Comfortable, kept with the appearance settings)
+  switches Inbox and Library to roomier cards with a larger cover and a one-line excerpt. A row is
+  archived with a swipe, or with "Done", centred in the UI face after an item's last chapter.
+  Profile holds the account and sync, Highlights, the Archive, the newsletter address with Copy,
+  Account (Readwise and feeds), Appearance and the AI provider. On the Mac the sidebar is Inbox,
+  Library and Writing, and Profile is the first tab of Settings (Cmd-,).
+- **Ask bar (native app).** One bar at the foot of every screen: + and the words "Ask about" what
+  is on screen ("Ask about Walden", "Ask about this draft", "Ask" on a list). On iPhone it is the
+  tab bar's bottom accessory, folding away with the tab bar on a scroll down and hiding with it in
+  the immersive reader; on the Mac a glass pill at the foot of the page. The pill opens the
+  composer: the conversation above, then a Surface card with a Hairline border holding what goes
+  with the question as Segment chips (the screen, the selection, attached books), the field, +,
+  the provider on a Segment capsule and a 32 pt round Send in Ink. + opens "Add to question": the
+  suggestions for the screen as large Segment tiles (Fix grammar, Find a word and Next line in
+  Writing; Explain and Summarize in the reader), then the selection and "A book or article". Each
+  turn shows where it was asked in muted Inter, the question in Inter semibold, the answer in the
+  body face with each citation number raised in Link, and the cited passages under it on Segment,
+  each opening its book at the passage. An edit asked in Writing goes to the inline review, and
+  its turn says so. The conversation is one, across tabs and launches.
 - **Key screen.** Provider choice, masked key field, model field.
 - **Cog.** A 32 pt button with the cog icon. Hover opens its menu and leaving closes it; a click pins
   it open until a second click, Escape or a choice. Rows: Library with the book icon (Writing with

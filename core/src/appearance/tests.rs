@@ -197,6 +197,7 @@ proptest! {
         size in field(number()),
         synced in field(any::<bool>().prop_map(|b| json!(b))),
         pages in field(prop::sample::select(vec![json!("scroll"), json!("paged")])),
+        density in field(prop::sample::select(vec![json!("compact"), json!("comfortable")])),
         case in any::<u64>(),
     ) {
         let writing = json!({"mode": "dark", "text_size": 24, "markdown": false});
@@ -209,7 +210,7 @@ proptest! {
         }
         let mut reading = serde_json::Map::new();
         reading.insert("look".into(), Value::Object(look.clone()));
-        for (key, value) in [("synced", &synced), ("pages", &pages)] {
+        for (key, value) in [("synced", &synced), ("pages", &pages), ("density", &density)] {
             if let Some(value) = value {
                 reading.insert(key.into(), value.clone());
             }
@@ -229,6 +230,7 @@ proptest! {
         let synced = !present || synced.as_ref().and_then(Value::as_bool).unwrap_or(true);
         prop_assert_eq!(s.reading.synced, synced, "an old file, or junk for reading, is synced");
         prop_assert_eq!(s.reading.pages, if present { expect::<PageMode>(&pages) } else { PageMode::Scroll });
+        prop_assert_eq!(s.reading.density, if present { expect::<ListDensity>(&density) } else { ListDensity::Compact });
         if synced {
             prop_assert!(s.reading.look.same_look(&s.appearance), "a synced reading look is the writing look");
         } else {
@@ -245,9 +247,18 @@ fn a_settings_file_with_a_reading_look_round_trips() {
     s.set_synced(false, View::Writing);
     s.change_look(View::Reading, |a| a.mode = Mode::Sepia);
     s.reading.pages = PageMode::Paged;
+    s.reading.density = ListDensity::Comfortable;
     let back: Settings = serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
     assert_eq!(back, s);
-    assert_eq!(back.reading, ReadingLook { look: Appearance { mode: Mode::Sepia, ..Appearance::default() }, synced: false, pages: PageMode::Paged });
+    assert_eq!(
+        back.reading,
+        ReadingLook {
+            look: Appearance { mode: Mode::Sepia, ..Appearance::default() },
+            synced: false,
+            pages: PageMode::Paged,
+            density: ListDensity::Comfortable,
+        }
+    );
 }
 
 #[test]

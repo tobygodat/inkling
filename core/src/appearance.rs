@@ -436,6 +436,16 @@ pub enum PageMode {
     Paged,
 }
 
+/// How tall each row in Inbox and Library is: tight two-line cards by default, or roomier cards
+/// with a larger cover and a one-line excerpt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListDensity {
+    #[default]
+    Compact,
+    Comfortable,
+}
+
 /// The two places the Appearance panel opens beside, each with its own look.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum View {
@@ -454,11 +464,13 @@ pub struct ReadingLook {
     pub synced: bool,
     #[serde(deserialize_with = "lenient")]
     pub pages: PageMode,
+    #[serde(deserialize_with = "lenient")]
+    pub density: ListDensity,
 }
 
 impl Default for ReadingLook {
     fn default() -> Self {
-        ReadingLook { look: Appearance::default(), synced: true, pages: PageMode::default() }
+        ReadingLook { look: Appearance::default(), synced: true, pages: PageMode::default(), density: ListDensity::default() }
     }
 }
 

@@ -40,7 +40,6 @@ final class WritingModel {
     @ObservationIgnored var readEditorSelection: (() -> NSRange)?
 
     // Inline review state (backed by `inkling_core::Revision` through `ReviewSession`).
-    var askText: String = ""
     private(set) var versionNumber: Int = 1
     private(set) var snapshot: RevisionSnapshot?
     var selectedChangeId: UInt32?
@@ -171,16 +170,6 @@ final class WritingModel {
         syncFromEditor()
         let at = selectionBytes.upperBound
         startAsk(.nextLine(at: UInt64(at)))
-    }
-
-    func askFreeform() {
-        let instruction = askText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !instruction.isEmpty else {
-            notice = "Type what you'd like changed."
-            return
-        }
-        askText = ""
-        startAsk(.freeform(instruction: instruction))
     }
 
     func startAsk(_ kind: AskKind) {

@@ -33,28 +33,45 @@ final class MacSnapshots {
     }
 
     @Test func everyScreenInLightAndDark() async throws {
-        #expect(shelf.queue.map(\.title) == ["Walking", "An Apology for Idlers", "Self-Reliance"], "the Queue is the articles still to read, newest first")
+        #expect(shelf.inbox.map(\.title) == ["Walking", "An Apology for Idlers", "Self-Reliance"], "the Inbox is the articles still to read, newest first")
+        #expect(shelf.inbox(.saved) == shelf.inbox && shelf.inbox(.feeds).isEmpty, "a saved link is Saved, not from a feed")
         #expect(shelf.archive.map(\.title) == ["Resistance to Civil Government"])
         #expect(shelf.books.count == 3)
-        let walking = try #require(shelf.queue.first)
+        let walking = try #require(shelf.inbox.first)
         #expect(walking.picture.map { FileManager.default.fileExists(atPath: $0) } == true, "an article's first picture is its row's")
         #expect(walking.excerpt?.isEmpty == false)
-        #expect(shelf.queue.first { $0.title == "Self-Reliance" }?.picture == nil, "an article with no picture has none")
+        let selfReliance = try #require(shelf.inbox.first { $0.title == "Self-Reliance" })
+        #expect(selfReliance.picture == nil, "an article with no lead picture has none")
+        #expect(selfReliance.icon.map { FileManager.default.fileExists(atPath: $0) } == true, "an article without a lead picture keeps the site's icon for its cover")
         let walden = try #require(shelf.books.first { $0.title == "Walden" })
         #expect(walden.progress == 0, "a book not yet read opens at its start")
 
+        #expect(shelf.look.density == .compact, "tight two-line cards are the default")
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            for section in Section.allCases {
+            for section in Section.sidebar {
                 let navigator = Navigator()
                 navigator.section = section
-                if section == .queue { navigator.selection = shelf.queue[0].id }
+                if section == .inbox { navigator.selection = shelf.inbox[0].id }
                 if section == .library { navigator.selection = shelf.books.first { $0.title.hasPrefix(name == "light" ? "Walden" : "Pride") }?.id }
                 if section == .writing { navigator.document = shelf.docs.first?.id }
                 try await shoot(root(navigator), "\(name)-\(section.rawValue)", appearance)
             }
             try await shoot(SaveLinkSheet().environment(shelf).environment(\.palette, palette(appearance)), "\(name)-save-link", appearance, size: CGSize(width: 460, height: 150), titled: false)
-            try await shoot(SettingsView(initialTab: .reading).environment(shelf), "\(name)-settings", appearance, size: CGSize(width: 440, height: 400))
+            try await shoot(SettingsView(initialTab: .reading).environment(shelf).environment(Navigator()), "\(name)-settings", appearance, size: CGSize(width: 660, height: 420))
+            try await shoot(SettingsView(initialTab: .profile).environment(shelf).environment(Navigator()), "\(name)-settings-profile", appearance, size: CGSize(width: 660, height: 460))
         }
+        var comfortable = shelf.look
+        comfortable.density = .comfortable
+        shelf.setLook(comfortable)
+        #expect(try Shelf(folder: data).look.density == .comfortable, "list density is kept with appearance settings")
+        do {
+            let navigator = Navigator()
+            navigator.section = .inbox
+            navigator.selection = shelf.inbox[0].id
+            try await shoot(root(navigator), "light-inbox-comfortable", .aqua)
+        }
+        comfortable.density = .compact
+        shelf.setLook(comfortable)
     }
 
     @Test func aLookIsKeptAndRedrawsTheReader() async throws {
@@ -69,14 +86,14 @@ final class MacSnapshots {
 
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let navigator = Navigator()
-            navigator.selection = shelf.queue[1].id
+            navigator.selection = shelf.inbox[1].id
             try await shoot(root(navigator), "\(name)-reader-sepia", appearance)
             try await shoot(AppearancePanel().environment(shelf), "\(name)-appearance", appearance, size: CGSize(width: 380, height: 300), titled: false)
         }
     }
 
     @Test func archivingHighlightsAndThePlaceOutliveARelaunch() async throws {
-        let idlers = try #require(shelf.queue.first { $0.title == "An Apology for Idlers" })
+        let idlers = try #require(shelf.inbox.first { $0.title == "An Apology for Idlers" })
         shelf.setArchived(idlers, true)
         #expect(shelf.archive.first?.id == idlers.id, "the newest archived comes first")
         shelf.setArchived(idlers, false)
@@ -84,6 +101,10 @@ final class MacSnapshots {
         let book = try await shelf.open(idlers.id)
         let set = Typesetting(face: "Source Serif 4", size: 21, lineHeight: 1.75, titleSize: 36, palette: palette(.aqua), column: 700)
         let rendered = Renderer.render(book, set: set, folder: URL(filePath: shelf.library.folder()), byline: nil)
+        let renderedText = rendered.text.string as NSString
+        let doneRange = renderedText.range(of: "Done", options: .backwards)
+        #expect(doneRange.location != NSNotFound, "an article ends with Done")
+        #expect(rendered.text.attribute(.link, at: doneRange.location, effectiveRange: nil) as? URL == Renderer.done, "Done carries the archive link")
         let model = ReaderModel(item: idlers, rendered: rendered, shelf: shelf)
         let words = "the work-house is too good for you"
         let at = (rendered.text.string as NSString).range(of: words)
@@ -170,7 +191,7 @@ final class MacSnapshots {
         #expect(added.books.map(\.title) == ["Walden"])
 
         let item = try await added.save(link: "pages.test/tide")
-        #expect(added.queue.first?.id == item.id, "a saved link goes to the top of the Queue")
+        #expect(added.inbox(.saved).first?.id == item.id, "a saved link goes to the top of the Inbox")
         #expect(item.site == "pages.test")
         let book = try await added.open(item.id)
         let pictures = try FileManager.default.contentsOfDirectory(atPath: added.library.folder() + "/images/\(item.id)")
@@ -351,6 +372,74 @@ final class MacSnapshots {
         #expect(medianMs < 16.6, "median keystroke-to-painted time stays under one 60fps frame: \(medianMs) ms")
     }
 
+    @Test func theAskBarAnswersFromTheLibraryAndKeepsOneConversation() async throws {
+        let asker = shelf.asker
+        asker.clear()
+        let walden = try #require(shelf.books.first { $0.title == "Walden" })
+        let article = try #require(shelf.inbox.first)
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let navigator = Navigator()
+            navigator.selection = article.id
+            try await shoot(root(navigator), "\(name)-ask-bar", appearance)
+            asker.composing = true
+            try await shoot(root(navigator), "\(name)-ask-open", appearance)
+            asker.composing = false
+            navigator.section = .writing
+            navigator.document = shelf.docs.first?.id
+            asker.adding = true
+            try await shoot(root(navigator), "\(name)-ask-add", appearance)
+            #expect(asker.suggestions == [.fixGrammar, .findWord, .nextLine], "in Writing, + suggests the writing actions")
+            asker.adding = false
+        }
+
+        // Ask from Walden's reader; the answer cites the passages it drew from Walden.
+        let book = try await shelf.open(walden.id)
+        let set = Typesetting(face: "Source Serif 4", size: 21, lineHeight: 1.75, titleSize: 36, palette: palette(.aqua), column: 700)
+        let reader = ReaderModel(item: walden, rendered: Renderer.render(book, set: set, folder: URL(filePath: shelf.library.folder()), byline: nil), shelf: shelf)
+        asker.place = .reading(reader)
+        #expect(asker.suggestions == [.explain, .summarize], "in the reader, + suggests Explain and Summarize")
+        asker.draft = "What does Walden say about simplicity?"
+        asker.send()
+        for _ in 0..<300 where asker.turns.isEmpty { try await Task.sleep(for: .milliseconds(100)) }
+        let turn = try #require(asker.turns.last, "the question is answered")
+        #expect(turn.context.hasPrefix("Walden"), "the turn shows where it was asked: \(turn.context)")
+        let citation = try #require(turn.citations.first, "the answer cites a passage: \(turn.answer)")
+        #expect(citation.item == walden.id && citation.words.localizedCaseInsensitiveContains("simplicity"))
+        let markdown = book.chapters[Int(citation.chapter)].text.utf8
+        let start = markdown.index(markdown.startIndex, offsetBy: Int(citation.start))
+        let end = markdown.index(markdown.startIndex, offsetBy: Int(citation.end))
+        #expect(String(markdown[start..<end]) == citation.words, "a citation is its chapter's own bytes, so it opens where it is")
+
+        // Over in the Inbox, the same conversation is there, and it is kept through a relaunch.
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let navigator = Navigator()
+            navigator.section = .inbox
+            navigator.selection = article.id
+            asker.composing = true
+            try await shoot(root(navigator), "\(name)-ask-answer", appearance)
+            #expect(asker.turns.last == turn, "the conversation survives a tab switch")
+            asker.composing = false
+        }
+        #expect(try Shelf(folder: data).asker.turns == asker.turns, "the conversation is kept on disk")
+
+        let navigator = Navigator()
+        navigator.open(walden, at: Passage(chapter: citation.chapter, start: citation.start, end: citation.end, words: citation.words, made: 0))
+        #expect(navigator.section == .library && navigator.selection == walden.id && navigator.passage?.id == walden.id, "a citation opens its book at the passage")
+
+        // In Writing, an instruction goes to the inline review, and the turn says so.
+        let doc = try #require(shelf.docs.first { $0.id == "quiet-desk" })
+        let writer = WritingModel(id: doc.id, text: shelf.readDocument(doc.id), shelf: shelf)
+        asker.place = .writing(writer)
+        asker.draft = "Tighten the opening paragraph"
+        asker.send()
+        #expect(asker.turns.last?.edit == true && writer.isAsking, "an edit asked through the bar opens a review, not an answer")
+        for _ in 0..<200 where !writer.isReviewing { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(writer.isReviewing, "the edit arrives through the inline review")
+        writer.cancelReview()
+        asker.clear()
+    }
+
     @Test func signInSyncInboxFeedsAndReadwise() async throws {
         let syncRoot = data.appending(path: "sync-proof")
         let serverFile = syncRoot.appending(path: "fake-server.json")
@@ -364,7 +453,7 @@ final class MacSnapshots {
 
         // 1. Render signed-out Account settings in Light and Dark.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            try await shoot(SettingsView(initialTab: .account).environment(macShelf), "\(name)-sign-in", appearance, size: CGSize(width: 560, height: 420))
+            try await shoot(SettingsView(initialTab: .account).environment(macShelf).environment(Navigator()), "\(name)-sign-in", appearance, size: CGSize(width: 660, height: 420))
         }
 
         // 2. Stage Worker articles (feeds -> Inbox, newsletter -> Inbox, saved link -> Queue).
@@ -401,13 +490,15 @@ final class MacSnapshots {
         // 3. Sign in against the fake server; sync parses staged articles into Inbox and Queue.
         let signedIn = await macShelf.account.signInAsync()
         #expect(signedIn && macShelf.account.signedIn, "Mac signs in with Google via fake server")
-        #expect(macShelf.inbox.count == 3, "feed items and newsletter land in Inbox: \(macShelf.inbox.map(\.title))")
-        #expect(macShelf.queue.map(\.title) == ["A Field Guide to Quiet Tools"], "saved link lands in Queue")
+        #expect(macShelf.inbox(.feeds).map(\.title).sorted() == ["Notes on Local-First Software", "On Keeping a Commonplace Book"], "feed items land in the Inbox as Feeds: \(macShelf.inbox.map(\.title))")
+        #expect(macShelf.inbox(.newsletters).map(\.title) == ["Sunday Reading Dispatch"], "a newsletter lands in the Inbox as a Newsletter")
+        #expect(macShelf.inbox(.saved).map(\.title) == ["A Field Guide to Quiet Tools"], "a saved link lands in the Inbox as Saved")
 
         // 4. Render Inbox with feed items in Light and Dark.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let navigator = Navigator()
             navigator.section = .inbox
+            navigator.filter = .feeds
             navigator.selection = macShelf.inbox.first { $0.title == "Notes on Local-First Software" }?.id
             try await shoot(RootView().environment(macShelf).environment(navigator), "\(name)-inbox-feeds", appearance)
         }
@@ -430,15 +521,15 @@ final class MacSnapshots {
         }
 
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            try await shoot(SettingsView(initialTab: .account).environment(macShelf), "\(name)-settings-account", appearance, size: CGSize(width: 560, height: 440))
-            try await shoot(SettingsView(initialTab: .feeds).environment(macShelf), "\(name)-settings-feeds", appearance, size: CGSize(width: 560, height: 440))
+            try await shoot(SettingsView(initialTab: .account).environment(macShelf).environment(Navigator()), "\(name)-settings-account", appearance, size: CGSize(width: 660, height: 440))
+            try await shoot(SettingsView(initialTab: .feeds).environment(macShelf).environment(Navigator()), "\(name)-settings-feeds", appearance, size: CGSize(width: 660, height: 440))
         }
 
         // 6. Round-trip a document, article, reading position and highlight to a second device via the fake server.
         let docId = macShelf.createDocument()
         let firstDraft = "# Synced Essay\n\nWritten on Mac and delivered to iPhone."
         try macShelf.saveDocument(id: docId, text: firstDraft, triggerSync: false)
-        let savedArticle = try #require(macShelf.queue.first { $0.title == "A Field Guide to Quiet Tools" })
+        let savedArticle = try #require(macShelf.inbox.first { $0.title == "A Field Guide to Quiet Tools" })
         macShelf.keepPlace(savedArticle.id, chapter: 0, fraction: 0.45)
         macShelf.flushPlaces(triggerSync: false)
         let passage = Passage(chapter: 0, start: 2, end: 29, words: "A Field Guide to Quiet Tools", made: 1_700_000_000_000)
@@ -447,8 +538,8 @@ final class MacSnapshots {
 
         #expect(await phoneShelf.account.signInAsync())
         #expect(phoneShelf.readDocument(docId) == firstDraft, "document written on device A arrives on device B")
-        #expect(phoneShelf.inbox.count == 3, "Inbox articles sync across devices with inbox flag intact")
-        let phoneArticle = try #require(phoneShelf.queue.first { $0.id == savedArticle.id })
+        #expect(phoneShelf.inbox(.feeds).count == 2 && phoneShelf.inbox(.newsletters).count == 1, "Inbox articles sync across devices as feeds and newsletters")
+        let phoneArticle = try #require(phoneShelf.inbox(.saved).first { $0.id == savedArticle.id })
         #expect(abs(phoneArticle.fraction - 0.45) < 0.01, "reading position syncs across devices")
         #expect(phoneShelf.highlights(savedArticle.id) == [passage], "highlights sync across devices")
         #expect(phoneShelf.account.readwiseConnected, "Readwise connection status syncs")
@@ -460,10 +551,12 @@ final class MacSnapshots {
         _ = await macShelf.account.syncNowAsync()
         #expect(macShelf.readDocument(docId) == editedDraft, "document edit round-trips back to device A")
 
-        // Move an Inbox item to Queue, disconnect Readwise, and sign out.
+        // Archive an Inbox item and bring it back, disconnect Readwise, and sign out.
         let feedItem = try #require(macShelf.inbox.first { $0.title == "Notes on Local-First Software" })
-        macShelf.setInbox(feedItem, false)
-        #expect(!macShelf.inbox.contains { $0.id == feedItem.id } && macShelf.queue.contains { $0.id == feedItem.id })
+        macShelf.setArchived(feedItem, true)
+        #expect(!macShelf.inbox.contains { $0.id == feedItem.id } && macShelf.archive.contains { $0.id == feedItem.id })
+        macShelf.setArchived(feedItem, false)
+        #expect(macShelf.inbox(.feeds).contains { $0.id == feedItem.id }, "brought back, it is a feed post again")
         await macShelf.account.disconnectReadwise()
         #expect(!macShelf.account.readwiseConnected)
         macShelf.account.signOut()

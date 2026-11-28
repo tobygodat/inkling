@@ -1,8 +1,8 @@
 import InklingCore
 import SwiftUI
 
-/// The native writing page: TextKit 2 live Markdown on Inkling's paper, with a quiet floating ask
-/// dock at the foot and inline review over the same column when the writer asks for changes.
+/// The native writing page: TextKit 2 live Markdown on Inkling's paper, and inline review over the
+/// same column when the writer asks the Ask bar for changes.
 struct WritingView: View {
     @Environment(Shelf.self) private var shelf
     @Environment(Navigator.self) private var navigator
@@ -12,7 +12,6 @@ struct WritingView: View {
     let documentId: String
     @State private var model: WritingModel?
     @State private var showingAppearance = false
-    @State private var showingProvider = false
     #if os(iOS)
     @State private var editorFocused = false
     @State private var viewWidth: CGFloat = 390
@@ -79,23 +78,13 @@ struct WritingView: View {
                     }
                     #endif
 
-                    if !model.isReviewing {
-                        VStack(spacing: 6) {
-                            AskDock(model: model, palette: palette, column: column, onOpenProvider: { showingProvider = true })
-                            #if os(macOS)
-                            HStack {
-                                Text(statusLine(for: model))
-                                    .font(.inter(12, relativeTo: .caption))
-                                    .foregroundStyle(Color(palette.muted))
-                                    .monospacedDigit()
-                                Spacer(minLength: 0)
-                            }
-                            .frame(maxWidth: column)
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 10)
+                    if !model.isReviewing, let notice = model.notice {
+                        Notice(words: notice, missingKey: model.missingKeyProvider != nil, palette: palette, column: column) {
+                            shelf.asker.choosingProvider = true
+                            #if os(iOS)
+                            shelf.asker.composing = true
                             #endif
                         }
-                        .background(Color(palette.ground))
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
@@ -133,8 +122,6 @@ struct WritingView: View {
                 } else {
                     Button("Appearance", systemImage: "textformat.size") { showingAppearance = true }
                         .accessibilityIdentifier("writing-appearance")
-                    Button("Provider", systemImage: "sparkles") { showingProvider = true }
-                        .accessibilityIdentifier("writing-provider")
                 }
             }
             #else
@@ -145,14 +132,6 @@ struct WritingView: View {
                     }
                     .accessibilityIdentifier("writing-appearance")
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button("AI Provider", systemImage: "sparkles") { showingProvider = true }
-                    .popover(isPresented: $showingProvider, arrowEdge: .bottom) {
-                        ProviderPanel()
-                            .frame(width: 340)
-                    }
-                    .accessibilityIdentifier("writing-provider")
-            }
             #endif
         }
         #if os(iOS)
@@ -160,23 +139,11 @@ struct WritingView: View {
             AppearancePanel(target: .writing)
                 .presentationDetents([.height(330)])
         }
-        .sheet(isPresented: $showingProvider) {
-            NavigationStack {
-                ProviderPanel()
-                    .navigationTitle("AI Provider")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showingProvider = false }
-                        }
-                    }
-            }
-            .presentationDetents([.medium])
-        }
         #endif
         .task(id: documentId) {
             if let existing = model, existing.id == documentId {
                 shelf.activeWriter = existing
+                shelf.asker.place = .writing(existing)
                 return
             }
             model?.saveNow()
@@ -185,6 +152,10 @@ struct WritingView: View {
             let created = WritingModel(id: documentId, text: loaded, shelf: shelf)
             model = created
             shelf.activeWriter = created
+            shelf.asker.place = .writing(created)
+        }
+        .onAppear {
+            if let model { shelf.asker.place = .writing(model) }
         }
         .onChange(of: phase) {
             if phase != .active { model?.saveNow() }
@@ -317,127 +288,32 @@ struct VersionBar: View {
     }
 }
 
-/// The floating bottom dock with quick actions and the one-line ask field.
-struct AskDock: View {
-    @Bindable var model: WritingModel
+/// What became of the last ask, when it brought no review: no changes, a failure, or a missing key.
+private struct Notice: View {
+    let words: String
+    let missingKey: Bool
     let palette: Palette
     let column: CGFloat
-    let onOpenProvider: () -> Void
+    let addKey: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let notice = model.notice {
-                HStack(spacing: 8) {
-                    Text(notice)
-                        .font(.inter(12, weight: .medium, relativeTo: .caption))
-                        .foregroundStyle(Color(palette.muted))
-                        .lineLimit(2)
-                    if model.missingKeyProvider != nil {
-                        Button("Add key…", action: onOpenProvider)
-                            .font(.inter(12, weight: .semibold, relativeTo: .caption))
-                            .foregroundStyle(Color(palette.link))
-                            .buttonStyle(.plain)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 4)
-                .accessibilityIdentifier("writing-notice")
+        HStack(spacing: 8) {
+            Text(words)
+                .font(.inter(13, weight: .medium, relativeTo: .footnote))
+                .foregroundStyle(Color(palette.muted))
+                .lineLimit(2)
+            if missingKey {
+                Button("Add key…", action: addKey)
+                    .font(.inter(13, weight: .semibold, relativeTo: .footnote))
+                    .foregroundStyle(Color(palette.link))
+                    .buttonStyle(.plain)
             }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    quickChip("Fix grammar", id: "fix-grammar") { model.askFixGrammar() }
-                    quickChip("Find a word", id: "find-word") { model.askFindWord() }
-                    quickChip("Next line", id: "next-line") { model.askNextLine() }
-                }
-            }
-
-            HStack(spacing: 10) {
-                TextField("Ask for fixes, words or a nudge…", text: $model.askText)
-                    .textFieldStyle(.plain)
-                    .font(.inter(14, relativeTo: .body))
-                    .foregroundStyle(Color(palette.ink))
-                    .onSubmit { model.askFreeform() }
-                    .disabled(model.isAsking)
-                    .accessibilityIdentifier("ask-field")
-
-                Button {
-                    model.askFreeform()
-                } label: {
-                    Text("Send")
-                        .font(.inter(13, weight: .semibold, relativeTo: .callout))
-                        .foregroundStyle(Color(palette.surface))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: sendHeight)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(palette.ink)))
-                }
-                .buttonStyle(.plain)
-                .disabled(model.isAsking)
-                .accessibilityIdentifier("ask-send")
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 6)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 13)
-                    .fill(Color(palette.surface))
-                    .overlay { RoundedRectangle(cornerRadius: 13).strokeBorder(Color(palette.hairline), lineWidth: 1) }
-                    .shadow(color: .black.opacity(palette.isDark ? 0.32 : 0.06), radius: 12, y: 4)
-            )
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: column)
-        .padding(.horizontal, 20)
-        .padding(.bottom, bottomPadding)
-    }
-
-    private var sendHeight: CGFloat {
-        #if os(iOS)
-        36
-        #else
-        30
-        #endif
-    }
-
-    private var bottomPadding: CGFloat {
-        #if os(iOS)
-        10
-        #else
-        4
-        #endif
-    }
-
-    private func quickChip(_ label: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.inter(chipFontSize, weight: .medium, relativeTo: .footnote))
-                .foregroundStyle(Color(palette.ink))
-                .padding(.horizontal, 13)
-                .frame(minHeight: chipHeight)
-                .background(
-                    Capsule()
-                        .fill(Color(palette.surface))
-                        .overlay { Capsule().strokeBorder(Color(palette.hairline), lineWidth: 1) }
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(model.isAsking)
-        .accessibilityIdentifier(id)
-    }
-
-    private var chipFontSize: CGFloat {
-        #if os(iOS)
-        14
-        #else
-        12
-        #endif
-    }
-
-    private var chipHeight: CGFloat {
-        #if os(iOS)
-        44
-        #else
-        30
-        #endif
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .accessibilityIdentifier("writing-notice")
     }
 }
 

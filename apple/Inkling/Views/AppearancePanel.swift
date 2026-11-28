@@ -29,6 +29,7 @@ struct AppearancePanel: View {
     @Environment(Shelf.self) private var shelf
     @AppStorage("appearance") private var appearance = Appearance.system
     var target: Target = .reading
+    var includeListDensity: Bool = false
 
     /// Auto (Light or Dark, as the app is) and the paper tones. Custom is the writer's own and
     /// waits for a custom colour picker.
@@ -79,6 +80,20 @@ struct AppearancePanel: View {
                     LabeledContent("Line height", value: (Double(currentLook.lineSpacing) / 100).formatted(.number.precision(.fractionLength(2))))
                 }
                 .accessibilityIdentifier("line-height")
+                if includeListDensity {
+                    HStack {
+                        Text("List density")
+                        Spacer()
+                        Picker("List density", selection: binding(\.density)) {
+                            Text("Compact").tag(ListDensity.compact)
+                            Text("Comfortable").tag(ListDensity.comfortable)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                        .accessibilityIdentifier("list-density")
+                    }
+                }
             }
             .font(.inter(15, relativeTo: .body))
             .monospacedDigit()

@@ -13,6 +13,8 @@ final class Shelf {
     let documents: DocumentStore
     let ai: AiEngine
     let account: Account
+    /// The Ask bar and its one conversation.
+    let asker: Asker
     /// Fetches saved pages and their pictures.
     let session: URLSession
     private(set) var items: [Item]
@@ -49,11 +51,13 @@ final class Shelf {
             SyncClient.open(data: folder.path, deviceKind: deviceKind)
         }
         account = Account(client: syncClient)
+        asker = Asker(folder: folder)
         look = looks.reading()
         writingLook = looks.writing()
         items = library.items()
         docs = documents.list()
         account.attach(shelf: self)
+        asker.shelf = self
     }
 
     /// The data folder core names: `INKLING_DATA_DIR` when set, as every headless run sets it, else
@@ -79,9 +83,27 @@ final class Shelf {
         }
     }
 
-    var queue: [Item] { items.filter { $0.kind == .article && !$0.inbox && $0.archived == 0 } }
-    var inbox: [Item] { items.filter { $0.inbox && $0.archived == 0 } }
+    /// Every article still to read: saved links, newsletters and feed posts, newest first.
+    var inbox: [Item] { items.filter { ($0.kind == .article || $0.inbox) && $0.archived == 0 } }
     var books: [Item] { items.filter { $0.kind != .article && !$0.inbox && $0.archived == 0 } }
+
+    func inbox(_ filter: InboxFilter) -> [Item] {
+        switch filter {
+        case .all: inbox
+        case .saved: inbox.filter { !$0.inbox }
+        case .newsletters: inbox.filter { $0.inbox && $0.newsletter }
+        case .feeds: inbox.filter { $0.inbox && !$0.newsletter }
+        }
+    }
+
+    /// Every highlight, grouped by its item, the item read last first.
+    func allHighlights() -> [(item: Item, passages: [Passage])] {
+        items.sorted { $0.opened > $1.opened }
+            .compactMap { item in
+                let passages = library.highlights(id: item.id)
+                return passages.isEmpty ? nil : (item, passages)
+            }
+    }
     var archive: [Item] {
         items.enumerated().filter { $0.element.archived > 0 }
             .sorted { ($0.element.archived, -$0.offset) > ($1.element.archived, -$1.offset) }
@@ -94,12 +116,10 @@ final class Shelf {
 
     func count(_ section: Section) -> Int? {
         switch section {
-        case .queue: queue.count
         case .inbox: inbox.count
-        case .library: books.count + queue.count
-        case .archive: archive.count
+        case .library: books.count
         case .writing: docs.count
-        case .notebook: nil
+        case .profile: nil
         }
     }
 

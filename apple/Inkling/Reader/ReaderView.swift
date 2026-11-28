@@ -46,16 +46,10 @@ struct ReaderView: View {
             if let model {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) { Place(model: model, palette: palette) }
-                ToolbarItemGroup(placement: .bottomBar) {
+                ToolbarItemGroup(placement: .primaryAction) {
                     if model.chapters > 1 { Contents(model: model) }
-                    Highlights(model: model)
-                    Spacer()
-                    Button("Archive", systemImage: "archivebox") {
-                        shelf.setArchived(item, true)
-                        dismiss()
-                    }
-                    .accessibilityIdentifier("archive-item")
                     appearanceButton
+                    Highlights(model: model)
                 }
                 #else
                 if model.chapters > 1 {
@@ -70,7 +64,7 @@ struct ReaderView: View {
             }
         }
         #if os(iOS)
-        .toolbarVisibility(model?.chromeHidden == true ? .hidden : .visible, for: .navigationBar, .bottomBar)
+        .toolbarVisibility(model?.chromeHidden == true ? .hidden : .visible, for: .navigationBar, .tabBar)
         #endif
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -88,12 +82,26 @@ struct ReaderView: View {
         .task(id: Setting(id: item.id, look: look, dark: palette.isDark, width: width)) { await load(look: look, palette: palette) }
         #if os(iOS)
         .onChange(of: look.tone, initial: true) { navigator.readerScheme = Self.scheme(of: look.tone, palette: palette) }
-        .onDisappear { navigator.readerScheme = nil }
+        .onChange(of: model?.chromeHidden) { navigator.immersed = model?.chromeHidden == true }
+        .onDisappear {
+            navigator.readerScheme = nil
+            navigator.immersed = false
+        }
         #endif
         .onDisappear { shelf.flushPlaces() }
+        .onAppear { if let model { shelf.asker.place = .reading(model) } }
+        .onChange(of: navigator.passage?.passage) { showPassage() }
         #if os(macOS)
         .focusedSceneValue(\.reader, model)
         #endif
+    }
+
+    /// Goes to the passage a citation or a highlight elsewhere asked for, once this item is open.
+    private func showPassage() {
+        guard let model, let wanted = navigator.passage, wanted.id == item.id else { return }
+        navigator.passage = nil
+        model.motion = .fade
+        model.go(to: wanted.passage)
     }
 
     private var appearanceButton: some View {
@@ -130,7 +138,18 @@ struct ReaderView: View {
             let folder = URL(filePath: shelf.library.folder())
             let rendered = try await Shelf.offMain { Renderer.render(book, set: set, folder: folder, byline: byline) }
             guard !Task.isCancelled else { return }
-            model = ReaderModel(item: shelf.item(item.id) ?? item, rendered: rendered, shelf: shelf)
+            let opened = ReaderModel(item: shelf.item(item.id) ?? item, rendered: rendered, shelf: shelf)
+            opened.done = { [item, shelf, navigator, dismiss] in
+                shelf.setArchived(item, true)
+                #if os(iOS)
+                dismiss()
+                #else
+                navigator.selection = nil
+                #endif
+            }
+            model = opened
+            shelf.asker.place = .reading(opened)
+            showPassage()
         } catch {
             failed = Shelf.words(error)
         }

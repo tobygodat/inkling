@@ -34,14 +34,9 @@ struct InklingCommands: Commands {
             Button("Archive") { if let item { shelf.setArchived(item, true) } }
                 .keyboardShortcut("e")
                 .disabled(item == nil || item?.archived != 0)
-            Button("Move to Queue") {
-                if let item {
-                    if item.inbox { shelf.setInbox(item, false) }
-                    if item.archived != 0 { shelf.setArchived(item, false) }
-                }
-            }
-            .keyboardShortcut("e", modifiers: [.command, .shift])
-            .disabled(item == nil || (item?.archived == 0 && item?.inbox == false))
+            Button("Bring Back") { if let item { shelf.setArchived(item, false) } }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(item == nil || item?.archived == 0)
             Divider()
             Button("Highlight") { reader?.toggleHighlight() }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
@@ -63,7 +58,7 @@ struct InklingCommands: Commands {
             Divider()
         }
         CommandGroup(before: .sidebar) {
-            ForEach(Array(Section.allCases.enumerated()), id: \.element) { index, section in
+            ForEach(Array(Section.sidebar.enumerated()), id: \.element) { index, section in
                 Button(section.title) { navigator.section = section }
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
             }

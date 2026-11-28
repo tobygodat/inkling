@@ -62,6 +62,10 @@ pub fn sniff(path: &Path, bytes: &[u8]) -> Result<Format, ImportError> {
 pub struct Parsed {
     pub book: Book,
     pub images: Vec<(String, Vec<u8>)>,
+    /// Lead image path relative to the library (e.g. `og:image`) when the body has no picture.
+    pub lead: Option<String>,
+    /// Site icon path relative to the library when an article has no lead image.
+    pub icon: Option<String>,
 }
 
 pub fn parse(path: &Path, bytes: &[u8]) -> Result<Parsed, ImportError> {
@@ -82,7 +86,7 @@ pub fn parse(path: &Path, bytes: &[u8]) -> Result<Parsed, ImportError> {
         Format::Article => return Err(ImportError::Unsupported(title_from_file(path))),
     };
     let title = title.unwrap_or_else(|| title_from_file(path));
-    Ok(Parsed { book: Book { id, title, author, format, parser: PARSER, chapters, source: None }, images })
+    Ok(Parsed { book: Book { id, title, author, format, parser: PARSER, chapters, source: None }, images, lead: None, icon: None })
 }
 
 /// Where a book's images are, relative to the library: what its chapters' image links start with.

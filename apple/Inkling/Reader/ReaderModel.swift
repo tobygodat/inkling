@@ -16,11 +16,13 @@ final class ReaderModel {
     var jump: Int?
     /// How the text gets to `jump`.
     var motion = Motion.instant
-    /// The text selected on the Mac, for Highlight in the menu bar.
+    /// The text selected, for Highlight in the menu bar and for the Ask bar.
     var selection = NSRange()
     /// Whether the bars are out of the way: on iPhone they hide as the reader scrolls on and come
     /// back on a scroll back or a tap.
     var chromeHidden = false
+    /// Archives the item and leaves it, from "Done" at its end.
+    @ObservationIgnored var done: (() -> Void)?
     private let shelf: Shelf
 
     init(item: Item, rendered: Rendered, shelf: Shelf) {

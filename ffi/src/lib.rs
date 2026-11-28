@@ -11,11 +11,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use inkling_books::{self as books, BookId, Entry, Format, Highlight, Position};
 
+mod ask;
 mod documents;
 mod look;
 mod review;
 mod sync;
 
+pub use ask::{AnswerListener, AnswerSession, AnswerState, AskAbout, Citation, Conversation, Turn};
 pub use documents::{DocInfo, DocumentStore, document_title};
 pub use look::{Colors, Look, Looks, Tone, faces};
 pub use review::{
@@ -128,8 +130,12 @@ pub struct Item {
     pub excerpt: Option<String>,
     /// An article's first picture's full path, for one that has a picture.
     pub picture: Option<String>,
+    /// An article's site icon's full path, when it has no lead picture.
+    pub icon: Option<String>,
     /// Whether this item sits in the Inbox (from a feed or newsletter) rather than the Queue.
     pub inbox: bool,
+    /// Whether it came by email rather than from a feed.
+    pub newsletter: bool,
 }
 
 /// Where an article came from.
@@ -343,7 +349,9 @@ fn item(library: &books::Library, e: &Entry) -> Item {
         words: e.words as u64,
         excerpt: e.excerpt.clone(),
         picture: library.picture_path(e).map(|p| p.to_string_lossy().into_owned()),
+        icon: library.icon_path(e).map(|p| p.to_string_lossy().into_owned()),
         inbox: e.inbox,
+        newsletter: e.newsletter,
     }
 }
 

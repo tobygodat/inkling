@@ -20,6 +20,8 @@ pub use documents::{Disk, State};
 
 /// Where `server/wrangler.jsonc` deploys the Worker.
 pub const SERVER: &str = "https://inkling-server.tobygodat.workers.dev";
+/// Where newsletters are sent: the Worker's `NEWSLETTER_ADDRESS` in `server/wrangler.jsonc`.
+pub const NEWSLETTER_ADDRESS: &str = "read@tobygodat.com";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {

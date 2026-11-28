@@ -1,28 +1,43 @@
-/// The app's top-level places, in the order the sidebar and the tab bar show them.
+/// The app's top-level places: the tabs on iPhone, and on the Mac the sidebar, which leaves
+/// Profile to Settings.
 enum Section: String, CaseIterable, Identifiable, Hashable {
-    case queue, inbox, library, archive, notebook, writing
+    case inbox, library, writing, profile
+
+    static let sidebar: [Section] = [.inbox, .library, .writing]
 
     var id: Self { self }
 
     var title: String {
         switch self {
-        case .queue: "Queue"
         case .inbox: "Inbox"
         case .library: "Library"
-        case .archive: "Archive"
-        case .notebook: "Notebook"
         case .writing: "Writing"
+        case .profile: "Profile"
         }
     }
 
     var symbol: String {
         switch self {
-        case .queue: "square.stack"
         case .inbox: "tray"
         case .library: "books.vertical"
-        case .archive: "archivebox"
-        case .notebook: "highlighter"
         case .writing: "pencil.line"
+        case .profile: "person.crop.circle"
+        }
+    }
+}
+
+/// What the Inbox shows: everything still to read, or one kind of it.
+enum InboxFilter: String, CaseIterable, Identifiable, Hashable {
+    case all, saved, newsletters, feeds
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .saved: "Saved"
+        case .newsletters: "Newsletters"
+        case .feeds: "Feeds"
         }
     }
 }

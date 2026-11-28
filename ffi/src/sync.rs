@@ -167,6 +167,11 @@ impl SyncClient {
         SignIn::load(self.keys.as_ref()).map(|s| s.agents_address())
     }
 
+    /// The address newsletters are sent to, while signed in.
+    pub fn newsletter_address(&self) -> Option<String> {
+        SignIn::load(self.keys.as_ref()).map(|_| inkling_sync::NEWSLETTER_ADDRESS.to_string())
+    }
+
     /// The fake server's immediate OAuth callback URL for headless sign-in, or `None` outside headless mode.
     pub fn fake_callback_url(&self, authorize_url: String) -> Option<String> {
         self.headless.then(|| sync::fake_way_back(&authorize_url)).flatten()

@@ -84,11 +84,6 @@ struct DocumentListView: View {
         #endif
         .navigationTitle("Writing")
         .toolbar {
-            #if os(iOS)
-            ToolbarItem(placement: .topBarLeading) {
-                PhoneSettingsButton()
-            }
-            #endif
             ToolbarItem(placement: .primaryAction) {
                 Button("New Document", systemImage: "square.and.pencil") { createAndOpen() }
                     .accessibilityIdentifier("new-document")

@@ -407,7 +407,9 @@ fn download(api: &Api, dir: &Path, row: &Row) -> Result<Entry, Error> {
         words: meta.words,
         excerpt: meta.excerpt,
         picture: meta.picture,
+        icon: meta.icon,
         inbox: row.inbox,
+        newsletter: meta.newsletter,
     })
 }
 
@@ -510,8 +512,8 @@ mod tests {
         }
         let saved = mac_lib.entries().iter().find(|e| e.title == "Notes on the tide").unwrap().clone();
         let letter = mac_lib.entries().iter().find(|e| e.title == "Sunday Dispatch").unwrap().clone();
-        assert_eq!((saved.format, saved.inbox, saved.site.as_deref()), (Format::Article, false, Some("The Shore")));
-        assert_eq!((letter.format, letter.inbox, letter.site.as_deref()), (Format::Article, true, Some("Weekly Letters")));
+        assert_eq!((saved.format, saved.inbox, saved.newsletter, saved.site.as_deref()), (Format::Article, false, false, Some("The Shore")));
+        assert_eq!((letter.format, letter.inbox, letter.newsletter, letter.site.as_deref()), (Format::Article, true, true, Some("Weekly Letters")));
 
         // Mac highlights a passage, then syncs up the parsed articles and highlight.
         let h_mac = Highlight { chapter: 0, start: 2, end: 19, words: "Notes on the tide".into(), made: 1_700_000_000_000 };
@@ -533,6 +535,7 @@ mod tests {
         assert_eq!((phone_saved.inbox, phone_saved.site.as_deref(), phone_saved.excerpt.as_deref()), (false, Some("The Shore"), Some("Flats at dawn.")));
         assert!(phone_saved.words > 100);
         assert!(phone_lib.entry(&letter.id).unwrap().inbox, "newsletter stays in Inbox on the second device");
+        assert!(phone_lib.entry(&letter.id).unwrap().newsletter, "and is still a newsletter there");
         assert_eq!(phone_lib.highlights(&saved.id), vec![h_mac.clone()]);
 
         // Phone adds a second highlight; Mac receives the merged list without duplicating h_mac.
