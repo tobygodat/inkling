@@ -16,6 +16,9 @@ final class Navigator {
     #endif
     var savingLink = false
     var addingBook = false
+    #if os(iOS)
+    var showingSettings = false
+    #endif
     /// Light or Dark as the open reader's or writer's paper is, so the bars and the status bar match it on iPhone.
     var readerScheme: ColorScheme?
 }

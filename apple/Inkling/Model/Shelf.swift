@@ -12,6 +12,7 @@ final class Shelf {
     let looks: Looks
     let documents: DocumentStore
     let ai: AiEngine
+    let account: Account
     /// Fetches saved pages and their pictures.
     let session: URLSession
     private(set) var items: [Item]
@@ -21,6 +22,8 @@ final class Shelf {
     private(set) var look: Look
     /// How writing looks, kept in `settings.json` beside the GPUI app's.
     private(set) var writingLook: Look
+    /// The document currently open in `WritingView`, so sync flushes it before fetching and reloads it if updated.
+    @ObservationIgnored weak var activeWriter: WritingModel?
     /// The document removed last, held until the next action for Undo.
     private var deletedDoc: (info: DocInfo, text: String)?
     /// A failure to show the reader or writer, in Rust's own words.
@@ -28,17 +31,29 @@ final class Shelf {
     @ObservationIgnored private var places: [String: (chapter: Int, fraction: Double)] = [:]
     @ObservationIgnored private var keeping: Task<Void, Never>?
 
-    init(folder: URL, session: URLSession = .shared) throws {
+    init(folder: URL, session: URLSession = .shared, fakeServer: URL? = nil) throws {
         self.folder = folder
         self.session = session
         library = try Library.open(data: folder.path)
         looks = Looks.open(data: folder.path)
         documents = try DocumentStore.open(data: folder.path)
         ai = AiEngine.open(data: folder.path)
+        #if os(macOS)
+        let deviceKind = "mac"
+        #else
+        let deviceKind = "phone"
+        #endif
+        let syncClient = if let fakeServer {
+            SyncClient.openFake(data: folder.path, deviceKind: deviceKind, serverFile: fakeServer.path)
+        } else {
+            SyncClient.open(data: folder.path, deviceKind: deviceKind)
+        }
+        account = Account(client: syncClient)
         look = looks.reading()
         writingLook = looks.writing()
         items = library.items()
         docs = documents.list()
+        account.attach(shelf: self)
     }
 
     /// The data folder core names: `INKLING_DATA_DIR` when set, as every headless run sets it, else
@@ -64,8 +79,9 @@ final class Shelf {
         }
     }
 
-    var queue: [Item] { items.filter { $0.kind == .article && $0.archived == 0 } }
-    var books: [Item] { items.filter { $0.kind != .article && $0.archived == 0 } }
+    var queue: [Item] { items.filter { $0.kind == .article && !$0.inbox && $0.archived == 0 } }
+    var inbox: [Item] { items.filter { $0.inbox && $0.archived == 0 } }
+    var books: [Item] { items.filter { $0.kind != .article && !$0.inbox && $0.archived == 0 } }
     var archive: [Item] {
         items.enumerated().filter { $0.element.archived > 0 }
             .sorted { ($0.element.archived, -$0.offset) > ($1.element.archived, -$1.offset) }
@@ -79,10 +95,11 @@ final class Shelf {
     func count(_ section: Section) -> Int? {
         switch section {
         case .queue: queue.count
+        case .inbox: inbox.count
         case .library: books.count + queue.count
         case .archive: archive.count
         case .writing: docs.count
-        case .inbox, .notebook: nil
+        case .notebook: nil
         }
     }
 
@@ -110,9 +127,10 @@ final class Shelf {
         (try? documents.read(id: id)) ?? ""
     }
 
-    func saveDocument(id: String, text: String) throws {
+    func saveDocument(id: String, text: String, triggerSync: Bool = true) throws {
         try documents.write(id: id, text: text)
         reloadDocuments()
+        if triggerSync { account.syncSoon() }
     }
 
     func createDocument() -> String {
@@ -129,6 +147,7 @@ final class Shelf {
         attempt { try documents.remove(id: doc.id) }
         deletedDoc = (doc, text)
         withAnimation(.snappy(duration: 0.25)) { reloadDocuments() }
+        account.syncSoon()
     }
 
     func undoDeleteDocument() -> String? {
@@ -136,6 +155,7 @@ final class Shelf {
         deletedDoc = nil
         attempt { try documents.restore(id: removed.info.id, text: removed.text, changedMs: removed.info.changedMs) }
         withAnimation(.snappy(duration: 0.25)) { reloadDocuments() }
+        account.syncSoon()
         return removed.info.id
     }
 
@@ -158,6 +178,13 @@ final class Shelf {
     func setArchived(_ item: Item, _ archived: Bool) {
         attempt { try library.setArchived(id: item.id, archived: archived) }
         withAnimation(.snappy(duration: 0.28)) { reload() }
+        account.syncSoon()
+    }
+
+    func setInbox(_ item: Item, _ inbox: Bool) {
+        attempt { try library.setInbox(id: item.id, inbox: inbox) }
+        withAnimation(.snappy(duration: 0.28)) { reload() }
+        account.syncSoon()
     }
 
     /// Adds an EPUB or a PDF the reader picked. A file outside the app's sandbox is read inside
@@ -169,6 +196,7 @@ final class Shelf {
         do {
             _ = try await Self.offMain { try library.addFile(path: url.path) }
             withAnimation(.snappy(duration: 0.28)) { reload() }
+            account.syncSoon()
         } catch {
             failure = Self.words(error)
         }
@@ -201,6 +229,7 @@ final class Shelf {
             let item = try await Self.offMain { try library.saveArticle(url: address, html: html, fetcher: pictures) }
             if item.archived > 0 { try? library.setArchived(id: item.id, archived: false) }
             withAnimation(.snappy(duration: 0.28)) { reload() }
+            account.syncSoon()
             return item
         } catch {
             throw SaveError(Self.words(error))
@@ -232,11 +261,13 @@ final class Shelf {
     }
 
     /// Writes every place not yet kept, as the reader closes and the app goes to the background.
-    func flushPlaces() {
+    func flushPlaces(triggerSync: Bool = true) {
+        guard !places.isEmpty else { return }
         for (id, place) in places {
             try? library.setPosition(id: id, chapter: UInt32(place.chapter), fraction: Float(place.fraction))
         }
         places = [:]
+        if triggerSync { account.syncSoon() }
     }
 
     func highlights(_ id: String) -> [Passage] {
@@ -245,6 +276,7 @@ final class Shelf {
 
     func setHighlights(_ id: String, _ all: [Passage]) {
         attempt { try library.setHighlights(id: id, all: all) }
+        account.syncSoon()
     }
 
     /// Keeps reading's look, as core clamps it.
@@ -273,9 +305,11 @@ final class Shelf {
         switch error {
         case let error as InklingError:
             switch error {
-            case .Storage(let message), .Import(let message), .InvalidRequest(let message), .Keychain(let message): message
+            case .Storage(let message), .Import(let message), .InvalidRequest(let message), .Keychain(let message), .Sync(let message): message
             case .MissingKey(let provider): "Add your \(provider) API key in Settings before asking."
             case .NotFound: "That item is no longer here."
+            case .SignedOut: "The sign-in has ended. Sign in again."
+            case .Cancelled: "The sign-in wasn’t finished."
             }
         case let error as SaveError: error.message
         default: error.localizedDescription

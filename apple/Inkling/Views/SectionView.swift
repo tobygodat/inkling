@@ -5,6 +5,11 @@ import SwiftUI
 struct SectionView: View {
     @Environment(Shelf.self) private var shelf
     @Environment(\.palette) private var palette
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #else
+    @Environment(Navigator.self) private var navigator
+    #endif
     let section: Section
 
     var body: some View {
@@ -29,11 +34,24 @@ struct SectionView: View {
                             .accessibilityIdentifier("notebook")
                         }
                     }
+                } else if section == .inbox {
+                    ToolbarItem(placement: .topBarLeading) {
+                        PhoneSettingsButton()
+                    }
                 }
-                #endif
+                if section == .queue || section == .library {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        PhoneSettingsButton()
+                        AddMenu()
+                    }
+                } else if section != .archive && section != .writing {
+                    ToolbarItem(placement: .primaryAction) { AddMenu() }
+                }
+                #else
                 if section != .archive && section != .writing {
                     ToolbarItem(placement: .primaryAction) { AddMenu() }
                 }
+                #endif
             }
     }
 
@@ -70,11 +88,25 @@ struct SectionView: View {
                 }
             }
         case .inbox:
-            Upcoming(
-                symbol: "tray",
-                title: "Newsletters and feeds, in one inbox",
-                words: "The newsletters you subscribe to and the feeds you follow will arrive here, to read or to move to the Queue. The inbox isn’t built yet."
-            )
+            ItemList(groups: [("", shelf.inbox)], section: section) {
+                ContentUnavailableView {
+                    Label(shelf.account.signedIn ? "Your Inbox is clear" : "Newsletters and feeds, in one inbox", systemImage: "tray")
+                } description: {
+                    Text(shelf.account.signedIn
+                         ? "New posts from followed RSS feeds and newsletters arrive here on sync, ready to read or move to your Queue."
+                         : "Sign in with Google in Settings to follow RSS feeds and receive newsletters here.")
+                } actions: {
+                    Button(shelf.account.signedIn ? "Manage Feeds" : "Sign in…") {
+                        #if os(macOS)
+                        openSettings()
+                        #else
+                        navigator.showingSettings = true
+                        #endif
+                    }
+                    .buttonStyle(.glassProminent)
+                    .accessibilityIdentifier("inbox-settings")
+                }
+            }
         case .notebook:
             Upcoming(
                 symbol: "highlighter",

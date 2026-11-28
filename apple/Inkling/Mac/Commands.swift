@@ -24,15 +24,24 @@ struct InklingCommands: Commands {
                 .keyboardShortcut("l")
             Button("Add Book…") { navigator.addingBook = true }
                 .keyboardShortcut("o")
+            Divider()
+            Button("Sync Now") { shelf.account.syncNow() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(!shelf.account.signedIn || shelf.account.syncing)
         }
         CommandMenu("Item") {
             let item = shelf.item(navigator.selection)
             Button("Archive") { if let item { shelf.setArchived(item, true) } }
                 .keyboardShortcut("e")
                 .disabled(item == nil || item?.archived != 0)
-            Button("Move to Queue") { if let item { shelf.setArchived(item, false) } }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(item == nil || item?.archived == 0)
+            Button("Move to Queue") {
+                if let item {
+                    if item.inbox { shelf.setInbox(item, false) }
+                    if item.archived != 0 { shelf.setArchived(item, false) }
+                }
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(item == nil || (item?.archived == 0 && item?.inbox == false))
             Divider()
             Button("Highlight") { reader?.toggleHighlight() }
                 .keyboardShortcut("h", modifiers: [.command, .shift])

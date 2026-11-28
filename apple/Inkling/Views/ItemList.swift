@@ -32,6 +32,13 @@ struct ItemList<Empty: View>: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color(palette.ground))
+        #if os(iOS)
+        .refreshable {
+            if shelf.account.signedIn {
+                await shelf.account.syncNowAsync()
+            }
+        }
+        #endif
     }
 
     @ViewBuilder private var rows: some View {
@@ -66,6 +73,12 @@ struct ItemList<Empty: View>: View {
         .listRowBackground(Color(palette.ground))
         .listRowSeparatorTint(Color(palette.hairline))
         .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            if item.inbox && item.archived == 0 {
+                Button("Move to Queue", systemImage: "square.stack") { shelf.setInbox(item, false) }
+                    .tint(Color(palette.isDark ? palette.segment : palette.ink))
+            }
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if item.archived == 0 {
                 Button("Archive", systemImage: "archivebox") { shelf.setArchived(item, true) }
@@ -95,6 +108,9 @@ struct ItemList<Empty: View>: View {
     #endif
 
     @ViewBuilder private func actions(_ item: Item) -> some View {
+        if item.inbox && item.archived == 0 {
+            Button("Move to Queue", systemImage: "square.stack") { shelf.setInbox(item, false) }
+        }
         if item.archived == 0 {
             Button("Archive", systemImage: "archivebox") { shelf.setArchived(item, true) }
         } else {

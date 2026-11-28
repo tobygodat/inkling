@@ -24,11 +24,27 @@ struct RootView: View {
                 .environment(\.palette, chrome.palette(scheme))
                 .tint(Color(chrome.palette(scheme).ink))
         }
+        #if os(iOS)
+        .sheet(isPresented: $navigator.showingSettings) {
+            PhoneSettingsSheet()
+                .environment(\.palette, chrome.palette(scheme))
+                .tint(Color(chrome.palette(scheme).ink))
+        }
+        #endif
         .fileImporter(isPresented: $navigator.addingBook, allowedContentTypes: [.epub, .pdf], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
             Task { for url in urls { await shelf.addBook(at: url) } }
         }
-        .onChange(of: phase) { if phase != .active { shelf.flushPlaces() } }
+        .task {
+            shelf.account.startBackgroundSync()
+        }
+        .onChange(of: phase) {
+            if phase == .active {
+                shelf.account.syncNow()
+            } else {
+                shelf.flushPlaces()
+            }
+        }
         .alert("Something went wrong", isPresented: Binding(get: { shelf.failure != nil }, set: { if !$0 { shelf.failure = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -57,6 +73,7 @@ struct MacRoot: View {
     @Environment(Shelf.self) private var shelf
     @Environment(Navigator.self) private var navigator
     @Environment(\.palette) private var palette
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var navigator = navigator
@@ -65,6 +82,27 @@ struct MacRoot: View {
                 Label(section.title, systemImage: section.symbol)
                     .badge(shelf.count(section) ?? 0)
                     .tag(section)
+            }
+            .safeAreaInset(edge: .bottom) {
+                if shelf.account.syncStopped {
+                    Button {
+                        openSettings()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color(palette.ink))
+                                .frame(width: 6, height: 6)
+                            Text("Sync stopped")
+                                .font(.inter(12, weight: .medium, relativeTo: .caption))
+                                .foregroundStyle(Color(palette.ink))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("sync-stopped-banner")
+                }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         } content: {

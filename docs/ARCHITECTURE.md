@@ -37,11 +37,14 @@ app.
 - `ffi/` is `inkling-ffi`, the boundary of ADR 0007's native app. It has no UI dependency. Its
   `Library` object wraps `inkling_books::Library` behind a mutex: `items`, `book` (which upgrades
   an old parse, as opening a book does), `add_file`, `save_article` (with a `Fetcher` that Swift
-  implements for the pictures), `set_position`, `set_archived`, `opened` and the highlights. An
+  implements for the pictures), `set_position`, `set_archived`, `set_inbox`, `opened` and the highlights. An
   `Item` carries what a row shows: its site, its word count, its excerpt, its first picture, its
-  place and when it was archived (`Entry::archived`, 0 while it is still to read). `Looks` is reading's look in `settings.json`,
-  the same file the GPUI app keeps, with the colours `inkling_core` makes for each tone. Records and
-  `InklingError` are plain values, so UniFFI stays in this crate. `apple/core.sh` builds it into
+  place, whether it is in the Inbox (`Entry::inbox`), and when it was archived (`Entry::archived`, 0 while it is still to read). `Looks` is reading's look in `settings.json`,
+  the same file the GPUI app keeps, with the colours `inkling_core` makes for each tone. `SyncClient`
+  wraps `inkling-sync` for OAuth sign-in/out (loopback on Mac, `inkling://callback` on iPhone),
+  two-phase `fetch`/`apply` sync over the live `Library` and `DocumentStore`, RSS/Atom feed
+  management, and Readwise connection (sending the token directly to the server, never storing it
+  on device). Records and `InklingError` are plain values, so UniFFI stays in this crate. `apple/core.sh` builds it into
   `apple/InklingCore`: an XCFramework of the static library for the Mac, the iPhone and the
   Simulator, the Swift that `uniffi-bindgen` writes from the Mac library, and the package's own
   Swift (`PictureFetcher`, over URLSession).
@@ -63,9 +66,12 @@ app.
 `apple/Inkling` is the SwiftUI app of ADR 0007, one target built for the Mac and the iPhone. Swift
 draws every screen; every read and write goes through `InklingCore`.
 
-- `Shelf` (`@Observable`) holds the `Library` and `Looks` for the data folder (`INKLING_DATA_DIR`, else
+- `Shelf` (`@Observable`) holds the `Library`, `Looks`, `DocumentStore`, `AiEngine` and `Account`
+  for the data folder (`INKLING_DATA_DIR`, else
   the GPUI app's folder on the Mac and the app's own Application Support on iPhone) and the items.
-  Queue, Library and Archive are filters over `items`. Calls that parse or fetch run off the main
+  Queue, Inbox, Library and Archive are filters over `items`. `Account` drives background sync at
+  launch, on app activation, 3 s after local edits settle, and every 5 minutes, as well as Google
+  sign-in/out, RSS/Atom feeds and Readwise settings. Calls that parse or fetch run off the main
   thread. Saving a link fetches the page with URLSession and hands the HTML to `save_article`, whose
   pictures `PictureFetcher` fetches over http(s) only. The reader's place is noted at once and
   written 0.6 s after scrolling stops, and when the reader closes or the app leaves the foreground.
