@@ -2,7 +2,7 @@ import SwiftUI
 
 extension View {
     /// A settings form on the app's palette, on the Mac and on iPhone: the page on Ground, each
-    /// group a Segment card, buttons in Ink, and secondary words in Muted, which reads at 4.5:1
+    /// group a `SettingsCard`, buttons in Ink, and secondary words in Muted, which reads at 4.5:1
     /// on both. The system's secondary grey is 3.4:1 on Ground.
     func settingsForm(_ palette: Palette) -> some View {
         formStyle(.grouped)
@@ -11,13 +11,38 @@ extension View {
             .foregroundStyle(Color(palette.ink), Color(palette.muted), Color(palette.muted))
             .tint(Color(palette.ink))
     }
+}
 
+/// The rows of one settings group as a Segment card outlined in Muted. Segment is only 1.1:1 on
+/// Ground, so the outline, 6.0:1, is what shows the card's edge. Forms have no section background,
+/// so each row draws its part of the outline: the sides, plus the top on the first row and the
+/// bottom on the last, leaving Hairline separators between rows. Its 26 pt corners are the
+/// system's card corners on iOS 26, which clip the row backgrounds. The Mac's grouped form draws
+/// its own cards and ignores row backgrounds, so there the rows pass through unchanged (TOB-578).
+struct SettingsCard<Content: View>: View {
+    @Environment(\.palette) private var palette
+    @ViewBuilder var content: Content
 
-    /// One group of a settings form, as a Segment card. The system's grouped rows are Surface on
-    /// Ground, 1.04:1 in Light, so the cards vanished into the page.
-    func settingsCard(_ palette: Palette) -> some View {
-        listRowBackground(Color(palette.segment))
-            .listRowSeparatorTint(Color(palette.hairline))
+    var body: some View {
+        #if os(macOS)
+        content.listRowSeparatorTint(Color(palette.hairline))
+        #else
+        Group(subviews: content) { rows in
+            ForEach(rows) { row in
+                row.listRowBackground(edge(top: row.id == rows.first?.id, bottom: row.id == rows.last?.id))
+            }
+        }
+        .listRowSeparatorTint(Color(palette.hairline))
+        #endif
+    }
+
+    private func edge(top: Bool, bottom: Bool) -> some View {
+        let shape = UnevenRoundedRectangle(topLeadingRadius: top ? 26 : 0, bottomLeadingRadius: bottom ? 26 : 0, bottomTrailingRadius: bottom ? 26 : 0, topTrailingRadius: top ? 26 : 0, style: .circular)
+        return shape.fill(Color(palette.segment))
+            .overlay(shape.stroke(Color(palette.muted), lineWidth: 2).clipShape(shape))
+            .padding(.top, top ? 0 : -2)
+            .padding(.bottom, bottom ? 0 : -2)
+            .clipped()
     }
 }
 
