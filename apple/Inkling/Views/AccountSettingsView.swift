@@ -38,16 +38,17 @@ struct AccountSettingsView: View {
                                 .accessibilityIdentifier("sync-try-again")
                         }
                     }
+                    .settingsCard(palette)
                 }
 
-                SwiftUI.Section("Account") {
+                SwiftUI.Section {
                     LabeledContent("Google") {
                         HStack(spacing: 12) {
                             if account.syncing {
                                 ProgressView()
                                     .controlSize(.small)
                             }
-                            Button("Sign out", role: .destructive) { account.signOut() }
+                            Button("Sign out") { account.signOut() }
                                 .accessibilityIdentifier("sign-out")
                         }
                     }
@@ -56,12 +57,15 @@ struct AccountSettingsView: View {
                             .disabled(account.syncing)
                             .accessibilityIdentifier("sync-now")
                     }
+                } header: {
+                    palette.caption("Account")
                 }
+                .settingsCard(palette)
 
                 SwiftUI.Section {
                     if account.readwiseConnected {
                         LabeledContent {
-                            Button("Disconnect", role: .destructive) {
+                            Button("Disconnect") {
                                 Task { await account.disconnectReadwise() }
                             }
                             .disabled(account.readwiseBusy)
@@ -71,7 +75,7 @@ struct AccountSettingsView: View {
                         }
                     } else if showingReadwiseField {
                         HStack(spacing: 8) {
-                            SecureField("", text: $readwiseToken, prompt: Text("Readwise access token"))
+                            SecureField("", text: $readwiseToken, prompt: palette.prompt("Readwise access token"))
                                 .labelsHidden()
                                 .autocorrectionDisabled()
                                 #if os(iOS)
@@ -105,10 +109,11 @@ struct AccountSettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Readwise")
+                    palette.caption("Readwise")
                 } footer: {
-                    Text("Your access token from readwise.io/access_token goes straight to your Inkling server and is never stored on this device.")
+                    palette.caption("Your access token from readwise.io/access_token goes straight to your Inkling server and is never stored on this device.")
                 }
+                .settingsCard(palette)
 
                 if includeFeeds {
                     FeedsFormSections()
@@ -123,19 +128,21 @@ struct AccountSettingsView: View {
                         .accessibilityIdentifier("copy-agents-address")
                     }
                 } footer: {
-                    Text("Connect Claude or ChatGPT to your library and drafts over MCP.")
+                    palette.caption("Connect Claude or ChatGPT to your library and drafts over MCP.")
                 }
+                .settingsCard(palette)
 
                 if let problem = account.problem {
                     SwiftUI.Section {
                         Text(problem)
                             .font(.inter(12, relativeTo: .caption))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(palette.muted))
                             .accessibilityIdentifier("account-problem")
                     }
+                    .settingsCard(palette)
                 }
             }
-            .formStyle(.grouped)
+            .settingsForm(palette)
             .scrollDismissesKeyboard(.interactively)
             .task {
                 if includeFeeds {
@@ -149,14 +156,14 @@ struct AccountSettingsView: View {
         VStack(spacing: 18) {
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color(palette.muted))
 
             VStack(spacing: 6) {
                 Text("Sign in to Inkling")
                     .font(.serif(22, weight: .semibold, relativeTo: .title2))
                 Text("Sync documents, books, reading places and highlights across your Mac and iPhone, follow RSS feeds, and connect Readwise.")
                     .font(.inter(13, relativeTo: .callout))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
             }
@@ -195,7 +202,7 @@ struct AccountSettingsView: View {
             if let problem = account.problem {
                 Text(problem)
                     .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
                     .accessibilityIdentifier("account-problem")
@@ -230,7 +237,7 @@ struct FeedsFormSections: View {
     var body: some View {
         SwiftUI.Section {
             HStack(spacing: 8) {
-                TextField("", text: $feedURL, prompt: Text("Feed or site URL"))
+                TextField("", text: $feedURL, prompt: palette.prompt("Feed or site URL"))
                     .labelsHidden()
                     .autocorrectionDisabled()
                     #if os(iOS)
@@ -258,20 +265,21 @@ struct FeedsFormSections: View {
             if let problem = account.feedProblem {
                 Text(problem)
                     .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
                     .accessibilityIdentifier("feed-problem")
             }
         } header: {
-            Text("Follow a Feed")
+            palette.caption("Follow a Feed")
         } footer: {
-            Text("Paste an RSS or Atom feed address, or a site’s address to discover its feed.")
+            palette.caption("Paste an RSS or Atom feed address, or a site’s address to discover its feed.")
         }
+        .settingsCard(palette)
 
         SwiftUI.Section {
             if account.feeds.isEmpty {
                 Text(account.feedsLoading ? "Loading feeds…" : "No feeds followed yet.")
                     .font(.inter(13, relativeTo: .callout))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
             } else {
                 ForEach(account.feeds, id: \.id) { feed in
                     HStack(spacing: 12) {
@@ -281,18 +289,18 @@ struct FeedsFormSections: View {
                                 .lineLimit(1)
                             Text(feed.url)
                                 .font(.inter(12, relativeTo: .caption))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color(palette.muted))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             if let error = feed.lastError, !error.isEmpty {
                                 Text(error)
                                     .font(.inter(11, relativeTo: .caption2))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color(palette.muted))
                                     .lineLimit(2)
                             }
                         }
                         Spacer(minLength: 8)
-                        Button("Unfollow", role: .destructive) {
+                        Button("Unfollow") {
                             Task { await account.unfollowFeed(feed) }
                         }
                         .disabled(account.feedBusy)
@@ -308,10 +316,11 @@ struct FeedsFormSections: View {
                 }
             }
         } header: {
-            Text("Followed Feeds")
+            palette.caption("Followed Feeds")
         } footer: {
-            Text("New posts arrive in your Inbox on sync. Unfollowing keeps articles already in your library.")
+            palette.caption("New posts arrive in your Inbox on sync. Unfollowing keeps articles already in your library.")
         }
+        .settingsCard(palette)
     }
 
     private func follow() {
@@ -362,7 +371,7 @@ struct FeedsSettingsView: View {
             Form {
                 FeedsFormSections()
             }
-            .formStyle(.grouped)
+            .settingsForm(palette)
             .scrollDismissesKeyboard(.interactively)
             .task { await shelf.account.refreshFeeds() }
         }

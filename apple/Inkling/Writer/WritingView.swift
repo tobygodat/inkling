@@ -81,9 +81,6 @@ struct WritingView: View {
                     if !model.isReviewing, let notice = model.notice {
                         Notice(words: notice, missingKey: model.missingKeyProvider != nil, palette: palette, column: column) {
                             shelf.asker.choosingProvider = true
-                            #if os(iOS)
-                            shelf.asker.composing = true
-                            #endif
                         }
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -320,6 +317,7 @@ private struct Notice: View {
 /// Provider choice, Keychain API key entry and optional model override.
 struct ProviderPanel: View {
     @Environment(Shelf.self) private var shelf
+    @Environment(\.palette) private var palette
     @State private var selected: AiProvider = .claude
     @State private var apiKey = ""
     @State private var modelName = ""
@@ -334,10 +332,11 @@ struct ProviderPanel: View {
                 Text("ChatGPT").tag(AiProvider.chatGpt)
             }
             .pickerStyle(.segmented)
+            .settingsCard(palette)
 
-            SwiftUI.Section("API Key") {
+            SwiftUI.Section {
                 HStack {
-                    SecureField(hasKey ? "Saved in Keychain" : "Paste your \(providerLabel(provider: selected)) key", text: $apiKey)
+                    SecureField("", text: $apiKey, prompt: palette.prompt(hasKey ? "Saved in Keychain" : "Paste your \(providerLabel(provider: selected)) key"))
                         .accessibilityIdentifier("provider-key-field")
                     if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button("Save") { saveKey() }
@@ -348,27 +347,33 @@ struct ProviderPanel: View {
                     HStack {
                         Label("Key saved", systemImage: "checkmark.circle.fill")
                             .font(.inter(12, weight: .medium, relativeTo: .caption))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(palette.muted))
                         Spacer()
-                        Button("Remove", role: .destructive) { removeKey() }
+                        Button("Remove") { removeKey() }
                             .font(.inter(12, relativeTo: .caption))
                     }
                 }
+            } header: {
+                palette.caption("API Key")
             }
+            .settingsCard(palette)
 
-            SwiftUI.Section("Model") {
-                TextField(providerDefaultModel(provider: selected), text: $modelName)
+            SwiftUI.Section {
+                TextField("", text: $modelName, prompt: palette.prompt(providerDefaultModel(provider: selected)))
                     .onSubmit { saveModel() }
                     .accessibilityIdentifier("provider-model-field")
+            } header: {
+                palette.caption("Model")
             }
+            .settingsCard(palette)
 
             if let statusMessage {
                 Text(statusMessage)
                     .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(palette.muted))
             }
         }
-        .formStyle(.grouped)
+        .settingsForm(palette)
         .onAppear { load() }
         .onChange(of: selected) {
             try? shelf.ai.setProvider(provider: selected)
