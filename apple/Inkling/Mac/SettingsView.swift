@@ -47,19 +47,22 @@ struct SettingsView: View {
             }
             Tab("Library", systemImage: "books.vertical", value: .library) {
                 Form {
-                    LabeledContent("Folder") {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            Text(shelf.folder.path(percentEncoded: false))
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                                .truncationMode(.middle)
-                                .lineLimit(1)
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([shelf.folder]) }
+                    SwiftUI.Section {
+                        LabeledContent("Folder") {
+                            VStack(alignment: .trailing, spacing: 6) {
+                                Text(shelf.folder.path(percentEncoded: false))
+                                    .font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .truncationMode(.middle)
+                                    .lineLimit(1)
+                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([shelf.folder]) }
+                            }
                         }
+                        LabeledContent("Items", value: "\(shelf.items.count)")
                     }
-                    LabeledContent("Items", value: "\(shelf.items.count)")
+                    .settingsCard(palette)
                 }
-                .formStyle(.grouped)
+                .settingsForm(palette)
                 .frame(width: 640, height: 160)
             }
         }

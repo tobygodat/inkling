@@ -51,7 +51,7 @@ final class Asker {
     private(set) var problem: String?
     private(set) var missingKey = false
     var draft = ""
-    /// The composer is open: a sheet on iPhone, the bar grown upward on the Mac.
+    /// The composer is open: the bar grown upward, above the keyboard on iPhone.
     var composing = false
     /// The + sheet is open.
     var adding = false
@@ -64,6 +64,9 @@ final class Asker {
     /// Whether the selection on screen goes with the question.
     var withSelection = true
     @ObservationIgnored private var session: AnswerSession?
+    /// Which question is on its way. Cancelling or asking again moves it on, so a cancelled
+    /// question's sources, session or late answer can't land on the next one.
+    @ObservationIgnored private var question = 0
 
     init(folder: URL) {
         conversation = Conversation.open(data: folder.path)
@@ -186,13 +189,15 @@ final class Asker {
         self.attached = []
         let library = shelf.library
         let ai = shelf.ai
+        question += 1
+        let current = question
         pending = Turn(asked: asked, context: label, answer: "", citations: [], edit: false, made: Self.now())
         Task { [weak self] in
             let sources = (try? await Shelf.offMain { library.sources(asked: asked, about: about?.text, attached: attached) }) ?? []
             let bridge = AnswerBridge { [weak self] state in
-                Task { @MainActor [weak self] in self?.update(state) }
+                Task { @MainActor [weak self] in self?.update(state, for: current) }
             }
-            guard let self else { return }
+            guard let self, self.question == current else { return }
             do {
                 self.session = try ai.startQuestion(asked: asked, about: about, sources: sources, listener: bridge)
             } catch {
@@ -202,6 +207,7 @@ final class Asker {
     }
 
     func cancel() {
+        question += 1
         session?.cancel()
         session = nil
         pending = nil
@@ -214,8 +220,8 @@ final class Asker {
         turns = conversation.turns()
     }
 
-    private func update(_ state: AnswerState) {
-        guard var turn = pending else { return }
+    private func update(_ state: AnswerState, for asked: Int) {
+        guard asked == question, var turn = pending else { return }
         switch state {
         case .asking(let text):
             turn.answer = text

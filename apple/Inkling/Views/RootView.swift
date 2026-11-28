@@ -184,23 +184,9 @@ struct PhoneRoot: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .modifier(AskAccessory(hidden: navigator.immersed))
-        .sheet(item: Binding(get: { asker.composing ? AskSheet.composer : asker.adding ? .add : nil }, set: { if $0 == nil { asker.composing = false; asker.adding = false } })) { sheet in
-            switch sheet {
-            case .composer:
-                AskPanel()
-                    .presentationDetents([.medium, .large])
-                    .presentationBackground(Color(palette.ground))
-                    .sheet(isPresented: $asker.choosingProvider) { providerSheet }
-                    .sheet(isPresented: $asker.adding) { addSheet }
-            case .add:
-                addSheet
-            }
-        }
-    }
-
-    private enum AskSheet: Identifiable {
-        case composer, add
-        var id: Self { self }
+        .overlay { PhoneAskDock() }
+        .sheet(isPresented: $asker.adding) { addSheet }
+        .sheet(isPresented: $asker.choosingProvider) { providerSheet }
     }
 
     private func reading(_ section: Section) -> some View {
