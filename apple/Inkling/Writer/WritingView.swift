@@ -81,9 +81,6 @@ struct WritingView: View {
                     if !model.isReviewing, let notice = model.notice {
                         Notice(words: notice, missingKey: model.missingKeyProvider != nil, palette: palette, column: column) {
                             shelf.asker.choosingProvider = true
-                            #if os(iOS)
-                            shelf.asker.composing = true
-                            #endif
                         }
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -320,6 +317,7 @@ private struct Notice: View {
 /// Provider choice, Keychain API key entry and optional model override.
 struct ProviderPanel: View {
     @Environment(Shelf.self) private var shelf
+    @Environment(\.palette) private var palette
     @State private var selected: AiProvider = .claude
     @State private var apiKey = ""
     @State private var modelName = ""
@@ -334,6 +332,7 @@ struct ProviderPanel: View {
                 Text("ChatGPT").tag(AiProvider.chatGpt)
             }
             .pickerStyle(.segmented)
+            .settingsCard(palette)
 
             SwiftUI.Section("API Key") {
                 HStack {
@@ -350,17 +349,19 @@ struct ProviderPanel: View {
                             .font(.inter(12, weight: .medium, relativeTo: .caption))
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("Remove", role: .destructive) { removeKey() }
+                        Button("Remove") { removeKey() }
                             .font(.inter(12, relativeTo: .caption))
                     }
                 }
             }
+            .settingsCard(palette)
 
             SwiftUI.Section("Model") {
                 TextField(providerDefaultModel(provider: selected), text: $modelName)
                     .onSubmit { saveModel() }
                     .accessibilityIdentifier("provider-model-field")
             }
+            .settingsCard(palette)
 
             if let statusMessage {
                 Text(statusMessage)
@@ -368,7 +369,7 @@ struct ProviderPanel: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
+        .settingsForm(palette)
         .onAppear { load() }
         .onChange(of: selected) {
             try? shelf.ai.setProvider(provider: selected)

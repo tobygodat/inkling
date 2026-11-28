@@ -18,6 +18,10 @@ final class Navigator {
     /// What is open in the Inbox and the Library on iPhone, so a citation can open its passage.
     var inboxPath: [String] = []
     var libraryPath: [String] = []
+    #else
+    /// The Ask bar folds to a short pill while the page scrolls on, as the iPhone's does with
+    /// the tab bar, and opens out again on a scroll back.
+    var askFolded = false
     #endif
     /// A passage to show once its item's reader opens: a citation the Ask bar was tapped on.
     var passage: (id: String, passage: Passage)?

@@ -90,16 +90,24 @@ writer picks one.
 - **Ask bar (native app).** One bar at the foot of every screen: + and the words "Ask about" what
   is on screen ("Ask about Walden", "Ask about this draft", "Ask" on a list). On iPhone it is the
   tab bar's bottom accessory, folding away with the tab bar on a scroll down and hiding with it in
-  the immersive reader; on the Mac a glass pill at the foot of the page. The pill opens the
+  the immersive reader; on the Mac a glass pill at the foot of the page, which folds to a short pill
+  while the page scrolls on and opens out on a scroll back. The pill opens the
   composer: the conversation above, then a Surface card with a Hairline border holding what goes
   with the question as Segment chips (the screen, the selection, attached books), the field, +,
-  the provider on a Segment capsule and a 32 pt round Send in Ink. + opens "Add to question": the
+  the provider on a Segment capsule and a 32 pt round Send in Ink. On iPhone the composer is a card
+  sitting on the keyboard, never a sheet, and it dims nothing: the field opens as one line and grows
+  with the question up to five, with +, the provider and Send in one row under it. Its chips show
+  once a selection or a book goes with the question, since the field's words name the screen.
+  Putting the keyboard away before anything is asked returns to the pill. + opens "Add to question": the
   suggestions for the screen as large Segment tiles (Fix grammar, Find a word and Next line in
   Writing; Explain and Summarize in the reader), then the selection and "A book or article". Each
   turn shows where it was asked in muted Inter, the question in Inter semibold, the answer in the
   body face with each citation number raised in Link, and the cited passages under it on Segment,
   each opening its book at the passage. An edit asked in Writing goes to the inline review, and
   its turn says so. The conversation is one, across tabs and launches.
+- **Settings.** Profile, Account and Feeds, the provider, and the Mac's Settings window are grouped
+  forms on Ground, each group a Segment card with Hairline separators and its buttons in Ink. Red
+  stays for changes, so Sign out, Disconnect and Unfollow are in Ink too.
 - **Key screen.** Provider choice, masked key field, model field.
 - **Cog.** A 32 pt button with the cog icon. Hover opens its menu and leaving closes it; a click pins
   it open until a second click, Escape or a choice. Rows: Library with the book icon (Writing with

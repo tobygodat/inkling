@@ -89,15 +89,18 @@ struct ProfileView: View {
                     Text("Sync your library and drafts, follow feeds and receive newsletters.")
                 }
             }
+            .settingsCard(palette)
 
             SwiftUI.Section {
                 ReadingRows()
             }
+            .settingsCard(palette)
 
             if account.signedIn {
                 SwiftUI.Section("Newsletters") {
                     NewsletterRow()
                 }
+                .settingsCard(palette)
             }
 
             SwiftUI.Section {
@@ -126,28 +129,30 @@ struct ProfileView: View {
                 }
                 .accessibilityIdentifier("profile-provider")
             }
+            .settingsCard(palette)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(Color(palette.ground))
+        .settingsForm(palette)
     }
 }
 #else
 /// Profile in the Mac's Settings: where newsletters go, and the highlights and the archive.
 struct ProfileSettingsView: View {
     @Environment(Shelf.self) private var shelf
+    @Environment(\.palette) private var palette
 
     var body: some View {
         NavigationStack {
             Form {
                 if shelf.account.signedIn {
                     SwiftUI.Section("Newsletters") { NewsletterRow() }
+                    .settingsCard(palette)
                 }
                 SwiftUI.Section("Reading") {
                     ReadingRows()
                 }
+                .settingsCard(palette)
             }
-            .formStyle(.grouped)
+            .settingsForm(palette)
         }
     }
 }

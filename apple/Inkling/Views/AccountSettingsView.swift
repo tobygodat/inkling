@@ -38,6 +38,7 @@ struct AccountSettingsView: View {
                                 .accessibilityIdentifier("sync-try-again")
                         }
                     }
+                    .settingsCard(palette)
                 }
 
                 SwiftUI.Section("Account") {
@@ -47,7 +48,7 @@ struct AccountSettingsView: View {
                                 ProgressView()
                                     .controlSize(.small)
                             }
-                            Button("Sign out", role: .destructive) { account.signOut() }
+                            Button("Sign out") { account.signOut() }
                                 .accessibilityIdentifier("sign-out")
                         }
                     }
@@ -57,11 +58,12 @@ struct AccountSettingsView: View {
                             .accessibilityIdentifier("sync-now")
                     }
                 }
+                .settingsCard(palette)
 
                 SwiftUI.Section {
                     if account.readwiseConnected {
                         LabeledContent {
-                            Button("Disconnect", role: .destructive) {
+                            Button("Disconnect") {
                                 Task { await account.disconnectReadwise() }
                             }
                             .disabled(account.readwiseBusy)
@@ -109,6 +111,7 @@ struct AccountSettingsView: View {
                 } footer: {
                     Text("Your access token from readwise.io/access_token goes straight to your Inkling server and is never stored on this device.")
                 }
+                .settingsCard(palette)
 
                 if includeFeeds {
                     FeedsFormSections()
@@ -125,6 +128,7 @@ struct AccountSettingsView: View {
                 } footer: {
                     Text("Connect Claude or ChatGPT to your library and drafts over MCP.")
                 }
+                .settingsCard(palette)
 
                 if let problem = account.problem {
                     SwiftUI.Section {
@@ -133,9 +137,10 @@ struct AccountSettingsView: View {
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("account-problem")
                     }
+                    .settingsCard(palette)
                 }
             }
-            .formStyle(.grouped)
+            .settingsForm(palette)
             .scrollDismissesKeyboard(.interactively)
             .task {
                 if includeFeeds {
@@ -266,6 +271,7 @@ struct FeedsFormSections: View {
         } footer: {
             Text("Paste an RSS or Atom feed address, or a site’s address to discover its feed.")
         }
+        .settingsCard(palette)
 
         SwiftUI.Section {
             if account.feeds.isEmpty {
@@ -292,7 +298,7 @@ struct FeedsFormSections: View {
                             }
                         }
                         Spacer(minLength: 8)
-                        Button("Unfollow", role: .destructive) {
+                        Button("Unfollow") {
                             Task { await account.unfollowFeed(feed) }
                         }
                         .disabled(account.feedBusy)
@@ -312,6 +318,7 @@ struct FeedsFormSections: View {
         } footer: {
             Text("New posts arrive in your Inbox on sync. Unfollowing keeps articles already in your library.")
         }
+        .settingsCard(palette)
     }
 
     private func follow() {
@@ -362,7 +369,7 @@ struct FeedsSettingsView: View {
             Form {
                 FeedsFormSections()
             }
-            .formStyle(.grouped)
+            .settingsForm(palette)
             .scrollDismissesKeyboard(.interactively)
             .task { await shelf.account.refreshFeeds() }
         }
