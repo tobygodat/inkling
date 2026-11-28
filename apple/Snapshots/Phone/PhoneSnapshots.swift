@@ -365,10 +365,10 @@ nonisolated final class PhoneSnapshots: XCTestCase {
 
     /// Taps `toggle`'s switch until it is `on`, at most three times, and says whether it got there.
     @MainActor private func turn(_ toggle: XCUIElement, on: Bool) -> Bool {
-        let wanted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", on ? "1" : "0"), object: toggle)
         for _ in 0..<3 {
             if toggle.value as? String == (on ? "1" : "0") { return true }
             toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            let wanted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", on ? "1" : "0"), object: toggle)
             if XCTWaiter.wait(for: [wanted], timeout: 3) == .completed { return true }
         }
         return false
