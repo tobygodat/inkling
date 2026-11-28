@@ -336,7 +336,9 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-feedback-panel")
 
             app.buttons["feedback-send"].tap()
-            XCTAssertTrue(app.otherElements["feedback-sent"].waitForExistence(timeout: 10), "Send says it was sent")
+            // The fake server rewrites its whole file on every request, and the first sync after
+            // sign-in uploads the demo library through it, so a slow runner queues the send.
+            XCTAssertTrue(app.otherElements["feedback-sent"].waitForExistence(timeout: 90), "Send says it was sent: \(app.staticTexts["feedback-problem"].exists ? app.staticTexts["feedback-problem"].label : "no problem shown")")
             sleep(1)
             shoot("\(name)-feedback-sent")
 
