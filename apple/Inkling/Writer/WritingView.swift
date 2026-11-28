@@ -326,46 +326,49 @@ struct ProviderPanel: View {
 
     var body: some View {
         Form {
-            Picker("Provider", selection: $selected) {
-                Text("Claude").tag(AiProvider.claude)
-                Text("Gemini").tag(AiProvider.gemini)
-                Text("ChatGPT").tag(AiProvider.chatGpt)
+            SettingsCard {
+                Picker("Provider", selection: $selected) {
+                    Text("Claude").tag(AiProvider.claude)
+                    Text("Gemini").tag(AiProvider.gemini)
+                    Text("ChatGPT").tag(AiProvider.chatGpt)
+                }
+                .pickerStyle(.segmented)
             }
-            .pickerStyle(.segmented)
-            .settingsCard(palette)
 
             SwiftUI.Section {
-                HStack {
-                    SecureField("", text: $apiKey, prompt: palette.prompt(hasKey ? "Saved in Keychain" : "Paste your \(providerLabel(provider: selected)) key"))
-                        .accessibilityIdentifier("provider-key-field")
-                    if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button("Save") { saveKey() }
-                            .buttonStyle(.borderedProminent)
-                    }
-                }
-                if hasKey {
+                SettingsCard {
                     HStack {
-                        Label("Key saved", systemImage: "checkmark.circle.fill")
-                            .font(.inter(12, weight: .medium, relativeTo: .caption))
-                            .foregroundStyle(Color(palette.muted))
-                        Spacer()
-                        Button("Remove") { removeKey() }
-                            .font(.inter(12, relativeTo: .caption))
+                        SecureField("", text: $apiKey, prompt: palette.prompt(hasKey ? "Saved in Keychain" : "Paste your \(providerLabel(provider: selected)) key"))
+                            .accessibilityIdentifier("provider-key-field")
+                        if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button("Save") { saveKey() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    if hasKey {
+                        HStack {
+                            Label("Key saved", systemImage: "checkmark.circle.fill")
+                                .font(.inter(12, weight: .medium, relativeTo: .caption))
+                                .foregroundStyle(Color(palette.muted))
+                            Spacer()
+                            Button("Remove") { removeKey() }
+                                .font(.inter(12, relativeTo: .caption))
+                        }
                     }
                 }
             } header: {
                 palette.caption("API Key")
             }
-            .settingsCard(palette)
 
             SwiftUI.Section {
-                TextField("", text: $modelName, prompt: palette.prompt(providerDefaultModel(provider: selected)))
-                    .onSubmit { saveModel() }
-                    .accessibilityIdentifier("provider-model-field")
+                SettingsCard {
+                    TextField("", text: $modelName, prompt: palette.prompt(providerDefaultModel(provider: selected)))
+                        .onSubmit { saveModel() }
+                        .accessibilityIdentifier("provider-model-field")
+                }
             } header: {
                 palette.caption("Model")
             }
-            .settingsCard(palette)
 
             if let statusMessage {
                 Text(statusMessage)

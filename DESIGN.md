@@ -106,8 +106,9 @@ writer picks one.
   each opening its book at the passage. An edit asked in Writing goes to the inline review, and
   its turn says so. The conversation is one, across tabs and launches.
 - **Settings.** Profile, Account and Feeds, the provider, and the Mac's Settings window are grouped
-  forms on Ground, each group a Segment card with Hairline separators and its buttons in Ink. Red
-  stays for changes, so Sign out, Disconnect and Unfollow are in Ink too.
+  forms on Ground, each group a Segment card with Hairline separators and its buttons in Ink. On
+  iPhone the card is outlined in Muted. Headers, footers and secondary words are in Muted. Red stays for changes, so
+  Sign out, Disconnect and Unfollow are in Ink too.
 - **Key screen.** Provider choice, masked key field, model field.
 - **Cog.** A 32 pt button with the cog icon. Hover opens its menu and leaving closes it; a click pins
   it open until a second click, Escape or a choice. Rows: Library with the book icon (Writing with

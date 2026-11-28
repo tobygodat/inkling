@@ -21,91 +21,95 @@ struct AccountSettingsView: View {
             Form {
                 if account.syncStopped {
                     SwiftUI.Section {
-                        HStack {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(.primary)
-                                    .frame(width: 6, height: 6)
-                                Text("Sync stopped")
+                        SettingsCard {
+                            HStack {
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(.primary)
+                                        .frame(width: 6, height: 6)
+                                    Text("Sync stopped")
+                                }
+                                Spacer()
+                                Button("Try again") { account.syncNow() }
+                                    #if os(iOS)
+                                    .foregroundStyle(Color(palette.surface))
+                                    .tint(Color(palette.ink))
+                                    #endif
+                                    .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("sync-try-again")
                             }
-                            Spacer()
-                            Button("Try again") { account.syncNow() }
-                                #if os(iOS)
-                                .foregroundStyle(Color(palette.surface))
-                                .tint(Color(palette.ink))
-                                #endif
-                                .buttonStyle(.borderedProminent)
-                                .accessibilityIdentifier("sync-try-again")
                         }
                     }
-                    .settingsCard(palette)
                 }
 
                 SwiftUI.Section {
-                    LabeledContent("Google") {
-                        HStack(spacing: 12) {
-                            if account.syncing {
-                                ProgressView()
-                                    .controlSize(.small)
+                    SettingsCard {
+                        LabeledContent("Google") {
+                            HStack(spacing: 12) {
+                                if account.syncing {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                                Button("Sign out") { account.signOut() }
+                                    .accessibilityIdentifier("sign-out")
                             }
-                            Button("Sign out") { account.signOut() }
-                                .accessibilityIdentifier("sign-out")
                         }
-                    }
-                    LabeledContent("Sync") {
-                        Button(account.syncing ? "Syncing…" : "Sync Now") { account.syncNow() }
-                            .disabled(account.syncing)
-                            .accessibilityIdentifier("sync-now")
+                        LabeledContent("Sync") {
+                            Button(account.syncing ? "Syncing…" : "Sync Now") { account.syncNow() }
+                                .disabled(account.syncing)
+                                .accessibilityIdentifier("sync-now")
+                        }
                     }
                 } header: {
                     palette.caption("Account")
                 }
-                .settingsCard(palette)
 
                 SwiftUI.Section {
-                    if account.readwiseConnected {
-                        LabeledContent {
-                            Button("Disconnect") {
-                                Task { await account.disconnectReadwise() }
-                            }
-                            .disabled(account.readwiseBusy)
-                            .accessibilityIdentifier("readwise-disconnect")
-                        } label: {
-                            Label("Connected", systemImage: "checkmark.circle.fill")
-                        }
-                    } else if showingReadwiseField {
-                        HStack(spacing: 8) {
-                            SecureField("", text: $readwiseToken, prompt: palette.prompt("Readwise access token"))
-                                .labelsHidden()
-                                .autocorrectionDisabled()
-                                #if os(iOS)
-                                .textInputAutocapitalization(.never)
-                                #endif
-                                .focused($readwiseFocused)
-                                .onSubmit { connectReadwise() }
-                                .accessibilityIdentifier("readwise-token-field")
-                            Button {
-                                connectReadwise()
+                    SettingsCard {
+                        if account.readwiseConnected {
+                            LabeledContent {
+                                Button("Disconnect") {
+                                    Task { await account.disconnectReadwise() }
+                                }
+                                .disabled(account.readwiseBusy)
+                                .accessibilityIdentifier("readwise-disconnect")
                             } label: {
-                                Text("Connect")
+                                Label("Connected", systemImage: "checkmark.circle.fill")
+                            }
+                        } else if showingReadwiseField {
+                            HStack(spacing: 8) {
+                                SecureField("", text: $readwiseToken, prompt: palette.prompt("Readwise access token"))
+                                    .labelsHidden()
+                                    .autocorrectionDisabled()
                                     #if os(iOS)
-                                    .foregroundStyle(Color(palette.surface))
+                                    .textInputAutocapitalization(.never)
                                     #endif
+                                    .focused($readwiseFocused)
+                                    .onSubmit { connectReadwise() }
+                                    .accessibilityIdentifier("readwise-token-field")
+                                Button {
+                                    connectReadwise()
+                                } label: {
+                                    Text("Connect")
+                                        #if os(iOS)
+                                        .foregroundStyle(Color(palette.surface))
+                                        #endif
+                                }
+                                .buttonStyle(.borderedProminent)
+                                #if os(iOS)
+                                .tint(Color(palette.ink))
+                                #endif
+                                .disabled(readwiseToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || account.readwiseBusy)
+                                .accessibilityIdentifier("readwise-submit")
                             }
-                            .buttonStyle(.borderedProminent)
-                            #if os(iOS)
-                            .tint(Color(palette.ink))
-                            #endif
-                            .disabled(readwiseToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || account.readwiseBusy)
-                            .accessibilityIdentifier("readwise-submit")
-                        }
-                    } else {
-                        LabeledContent("Readwise") {
-                            Button("Connect") {
-                                account.problem = nil
-                                showingReadwiseField = true
+                        } else {
+                            LabeledContent("Readwise") {
+                                Button("Connect") {
+                                    account.problem = nil
+                                    showingReadwiseField = true
+                                }
+                                .accessibilityIdentifier("readwise-connect")
                             }
-                            .accessibilityIdentifier("readwise-connect")
                         }
                     }
                 } header: {
@@ -113,33 +117,34 @@ struct AccountSettingsView: View {
                 } footer: {
                     palette.caption("Your access token from readwise.io/access_token goes straight to your Inkling server and is never stored on this device.")
                 }
-                .settingsCard(palette)
 
                 if includeFeeds {
                     FeedsFormSections()
                 }
 
                 SwiftUI.Section {
-                    LabeledContent("Agents") {
-                        Button(account.copiedAgents ? "Copied" : "Copy address") {
-                            account.copyAgentsAddress()
+                    SettingsCard {
+                        LabeledContent("Agents") {
+                            Button(account.copiedAgents ? "Copied" : "Copy address") {
+                                account.copyAgentsAddress()
+                            }
+                            .disabled(account.agentsAddress == nil)
+                            .accessibilityIdentifier("copy-agents-address")
                         }
-                        .disabled(account.agentsAddress == nil)
-                        .accessibilityIdentifier("copy-agents-address")
                     }
                 } footer: {
                     palette.caption("Connect Claude or ChatGPT to your library and drafts over MCP.")
                 }
-                .settingsCard(palette)
 
                 if let problem = account.problem {
                     SwiftUI.Section {
-                        Text(problem)
-                            .font(.inter(12, relativeTo: .caption))
-                            .foregroundStyle(Color(palette.muted))
-                            .accessibilityIdentifier("account-problem")
+                        SettingsCard {
+                            Text(problem)
+                                .font(.inter(12, relativeTo: .caption))
+                                .foregroundStyle(Color(palette.muted))
+                                .accessibilityIdentifier("account-problem")
+                        }
                     }
-                    .settingsCard(palette)
                 }
             }
             .settingsForm(palette)
@@ -236,83 +241,86 @@ struct FeedsFormSections: View {
 
     var body: some View {
         SwiftUI.Section {
-            HStack(spacing: 8) {
-                TextField("", text: $feedURL, prompt: palette.prompt("Feed or site URL"))
-                    .labelsHidden()
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                    .focused($fieldFocused)
-                    .onSubmit { follow() }
-                    .accessibilityIdentifier("feed-url-field")
-                Button {
-                    follow()
-                } label: {
-                    Text("Follow")
+            SettingsCard {
+                HStack(spacing: 8) {
+                    TextField("", text: $feedURL, prompt: palette.prompt("Feed or site URL"))
+                        .labelsHidden()
+                        .autocorrectionDisabled()
                         #if os(iOS)
-                        .foregroundStyle(feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(palette.muted) : Color(palette.surface))
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
                         #endif
+                        .focused($fieldFocused)
+                        .onSubmit { follow() }
+                        .accessibilityIdentifier("feed-url-field")
+                    Button {
+                        follow()
+                    } label: {
+                        Text("Follow")
+                            #if os(iOS)
+                            .foregroundStyle(feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(palette.muted) : Color(palette.surface))
+                            #endif
+                    }
+                    .buttonStyle(.borderedProminent)
+                    #if os(iOS)
+                    .tint(Color(palette.ink))
+                    #endif
+                    .disabled(feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || account.feedBusy)
+                    .accessibilityIdentifier("follow-feed")
                 }
-                .buttonStyle(.borderedProminent)
-                #if os(iOS)
-                .tint(Color(palette.ink))
-                #endif
-                .disabled(feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || account.feedBusy)
-                .accessibilityIdentifier("follow-feed")
-            }
-            if let problem = account.feedProblem {
-                Text(problem)
-                    .font(.inter(12, relativeTo: .caption))
-                    .foregroundStyle(Color(palette.muted))
-                    .accessibilityIdentifier("feed-problem")
+                if let problem = account.feedProblem {
+                    Text(problem)
+                        .font(.inter(12, relativeTo: .caption))
+                        .foregroundStyle(Color(palette.muted))
+                        .accessibilityIdentifier("feed-problem")
+                }
             }
         } header: {
             palette.caption("Follow a Feed")
         } footer: {
             palette.caption("Paste an RSS or Atom feed address, or a site’s address to discover its feed.")
         }
-        .settingsCard(palette)
 
         SwiftUI.Section {
-            if account.feeds.isEmpty {
-                Text(account.feedsLoading ? "Loading feeds…" : "No feeds followed yet.")
-                    .font(.inter(13, relativeTo: .callout))
-                    .foregroundStyle(Color(palette.muted))
-            } else {
-                ForEach(account.feeds, id: \.id) { feed in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(feed.title)
-                                .font(.inter(14, weight: .medium, relativeTo: .body))
-                                .lineLimit(1)
-                            Text(feed.url)
-                                .font(.inter(12, relativeTo: .caption))
-                                .foregroundStyle(Color(palette.muted))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            if let error = feed.lastError, !error.isEmpty {
-                                Text(error)
-                                    .font(.inter(11, relativeTo: .caption2))
+            SettingsCard {
+                if account.feeds.isEmpty {
+                    Text(account.feedsLoading ? "Loading feeds…" : "No feeds followed yet.")
+                        .font(.inter(13, relativeTo: .callout))
+                        .foregroundStyle(Color(palette.muted))
+                } else {
+                    ForEach(account.feeds, id: \.id) { feed in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(feed.title)
+                                    .font(.inter(14, weight: .medium, relativeTo: .body))
+                                    .lineLimit(1)
+                                Text(feed.url)
+                                    .font(.inter(12, relativeTo: .caption))
                                     .foregroundStyle(Color(palette.muted))
-                                    .lineLimit(2)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                if let error = feed.lastError, !error.isEmpty {
+                                    Text(error)
+                                        .font(.inter(11, relativeTo: .caption2))
+                                        .foregroundStyle(Color(palette.muted))
+                                        .lineLimit(2)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Button("Unfollow") {
+                                Task { await account.unfollowFeed(feed) }
+                            }
+                            .disabled(account.feedBusy)
+                            .accessibilityIdentifier("unfollow-feed-\(feed.title)")
+                        }
+                        #if os(iOS)
+                        .swipeActions(edge: .trailing) {
+                            Button("Unfollow", role: .destructive) {
+                                Task { await account.unfollowFeed(feed) }
                             }
                         }
-                        Spacer(minLength: 8)
-                        Button("Unfollow") {
-                            Task { await account.unfollowFeed(feed) }
-                        }
-                        .disabled(account.feedBusy)
-                        .accessibilityIdentifier("unfollow-feed-\(feed.title)")
+                        #endif
                     }
-                    #if os(iOS)
-                    .swipeActions(edge: .trailing) {
-                        Button("Unfollow", role: .destructive) {
-                            Task { await account.unfollowFeed(feed) }
-                        }
-                    }
-                    #endif
                 }
             }
         } header: {
@@ -320,7 +328,6 @@ struct FeedsFormSections: View {
         } footer: {
             palette.caption("New posts arrive in your Inbox on sync. Unfollowing keeps articles already in your library.")
         }
-        .settingsCard(palette)
     }
 
     private func follow() {

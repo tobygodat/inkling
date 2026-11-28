@@ -53,85 +53,89 @@ struct ProfileView: View {
     var body: some View {
         Form {
             SwiftUI.Section {
-                if account.signedIn {
-                    LabeledContent {
-                        if account.syncStopped {
-                            Button("Try again") { account.syncNow() }
-                                .accessibilityIdentifier("sync-try-again")
-                        } else if account.syncing {
-                            ProgressView().controlSize(.small)
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
+                SettingsCard {
+                    if account.signedIn {
+                        LabeledContent {
                             if account.syncStopped {
-                                Circle().fill(Color(palette.ink)).frame(width: 6, height: 6)
-                                    .accessibilityIdentifier("sync-dot")
+                                Button("Try again") { account.syncNow() }
+                                    .accessibilityIdentifier("sync-try-again")
+                            } else if account.syncing {
+                                ProgressView().controlSize(.small)
                             }
-                            Text(account.syncStopped ? "Sync stopped" : "Signed in with Google")
+                        } label: {
+                            HStack(spacing: 8) {
+                                if account.syncStopped {
+                                    Circle().fill(Color(palette.ink)).frame(width: 6, height: 6)
+                                        .accessibilityIdentifier("sync-dot")
+                                }
+                                Text(account.syncStopped ? "Sync stopped" : "Signed in with Google")
+                            }
                         }
-                    }
-                } else {
-                    Button {
-                        account.signIn()
-                    } label: {
-                        HStack {
-                            Text("Sign in with Google")
-                                .font(.inter(16, weight: .semibold, relativeTo: .body))
-                            Spacer()
-                            if account.signingIn { ProgressView().controlSize(.small) }
+                    } else {
+                        Button {
+                            account.signIn()
+                        } label: {
+                            HStack {
+                                Text("Sign in with Google")
+                                    .font(.inter(16, weight: .semibold, relativeTo: .body))
+                                Spacer()
+                                if account.signingIn { ProgressView().controlSize(.small) }
+                            }
                         }
+                        .disabled(account.signingIn)
+                        .accessibilityIdentifier("sign-in-google")
                     }
-                    .disabled(account.signingIn)
-                    .accessibilityIdentifier("sign-in-google")
                 }
             } footer: {
                 if !account.signedIn {
                     palette.caption("Sync your library and drafts, follow feeds and receive newsletters.")
                 }
             }
-            .settingsCard(palette)
 
             SwiftUI.Section {
-                ReadingRows()
+                SettingsCard {
+                    ReadingRows()
+                }
             }
-            .settingsCard(palette)
 
             if account.signedIn {
                 SwiftUI.Section {
-                    NewsletterRow()
+                    SettingsCard {
+                        NewsletterRow()
+                    }
                 } header: {
                     palette.caption("Newsletters")
                 }
-                .settingsCard(palette)
             }
 
             SwiftUI.Section {
-                NavigationLink {
-                    AccountSettingsView(includeFeeds: true)
-                        .navigationTitle("Account")
-                } label: {
-                    Label("Account, Feeds and Readwise", systemImage: "person.crop.circle")
-                }
-                .accessibilityIdentifier("settings")
-                NavigationLink {
-                    ScrollView {
-                        AppearancePanel(target: .reading, includeListDensity: true)
+                SettingsCard {
+                    NavigationLink {
+                        AccountSettingsView(includeFeeds: true)
+                            .navigationTitle("Account")
+                    } label: {
+                        Label("Account, Feeds and Readwise", systemImage: "person.crop.circle")
                     }
-                    .background(Color(palette.ground))
-                    .navigationTitle("Appearance")
-                } label: {
-                    Label("Appearance", systemImage: "textformat.size")
+                    .accessibilityIdentifier("settings")
+                    NavigationLink {
+                        ScrollView {
+                            AppearancePanel(target: .reading, includeListDensity: true)
+                        }
+                        .background(Color(palette.ground))
+                        .navigationTitle("Appearance")
+                    } label: {
+                        Label("Appearance", systemImage: "textformat.size")
+                    }
+                    .accessibilityIdentifier("profile-appearance")
+                    NavigationLink {
+                        ProviderPanel()
+                            .navigationTitle("AI Provider")
+                    } label: {
+                        Label("AI Provider", systemImage: "sparkles")
+                    }
+                    .accessibilityIdentifier("profile-provider")
                 }
-                .accessibilityIdentifier("profile-appearance")
-                NavigationLink {
-                    ProviderPanel()
-                        .navigationTitle("AI Provider")
-                } label: {
-                    Label("AI Provider", systemImage: "sparkles")
-                }
-                .accessibilityIdentifier("profile-provider")
             }
-            .settingsCard(palette)
         }
         .settingsForm(palette)
     }
@@ -146,17 +150,17 @@ struct ProfileSettingsView: View {
         NavigationStack {
             Form {
                 if shelf.account.signedIn {
-                    SwiftUI.Section { NewsletterRow() } header: {
+                    SwiftUI.Section { SettingsCard { NewsletterRow() } } header: {
                         palette.caption("Newsletters")
                     }
-                    .settingsCard(palette)
                 }
                 SwiftUI.Section {
-                    ReadingRows()
+                    SettingsCard {
+                        ReadingRows()
+                    }
                 } header: {
                     palette.caption("Reading")
                 }
-                .settingsCard(palette)
             }
             .settingsForm(palette)
         }
