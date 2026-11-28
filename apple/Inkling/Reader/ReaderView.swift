@@ -103,6 +103,7 @@ struct ReaderView: View {
         .sheet(isPresented: $choosing) {
             AppearancePanel()
                 .presentationDetents([.height(330)])
+                .presentationBackgroundInteraction(.enabled(upThrough: .height(330)))
         }
         .sheet(isPresented: $listing) {
             if let model {
@@ -363,7 +364,7 @@ private struct Spread: Identifiable {
 
 /// The page in its old paper over the new one, washed away from where the paper was chosen: from
 /// the top of Appearance's panel on iPhone, and from the toolbar on the Mac. Its front is soft
-/// and uneven, like shallow water spreading over a surface, and it takes a second, so the eye can
+/// and uneven, like shallow water spreading over a surface, and it takes over a second, so the eye can
 /// follow it. A finger on the text hurries it away, since the page under it is about to move.
 /// Reduce Motion crossfades instead.
 private struct SpreadOverlay: View {
@@ -380,7 +381,10 @@ private struct SpreadOverlay: View {
                 .resizable()
                 .frame(width: space.size.width, height: space.size.height)
                 .mask {
+                    // Past the edges, so the blur softens only the front and never darkens the
+                    // page's own edges.
                     Rectangle()
+                        .padding(-80)
                         .overlay {
                             Front(progress: reduceMotion ? 0 : progress, origin: Self.origin(in: space.size), seed: spread.seed)
                                 .fill(.black)
@@ -393,7 +397,8 @@ private struct SpreadOverlay: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .onAppear { if model?.ready == true { wash() } }
+        // A turn later, so the text recoloured under it in this update doesn't eat the first frames.
+        .onAppear { if model?.ready == true { DispatchQueue.main.async { wash() } } }
         .onChange(of: model?.ready) { if model?.ready == true { wash() } }
         .onChange(of: model?.touches) {
             withAnimation(.easeOut(duration: 0.15)) { shown = 0 } completion: { done() }
@@ -406,7 +411,7 @@ private struct SpreadOverlay: View {
         if reduceMotion {
             withAnimation(.easeOut(duration: 0.3)) { shown = 0 } completion: { done() }
         } else {
-            withAnimation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 1.1)) { progress = 1 } completion: { done() }
+            withAnimation(.timingCurve(0.4, 0.2, 0.3, 1, duration: 1.6)) { progress = 1 } completion: { done() }
         }
     }
 
