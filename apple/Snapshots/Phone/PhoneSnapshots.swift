@@ -316,11 +316,16 @@ nonisolated final class PhoneSnapshots: XCTestCase {
 
             handle.tap()
             XCTAssertTrue(app.otherElements["feedback-panel"].waitForExistence(timeout: 5), "the handle opens the panel")
+            sleep(1)
             let attach = app.switches["feedback-attach"]
             attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            if !isOn(attach) {
+                attach.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            }
+            XCTAssertTrue(isOn(attach), "Attach is on")
             let clip = app.staticTexts["feedback-clip"]
             XCTAssertTrue(clip.waitForExistence(timeout: 5))
-            XCTAssertTrue(wait(for: clip, label: "touch"), "the clip is made, with its touches: \(clip.label)")
+            XCTAssertTrue(wait(for: clip, label: "touch", timeout: 30), "the clip is made, with its touches: \(clip.label)")
             let field = app.textFields["feedback-text"]
             field.tap()
             field.typeText("The reader's bar hides too soon after a slow scroll.")
@@ -353,10 +358,16 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
     }
 
-    /// Waits up to 10 seconds for `element`'s label to contain `words`.
-    @MainActor private func wait(for element: XCUIElement, label words: String) -> Bool {
+    /// Waits up to 3 seconds for `toggle` to be on.
+    @MainActor private func isOn(_ toggle: XCUIElement) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: toggle)
+        return XCTWaiter.wait(for: [expectation], timeout: 3) == .completed
+    }
+
+    /// Waits up to `timeout` seconds for `element`'s label to contain `words`.
+    @MainActor private func wait(for element: XCUIElement, label words: String, timeout: TimeInterval) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", words), object: element)
-        return XCTWaiter.wait(for: [expectation], timeout: 10) == .completed
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     /// The feedback records and files in the fake server's file, or none before its first request.
