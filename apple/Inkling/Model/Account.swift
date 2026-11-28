@@ -32,6 +32,7 @@ final class Account {
     private(set) var feedsLoading = false
     private(set) var feedBusy = false
     var copiedAgents = false
+    var copiedNewsletter = false
     var problem: String?
     var feedProblem: String?
 
@@ -262,6 +263,7 @@ final class Account {
             readwiseConnected = false
             feeds = []
             copiedAgents = false
+            copiedNewsletter = false
             problem = nil
             feedProblem = nil
         } catch {
@@ -269,15 +271,30 @@ final class Account {
         }
     }
 
+    /// Where newsletters are sent, while signed in.
+    var newsletterAddress: String? {
+        client.newsletterAddress()
+    }
+
     func copyAgentsAddress() {
         guard let address = agentsAddress else { return }
+        Self.copy(address)
+        copiedAgents = true
+    }
+
+    func copyNewsletterAddress() {
+        guard let address = newsletterAddress else { return }
+        Self.copy(address)
+        copiedNewsletter = true
+    }
+
+    private static func copy(_ text: String) {
         #if os(macOS)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(address, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
         #else
-        UIPasteboard.general.string = address
+        UIPasteboard.general.string = text
         #endif
-        copiedAgents = true
     }
 
     // MARK: - Readwise (token goes only to the server, never stored on device)

@@ -301,8 +301,8 @@ fn change_id(review: &Review, index: u32) -> Option<ChangeId> {
 /// Provider settings, Keychain access (in-memory in headless runs) and starting a review.
 #[derive(uniffi::Object)]
 pub struct AiEngine {
-    paths: Paths,
-    keys: Box<dyn KeyStore>,
+    pub(crate) paths: Paths,
+    pub(crate) keys: Box<dyn KeyStore>,
     lock: Mutex<()>,
 }
 

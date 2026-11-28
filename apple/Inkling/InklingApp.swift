@@ -26,6 +26,7 @@ struct InklingApp: App {
         Settings {
             SettingsView()
                 .environment(shelf)
+                .environment(navigator)
                 .preferredColorScheme(Appearance.forced ?? appearance.scheme)
         }
         #else

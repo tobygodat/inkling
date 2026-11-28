@@ -1,8 +1,9 @@
 import XCTest
 
-/// The iPhone app on the Simulator: every screen in Light and Dark, swiping to archive, and a
-/// highlight made in the reader that is still there after the app is launched again. Each
-/// screenshot is an attachment that apple/snap.sh exports.
+/// The iPhone app on the Simulator: every tab in Light and Dark, swiping to archive, the Ask bar
+/// answering with a citation and keeping its conversation across tabs, and a highlight made in the
+/// reader that is still there after the app is launched again. Each screenshot is an attachment
+/// that apple/snap.sh exports.
 nonisolated final class PhoneSnapshots: XCTestCase {
     private var environment: [String: String] { ProcessInfo.processInfo.environment }
     /// The appearance the app is launched in. The Simulator's own setting doesn't reach apps on a
@@ -19,7 +20,13 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         for name in ["light", "dark"] {
             appearance = name
             let app = launch(data: "\(base)/\(name)", demo: true)
-            shoot("\(name)-queue")
+            XCTAssertEqual(app.tabBars.buttons.count, 4, "four tabs")
+            for tab in ["Inbox", "Library", "Writing", "Profile"] {
+                XCTAssertTrue(app.tabBars.buttons[tab].exists, "\(tab) is a tab")
+            }
+            XCTAssertTrue(app.buttons["ask-bar"].waitForExistence(timeout: 5), "the Ask bar sits above the tabs")
+            XCTAssertTrue(app.searchFields.firstMatch.isHittable, "search is at the top of the Inbox")
+            shoot("\(name)-inbox")
 
             row(app, "An Apology for Idlers").tap()
             let reader = app.textViews["reader"]
@@ -34,6 +41,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             reader.swipeUp(velocity: .slow)
             sleep(1)
             XCTAssertFalse(app.buttons["appearance"].isHittable, "the bars get out of the way as the reader reads on")
+            XCTAssertFalse(app.buttons["ask-bar"].isHittable, "the Ask bar hides in the immersive reader")
             shoot("\(name)-reader-immersed")
             showChrome(app)
 
@@ -52,38 +60,45 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             row(app, "Self-Reliance").swipeLeft()
             let archive = app.collectionViews.buttons["Archive"]
             XCTAssertTrue(archive.waitForExistence(timeout: 5))
-            shoot("\(name)-queue-swipe")
+            shoot("\(name)-inbox-swipe")
             archive.tap()
-            XCTAssertFalse(row(app, "Self-Reliance").waitForExistence(timeout: 1), "archiving takes it out of the Queue")
+            XCTAssertTrue(row(app, "Self-Reliance").waitForNonExistence(timeout: 3), "archiving takes it out of the Inbox")
 
             app.buttons["add"].tap()
-            app.buttons["Save Link…"].tap()
             XCTAssertTrue(app.textFields["link"].waitForExistence(timeout: 5))
             shoot("\(name)-save-link")
             app.buttons["Cancel"].tap()
+            sleep(1)
 
-            app.buttons["archive"].tap()
-            XCTAssertTrue(row(app, "Self-Reliance").waitForExistence(timeout: 5), "what was archived is in the Archive, a step inside the Queue")
+            tapTab(app, "Library")
+            sleep(1)
+            XCTAssertTrue(row(app, "Walden").exists && !row(app, "Walking").exists, "the Library holds books only")
+            shoot("\(name)-library")
+
+            tapTab(app, "Profile")
+            sleep(1)
+            shoot("\(name)-profile")
+            app.buttons["profile-appearance"].tap()
+            XCTAssertTrue(app.segmentedControls["list-density"].waitForExistence(timeout: 5), "Profile's Appearance holds the Compact / Comfortable density setting")
+            app.segmentedControls["list-density"].buttons["Comfortable"].tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            tapTab(app, "Inbox")
+            sleep(1)
+            shoot("\(name)-inbox-comfortable")
+            tapTab(app, "Profile")
+            app.buttons["profile-appearance"].tap()
+            XCTAssertTrue(app.segmentedControls["list-density"].waitForExistence(timeout: 5))
+            app.segmentedControls["list-density"].buttons["Compact"].tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.buttons["profile-archive"].tap()
+            XCTAssertTrue(row(app, "Self-Reliance").waitForExistence(timeout: 5), "what was archived is in the Archive, in Profile")
             shoot("\(name)-archive")
             app.navigationBars.buttons.element(boundBy: 0).tap()
-
-            for tab in ["Library", "Inbox", "Writing", "Search"] {
-                app.tabBars.buttons[tab].tap()
-                sleep(1)
-                if tab == "Library" {
-                    shoot("\(name)-library")
-                    app.buttons["notebook"].tap()
-                    sleep(1)
-                    shoot("\(name)-notebook")
-                    app.navigationBars.buttons.element(boundBy: 0).tap()
-                } else {
-                    shoot("\(name)-\(tab.lowercased())")
-                }
-            }
-            XCTAssertTrue(app.searchFields.firstMatch.isHittable, "the Search field shows without pulling down")
-            XCTAssertTrue(row(app, "Walking").exists, "Search starts from everything in the library")
-            leaveSearch(app)
-            app.tabBars.buttons["Queue"].tap()
+            app.buttons["profile-highlights"].tap()
+            XCTAssertTrue(app.staticTexts["An Apology for Idlers"].waitForExistence(timeout: 5), "the highlight is in Highlights, in Profile, under its article")
+            shoot("\(name)-highlights")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            tapTab(app, "Inbox")
 
             app.terminate()
             let again = launch(data: "\(base)/\(name)", demo: false)
@@ -95,6 +110,53 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             XCTAssertTrue(again.buttons["tone-sepia"].waitForExistence(timeout: 5))
             XCTAssertTrue(again.buttons["tone-sepia"].isSelected, "the paper is kept through a relaunch")
             again.terminate()
+        }
+    }
+
+    /// The Ask bar in a book: + suggests for the screen, a question naming a book is answered with
+    /// a citation that opens its passage, and the conversation is still there in another tab.
+    @MainActor func testAskBarAnswersWithACitationAcrossTabs() throws {
+        guard let base = environment["INKLING_SNAP_DATA"] else { throw XCTSkip("apple/snap.sh sets INKLING_SNAP_DATA") }
+        for name in ["light", "dark"] {
+            appearance = name
+            let app = launch(data: "\(base)/ask-\(name)", demo: true)
+            app.tabBars.buttons["Library"].tap()
+            row(app, "Walden").tap()
+            XCTAssertTrue(app.textViews["reader"].waitForExistence(timeout: 10))
+            sleep(1)
+            XCTAssertEqual(app.buttons["ask-bar"].label, "Ask about Walden", "the bar knows what is on screen")
+            shoot("\(name)-ask-bar")
+
+            app.buttons["ask-add"].tap()
+            XCTAssertTrue(app.buttons["suggest-explain"].waitForExistence(timeout: 5), "in the reader, + suggests Explain and Summarize")
+            XCTAssertTrue(app.buttons["suggest-summarize"].exists && app.buttons["attach-item"].exists)
+            sleep(1)
+            shoot("\(name)-ask-add")
+            app.buttons["ask-add-close"].tap()
+            sleep(1)
+
+            app.buttons["ask-bar"].tap()
+            let field = app.descendants(matching: .any).matching(identifier: "ask-field").firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5), "tapping the bar opens the composer")
+            sleep(1)
+            shoot("\(name)-ask-open")
+            field.typeText("What does Walden say about simplicity?")
+            app.buttons["ask-send"].tap()
+            let citation = app.buttons["citation-1"]
+            XCTAssertTrue(citation.waitForExistence(timeout: 30), "the answer cites a passage of Walden")
+            sleep(1)
+            shoot("\(name)-ask-answer")
+
+            citation.tap()
+            sleep(2)
+            XCTAssertTrue(place(app).hasPrefix("Chapter 1 of 2"), "the citation opens its passage: \(place(app))")
+
+            app.tabBars.buttons["Inbox"].tap()
+            sleep(1)
+            XCTAssertEqual(app.buttons["ask-bar"].label, "Ask", "in the Inbox the bar asks about nothing in particular")
+            app.buttons["ask-bar"].tap()
+            XCTAssertTrue(app.buttons["citation-1"].waitForExistence(timeout: 5), "the conversation survives a tab switch")
+            app.terminate()
         }
     }
 
@@ -174,8 +236,10 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-writing")
 
             // Ask Fix grammar (INKLING_FAKE_AI=1) and review inline.
-            let fix = app.buttons["fix-grammar"]
-            XCTAssertTrue(fix.waitForExistence(timeout: 5), "Fix grammar quick action is visible")
+            XCTAssertFalse(app.buttons["fix-grammar"].exists || app.buttons["ask-send"].exists, "the page has no chips or field of its own")
+            app.buttons["ask-add"].tap()
+            let fix = app.buttons["suggest-fixGrammar"]
+            XCTAssertTrue(fix.waitForExistence(timeout: 5), "in Writing, + suggests Fix grammar")
             fix.tap()
             let useButton = app.buttons["review-use"]
             XCTAssertTrue(useButton.waitForExistence(timeout: 15), "inline review opens with Use/Keep controls")
@@ -220,9 +284,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             try seedFakeServer(at: serverPath)
 
             let app = launch(data: dir, demo: false)
-            let settingsButton = app.buttons["settings"].firstMatch
-            XCTAssertTrue(settingsButton.waitForExistence(timeout: 10), "Settings button is reachable")
-            settingsButton.tap()
+            app.tabBars.buttons["Profile"].tap()
 
             // 1. Signed-out state.
             let signIn = app.buttons["sign-in-google"]
@@ -232,6 +294,11 @@ nonisolated final class PhoneSnapshots: XCTestCase {
 
             // 2. Sign in against the fake server (auto-syncs staged articles and remote doc).
             signIn.tap()
+            let newsletter = app.buttons["copy-newsletter-address"]
+            XCTAssertTrue(newsletter.waitForExistence(timeout: 10), "signed in, Profile has the newsletter address and Copy")
+            sleep(1)
+            shoot("\(name)-profile-signed-in")
+            app.buttons["settings"].tap()
             let signOut = app.buttons["sign-out"]
             XCTAssertTrue(signOut.waitForExistence(timeout: 10), "Sign in succeeds and shows signed-in settings")
 
@@ -258,8 +325,12 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             app.buttons["follow-feed"].tap()
             let unfollowTemp = app.buttons["unfollow-feed-temp-feed.example"]
             XCTAssertTrue(unfollowTemp.waitForExistence(timeout: 5), "second feed appears")
+            if !unfollowTemp.isHittable || unfollowTemp.frame.maxY > app.frame.height - 190 {
+                app.collectionViews.firstMatch.swipeUp()
+                sleep(1)
+            }
             unfollowTemp.tap()
-            XCTAssertFalse(unfollowTemp.waitForExistence(timeout: 2), "unfollowed feed is removed")
+            XCTAssertTrue(unfollowTemp.waitForNonExistence(timeout: 5), "unfollowed feed is removed")
 
             app.collectionViews.firstMatch.swipeDown()
             sleep(1)
@@ -274,22 +345,24 @@ nonisolated final class PhoneSnapshots: XCTestCase {
                 }
             }
 
-            app.buttons["settings-done"].tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
             sleep(1)
 
-            // 5. Verify feed items landed in Inbox and render Inbox in Light and Dark.
-            app.tabBars.buttons["Inbox"].tap()
+            // 5. Feed posts, the newsletter and the saved link are in the Inbox, each under its filter.
+            tapTab(app, "Inbox")
             XCTAssertTrue(row(app, "Notes on Local-First Software").waitForExistence(timeout: 10), "feed item lands in Inbox")
             XCTAssertTrue(row(app, "Sunday Reading Dispatch").exists, "newsletter lands in Inbox")
+            XCTAssertTrue(row(app, "A Field Guide to Quiet Tools").exists, "saved link lands in Inbox")
+            app.segmentedControls.buttons["Newsletters"].tap()
+            XCTAssertTrue(row(app, "Sunday Reading Dispatch").waitForExistence(timeout: 5) && !row(app, "Notes on Local-First Software").exists, "Newsletters shows only newsletters")
+            app.segmentedControls.buttons["Feeds"].tap()
+            XCTAssertTrue(row(app, "Notes on Local-First Software").waitForExistence(timeout: 5) && !row(app, "Sunday Reading Dispatch").exists, "Feeds shows only feed posts")
             sleep(1)
             shoot("\(name)-inbox-feeds")
-
-            // 6. Verify saved link landed in Queue.
-            app.tabBars.buttons["Queue"].tap()
-            XCTAssertTrue(row(app, "A Field Guide to Quiet Tools").waitForExistence(timeout: 5), "saved link lands in Queue")
+            app.segmentedControls.buttons["All"].tap()
 
             // 7. Verify remote document arrived in Writing, then write a new document and sync it back to fake-server.json.
-            app.tabBars.buttons["Writing"].tap()
+            tapTab(app, "Writing")
             XCTAssertTrue(app.buttons["doc-Synced from Mac"].firstMatch.waitForExistence(timeout: 5), "remote document arrives on iPhone")
             app.buttons["new-document"].tap()
             let editor = app.textViews["editor"]
@@ -299,6 +372,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             sleep(2)
             app.navigationBars.buttons.element(boundBy: 0).tap()
             sleep(1)
+            tapTab(app, "Profile")
             app.buttons["settings"].firstMatch.tap()
             let syncNow = app.buttons["sync-now"]
             XCTAssertTrue(syncNow.waitForExistence(timeout: 5))
@@ -425,14 +499,6 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         return app.staticTexts["place"].label
     }
 
-    /// On some iOS versions the Search tab folds the other tabs into one button; tapping it brings
-    /// them back.
-    @MainActor private func leaveSearch(_ app: XCUIApplication) {
-        guard !app.tabBars.buttons["Queue"].waitForExistence(timeout: 1) else { return }
-        app.tabBars.buttons.firstMatch.tap()
-        XCTAssertTrue(app.tabBars.buttons["Queue"].waitForExistence(timeout: 5), "the tabs come back from Search")
-    }
-
     /// Brings the reader's bars back with a tap if reading put them away.
     @MainActor private func showChrome(_ app: XCUIApplication) {
         guard !app.buttons["appearance"].isHittable else { return }
@@ -471,6 +537,18 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         }
         app.launch()
         return app
+    }
+
+    @MainActor private func tapTab(_ app: XCUIApplication, _ title: String) {
+        let target = app.tabBars.buttons[title]
+        if !target.waitForExistence(timeout: 2) {
+            app.tabBars.buttons.firstMatch.tap()
+            if !target.waitForExistence(timeout: 2) {
+                app.collectionViews.firstMatch.swipeDown()
+                _ = target.waitForExistence(timeout: 3)
+            }
+        }
+        target.tap()
     }
 
     @MainActor private func row(_ app: XCUIApplication, _ title: String) -> XCUIElement {

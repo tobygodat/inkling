@@ -60,9 +60,15 @@ pub struct Entry {
     /// An article's first picture, its path relative to the library's folder, for its row.
     #[serde(default)]
     pub picture: Option<String>,
+    /// An article's site icon, its path relative to the library's folder, when it has no lead picture.
+    #[serde(default)]
+    pub icon: Option<String>,
     /// Whether this item landed in the Inbox (from a feed or newsletter) rather than the Queue.
     #[serde(default)]
     pub inbox: bool,
+    /// Whether it came by email: the Worker keeps a newsletter at `/newsletters/<id>` (TOB-554).
+    #[serde(default)]
+    pub newsletter: bool,
 }
 
 impl Entry {
@@ -119,6 +125,11 @@ impl Library {
         entry.picture.as_ref().map(|path| self.dir.join(path))
     }
 
+    /// Where an article's site icon is on disk, if it has one.
+    pub fn icon_path(&self, entry: &Entry) -> Option<PathBuf> {
+        entry.icon.as_ref().map(|path| self.dir.join(path))
+    }
+
     pub fn entry(&self, id: &BookId) -> Option<&Entry> {
         self.entries.iter().find(|e| &e.id == id)
     }
@@ -145,6 +156,10 @@ impl Library {
                 if entry.picture.is_none() {
                     entry.picture = book.picture.clone();
                 }
+                if entry.icon.is_none() {
+                    entry.icon = book.icon.clone();
+                }
+                entry.newsletter |= book.newsletter;
                 if let Some(old) = &book.before {
                     (entry.title, entry.author, entry.chapters) = (book.title.clone(), book.author.clone(), book.chapters);
                     let carried = entry.position.carried(old, &book.titles);
@@ -175,7 +190,9 @@ impl Library {
                     words: book.words,
                     excerpt: book.excerpt.clone(),
                     picture: book.picture.clone(),
+                    icon: book.icon.clone(),
                     inbox: book.inbox,
+                    newsletter: book.newsletter,
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -372,7 +389,9 @@ pub struct Prepared {
     pub words: usize,
     pub excerpt: Option<String>,
     pub picture: Option<String>,
+    pub icon: Option<String>,
     pub inbox: bool,
+    pub newsletter: bool,
 }
 
 /// Reads, parses and stores the book at `path` under `dir`, without touching the index, so it
@@ -407,10 +426,36 @@ pub fn prepare_article(dir: &Path, url: &str, html: &str, fetch: &mut dyn FnMut(
     if let Ok(book) = load(dir, &id)
         && book.parser >= PARSER
     {
-        return Ok(Prepared::of(&book));
+        let mut prepared = Prepared::of(&book);
+        if prepared.picture.is_none() {
+            prepared.picture = stored_image(dir, &id, "lead");
+        }
+        if prepared.picture.is_none() {
+            prepared.icon = stored_image(dir, &id, "icon");
+        }
+        return Ok(prepared);
     }
-    let book = store_parsed(dir, crate::article::parse(url, html, fetch)?, html.as_bytes())?;
-    Ok(Prepared::of(&book))
+    let parsed = crate::article::parse(url, html, fetch)?;
+    let lead = parsed.lead.clone();
+    let icon = parsed.icon.clone();
+    let book = store_parsed(dir, parsed, html.as_bytes())?;
+    let mut prepared = Prepared::of(&book);
+    if prepared.picture.is_none() {
+        prepared.picture = lead;
+    }
+    prepared.icon = icon;
+    Ok(prepared)
+}
+
+fn stored_image(dir: &Path, id: &BookId, stem: &str) -> Option<String> {
+    let rel_dir = import::image_dir(id);
+    for ext in ["png", "jpg", "webp", "gif", "ico"] {
+        let rel = format!("{rel_dir}/{stem}.{ext}");
+        if dir.join(&rel).is_file() {
+            return Some(rel);
+        }
+    }
+    None
 }
 
 /// Reads a stored book from the library in `dir`, without the index and without writing, so it
@@ -514,7 +559,9 @@ impl Prepared {
             words: book.chapters.iter().map(|c| c.text.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count()).sum(),
             excerpt: book.source.as_ref().and_then(|s| s.excerpt.clone()),
             picture: (book.format == Format::Article).then(|| book.chapters.iter().find_map(|c| first_picture(&c.text))).flatten(),
+            icon: None,
             inbox: false,
+            newsletter: book.source.as_ref().is_some_and(|s| s.url.contains("/newsletters/")),
         }
     }
 }

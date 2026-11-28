@@ -306,8 +306,13 @@ pub const FAKE_TEXT: &str = "The kettle clicked off in the next room, and for a 
 /// can open the key screen. `INKLING_FAKE_AI=1` forces the fake one, for headless runs: it streams
 /// a canned answer made from the request's draft, so a headless run gets a real review to show.
 pub fn backend_for_request(settings: &Settings, keys: &dyn KeyStore, request: &Request) -> Result<Backend, Provider> {
+    backend_for(settings, keys, || request.fake_answer())
+}
+
+/// As [`backend_for_request`], for any prompt: `fake` is the canned answer a headless run streams.
+pub fn backend_for(settings: &Settings, keys: &dyn KeyStore, fake: impl FnOnce() -> String) -> Result<Backend, Provider> {
     if std::env::var_os("INKLING_FAKE_AI").is_some() {
-        return Ok(Backend::Fake { text: request.fake_answer(), word_delay: Duration::from_millis(40) });
+        return Ok(Backend::Fake { text: fake(), word_delay: Duration::from_millis(40) });
     }
     let provider = settings.provider;
     let key = keys.get(Secret::ApiKey(provider)).filter(|k| !k.trim().is_empty()).ok_or(provider)?;

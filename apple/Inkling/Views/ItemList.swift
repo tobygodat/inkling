@@ -1,9 +1,10 @@
 import InklingCore
 import SwiftUI
 
-/// A section's items in one list, in titled groups when there are several. Archive and Move to
-/// Queue are on a swipe on iPhone and on the context menu and Item menu on both.
-struct ItemList<Empty: View>: View {
+/// A section's items in one list, in titled groups when there are several, under an optional
+/// header. Archive, or bringing an item back from the Archive, is a swipe on iPhone and on the
+/// context menu and the Item menu on both.
+struct ItemList<Empty: View, Header: View>: View {
     @Environment(Shelf.self) private var shelf
     @Environment(Navigator.self) private var navigator
     @Environment(\.palette) private var palette
@@ -11,16 +12,31 @@ struct ItemList<Empty: View>: View {
     @Environment(\.appearsActive) private var active
     #endif
     let groups: [(title: String, items: [Item])]
-    let section: Section
-    @ViewBuilder let empty: () -> Empty
+    let empty: Empty
+    let header: Header
+
+    init(groups: [(title: String, items: [Item])], @ViewBuilder empty: () -> Empty, @ViewBuilder header: () -> Header = { EmptyView() }) {
+        self.groups = groups
+        self.empty = empty()
+        self.header = header()
+    }
 
     var body: some View {
         @Bindable var navigator = navigator
         Group {
             if groups.allSatisfy(\.items.isEmpty) {
-                empty()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(palette.ground))
+                VStack(spacing: 0) {
+                    #if os(iOS)
+                    if Header.self != EmptyView.self {
+                        header
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 8)
+                    }
+                    #endif
+                    empty
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .background(Color(palette.ground))
             } else {
                 #if os(macOS)
                 List(selection: $navigator.selection) { rows }
@@ -32,6 +48,20 @@ struct ItemList<Empty: View>: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color(palette.ground))
+        #if os(macOS)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if Header.self != EmptyView.self {
+                VStack(spacing: 0) {
+                    header
+                        .padding(.horizontal, 14)
+                        .padding(.top, 8)
+                        .padding(.bottom, 10)
+                    Divider().overlay(Color(palette.hairline))
+                }
+                .background(Color(palette.ground))
+            }
+        }
+        #endif
         #if os(iOS)
         .refreshable {
             if shelf.account.signedIn {
@@ -42,6 +72,14 @@ struct ItemList<Empty: View>: View {
     }
 
     @ViewBuilder private var rows: some View {
+        #if os(iOS)
+        if Header.self != EmptyView.self {
+            header
+                .listRowBackground(Color(palette.ground))
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 8, trailing: 20))
+        }
+        #endif
         ForEach(groups.filter { !$0.items.isEmpty }, id: \.title) { group in
             if group.title.isEmpty {
                 ForEach(group.items, id: \.id) { row($0) }
@@ -73,18 +111,12 @@ struct ItemList<Empty: View>: View {
         .listRowBackground(Color(palette.ground))
         .listRowSeparatorTint(Color(palette.hairline))
         .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            if item.inbox && item.archived == 0 {
-                Button("Move to Queue", systemImage: "square.stack") { shelf.setInbox(item, false) }
-                    .tint(Color(palette.isDark ? palette.segment : palette.ink))
-            }
-        }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if item.archived == 0 {
                 Button("Archive", systemImage: "archivebox") { shelf.setArchived(item, true) }
                     .tint(Color(palette.isDark ? palette.segment : palette.ink))
             } else {
-                Button("Move to Queue", systemImage: "arrow.uturn.backward") { shelf.setArchived(item, false) }
+                Button("Bring Back", systemImage: "arrow.uturn.backward") { shelf.setArchived(item, false) }
                     .tint(Color(palette.isDark ? palette.segment : palette.ink))
             }
         }
@@ -108,13 +140,10 @@ struct ItemList<Empty: View>: View {
     #endif
 
     @ViewBuilder private func actions(_ item: Item) -> some View {
-        if item.inbox && item.archived == 0 {
-            Button("Move to Queue", systemImage: "square.stack") { shelf.setInbox(item, false) }
-        }
         if item.archived == 0 {
             Button("Archive", systemImage: "archivebox") { shelf.setArchived(item, true) }
         } else {
-            Button("Move to Queue", systemImage: "arrow.uturn.backward") { shelf.setArchived(item, false) }
+            Button("Bring Back", systemImage: "arrow.uturn.backward") { shelf.setArchived(item, false) }
         }
     }
 }

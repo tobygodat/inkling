@@ -154,13 +154,20 @@ struct ReaderText: UIViewRepresentable {
         }
 
         func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
-            guard case .link(let url) = textItem.content, let chapter = Renderer.chapter(of: url) else { return defaultAction }
-            return UIAction { [weak self] _ in self?.model.go(toChapter: chapter, .glide) }
+            guard case .link(let url) = textItem.content, Renderer.isOwn(url) else { return defaultAction }
+            if let chapter = Renderer.chapter(of: url) {
+                return UIAction { [weak self] _ in self?.model.go(toChapter: chapter, .glide) }
+            }
+            return UIAction { [weak self] _ in self?.model.done?() }
         }
 
         func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
-            if case .link(let url) = textItem.content, Renderer.chapter(of: url) != nil { return nil }
+            if case .link(let url) = textItem.content, Renderer.isOwn(url) { return nil }
             return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            model.selection = textView.selectedRange
         }
 
         func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
@@ -174,7 +181,7 @@ struct ReaderText: UIViewRepresentable {
         func report() {
             guard let view, let layout = view.textLayoutManager, view.pending == nil, view.bounds.width > 0 else { return }
             let y = view.contentOffset.y + view.adjustedContentInset.top + 1
-            let atEnd = view.contentOffset.y + view.bounds.height - view.adjustedContentInset.bottom >= view.contentSize.height - 2
+            let atEnd = view.contentOffset.y + view.bounds.height >= view.contentSize.height - 2
             if let character = Layout.character(at: y, in: layout) {
                 model.scrolled(toCharacter: character, atEnd: atEnd && view.contentOffset.y > 0)
             }
@@ -354,8 +361,12 @@ struct ReaderText: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            guard let url = link as? URL, let chapter = Renderer.chapter(of: url) else { return true }
-            model.go(toChapter: chapter, .glide)
+            guard let url = link as? URL else { return true }
+            if let chapter = Renderer.chapter(of: url) {
+                model.go(toChapter: chapter, .glide)
+            } else if url == Renderer.done {
+                model.done?()
+            }
             return true
         }
 

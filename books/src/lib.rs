@@ -11,6 +11,7 @@ pub mod library;
 mod markdown;
 mod pdf;
 pub mod scan;
+pub mod search;
 
 pub use book::{Book, BookId, Chapter, Format, PARSER, Position, Source, display_title};
 pub use highlights::Highlight;

@@ -36,9 +36,36 @@ pub fn parse(url: &str, html: &str, fetch: &mut dyn FnMut(&str) -> Option<Vec<u8
     let title = tidy(&article.title).unwrap_or_else(|| host(url).to_string());
     // The article's title opens its one chapter, as a book's chapter opens with its own.
     let src = format!("<h1>{}</h1>{}", html_escape::encode_text(&title), &*article.content);
-    let page = epub::page(&src, &format!("{}/", image_dir(&id)), fetch);
+    let dir = image_dir(&id);
+    let mut page = epub::page(&src, &format!("{dir}/"), fetch);
     if page.chapters.iter().all(|c| c.text.lines().filter(|l| !l.trim().is_empty()).count() < 2) {
         return Err(ImportError::BadArticle("it has no text to read".into()));
+    }
+    let (mut lead, mut icon) = (None, None);
+    if page.images.is_empty() {
+        let head = head_images(html, url);
+        for candidate in head.leads {
+            if let Some(bytes) = fetch(&candidate)
+                && let Some(ext) = epub::image_extension(&bytes)
+            {
+                let name = format!("lead.{ext}");
+                lead = Some(format!("{dir}/{name}"));
+                page.images.push((name, bytes));
+                break;
+            }
+        }
+        if lead.is_none() {
+            for candidate in head.icons {
+                if let Some(bytes) = fetch(&candidate)
+                    && let Some(ext) = icon_extension(&bytes)
+                {
+                    let name = format!("icon.{ext}");
+                    icon = Some(format!("{dir}/{name}"));
+                    page.images.push((name, bytes));
+                    break;
+                }
+            }
+        }
     }
     let source = Source {
         url: url.to_string(),
@@ -48,7 +75,150 @@ pub fn parse(url: &str, html: &str, fetch: &mut dyn FnMut(&str) -> Option<Vec<u8
     };
     let author = article.byline.as_deref().and_then(byline);
     let book = Book { id, title, author, format: Format::Article, parser: PARSER, chapters: page.chapters, source: Some(Box::new(source)) };
-    Ok(Parsed { book, images: page.images })
+    Ok(Parsed { book, images: page.images, lead, icon })
+}
+
+struct HeadImages {
+    leads: Vec<String>,
+    icons: Vec<String>,
+}
+
+fn icon_extension(bytes: &[u8]) -> Option<&'static str> {
+    epub::image_extension(bytes).or_else(|| bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]).then_some("ico"))
+}
+
+/// Lead image (`og:image`, `twitter:image`) and site icon (`apple-touch-icon`, `icon`, `/favicon.ico`)
+/// addresses declared in the page's HTML, resolved against `base`.
+fn head_images(html: &str, base: &str) -> HeadImages {
+    let mut leads = vec![];
+    let mut touch = vec![];
+    let mut icons = vec![];
+    let head = html.find("</head>").or_else(|| html.find("</HEAD>")).map_or(html, |end| &html[..end]);
+    let mut rest = head;
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('>') else { break };
+        let tag = &rest[..close];
+        rest = &rest[close + 1..];
+        let name = tag.split(|c: char| c.is_ascii_whitespace() || c == '/').next().unwrap_or("");
+        if name.eq_ignore_ascii_case("meta") {
+            let key = attr(tag, "property").or_else(|| attr(tag, "name"));
+            if let Some(key) = key
+                && (key.eq_ignore_ascii_case("og:image")
+                    || key.eq_ignore_ascii_case("og:image:secure_url")
+                    || key.eq_ignore_ascii_case("twitter:image"))
+                && let Some(content) = attr(tag, "content").and_then(|v| resolve_url(base, &v))
+                && !leads.contains(&content)
+            {
+                leads.push(content);
+            }
+        } else if name.eq_ignore_ascii_case("link")
+            && let Some(rel) = attr(tag, "rel")
+            && let Some(href) = attr(tag, "href").and_then(|v| resolve_url(base, &v))
+        {
+            let tokens: Vec<String> = rel.split_ascii_whitespace().map(|t| t.to_ascii_lowercase()).collect();
+            if tokens.iter().any(|t| t == "apple-touch-icon" || t == "apple-touch-icon-precomposed") {
+                if !touch.contains(&href) {
+                    touch.push(href);
+                }
+            } else if tokens.iter().any(|t| t == "icon") && !icons.contains(&href) {
+                icons.push(href);
+            }
+        }
+    }
+    touch.extend(icons);
+    if let Some(favicon) = resolve_url(base, "/favicon.ico")
+        && !touch.contains(&favicon)
+    {
+        touch.push(favicon);
+    }
+    HeadImages { leads, icons: touch }
+}
+
+/// Reads an HTML attribute's value from the inside of a start tag.
+fn attr(tag: &str, wanted: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    while i < bytes.len() {
+        while i < bytes.len() && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
+            i += 1;
+        }
+        let start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' {
+            i += 1;
+        }
+        let name = &tag[start..i];
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let value = if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let quote = bytes[i];
+                i += 1;
+                let vstart = i;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+                let v = &tag[vstart..i];
+                if i < bytes.len() {
+                    i += 1;
+                }
+                Some(v)
+            } else {
+                let vstart = i;
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                Some(&tag[vstart..i])
+            }
+        } else {
+            None
+        };
+        if name.eq_ignore_ascii_case(wanted) {
+            return value.map(|v| html_escape::decode_html_entities(v.trim()).into_owned());
+        }
+    }
+    None
+}
+
+fn resolve_url(base: &str, raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.starts_with("data:") || raw.starts_with("javascript:") {
+        return None;
+    }
+    if raw.starts_with("https://") || raw.starts_with("http://") {
+        return Some(raw.to_string());
+    }
+    let (scheme, rest) = base.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    if raw.starts_with("//") {
+        return Some(format!("{scheme}:{raw}"));
+    }
+    let (authority, path_part) = match rest.find(['/', '?', '#']) {
+        Some(at) => (&rest[..at], &rest[at..]),
+        None => (rest, "/"),
+    };
+    if authority.is_empty() {
+        return None;
+    }
+    if raw.starts_with('/') {
+        return Some(format!("{scheme}://{authority}{raw}"));
+    }
+    let path = path_part.split(['?', '#']).next().unwrap_or("/");
+    let dir = match path.rfind('/') {
+        Some(at) => &path[..=at],
+        None => "/",
+    };
+    Some(format!("{scheme}://{authority}{dir}{raw}"))
 }
 
 fn tidy(s: &str) -> Option<String> {
@@ -157,5 +327,41 @@ pub(crate) mod tests {
         assert!(matches!(empty, ImportError::BadArticle(_)), "{empty:?}");
         let relative = parse("/2026/tide", &page(), &mut |_| None).unwrap_err();
         assert_eq!(relative.to_string(), "This page couldn’t be saved as an article: “/2026/tide” isn’t a full web address.");
+    }
+
+    #[test]
+    fn an_article_without_body_images_falls_back_to_og_image_then_site_icon() {
+        let body = "The tide came in slowly over the flats, and the birds lifted as it reached them. ".repeat(6);
+        let with_og = format!(
+            r#"<!doctype html><html><head><title>Quiet Tide</title>
+            <meta property="og:image" content="/hero.png">
+            <link rel="icon" href="/icon.png">
+            </head><body><article><h1>Quiet Tide</h1><p>{body}</p></article></body></html>"#
+        );
+        let mut fetched = vec![];
+        let parsed = parse("https://shore.example/2026/quiet", &with_og, &mut |u| {
+            fetched.push(u.to_string());
+            Some(PNG.to_vec())
+        })
+        .unwrap();
+        assert_eq!(fetched, ["https://shore.example/hero.png"]);
+        assert!(parsed.lead.as_deref().is_some_and(|p| p.ends_with("/lead.png")));
+        assert!(parsed.icon.is_none());
+
+        let with_icon = format!(
+            r#"<!doctype html><html><head><title>Quiet Note</title>
+            <link rel="icon" href="/small.png">
+            <link rel="apple-touch-icon" href="/touch.png">
+            </head><body><article><h1>Quiet Note</h1><p>{body}</p></article></body></html>"#
+        );
+        let mut fetched_icons = vec![];
+        let parsed_icon = parse("https://shore.example/2026/note", &with_icon, &mut |u| {
+            fetched_icons.push(u.to_string());
+            Some(PNG.to_vec())
+        })
+        .unwrap();
+        assert_eq!(fetched_icons, ["https://shore.example/touch.png"], "apple-touch-icon wins over smaller favicon");
+        assert!(parsed_icon.lead.is_none());
+        assert!(parsed_icon.icon.as_deref().is_some_and(|p| p.ends_with("/icon.png")));
     }
 }

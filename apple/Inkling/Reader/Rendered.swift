@@ -130,6 +130,14 @@ nonisolated struct Renderer {
         link.scheme == "inkling-chapter" ? Int(link.absoluteString.dropFirst("inkling-chapter:".count)) : nil
     }
 
+    /// The link "Done" carries at the end: it archives what was read.
+    static let done = URL(string: "inkling-done:")!
+
+    /// Whether a link is one the reader follows itself rather than one out of the book.
+    static func isOwn(_ link: URL) -> Bool {
+        chapter(of: link) != nil || link == done
+    }
+
     private static func title(of chapter: Chapter, at index: Int) -> String {
         let heading = chapter.text.split(separator: "\n").first { $0.hasPrefix("#") }?.drop { $0 == "#" }
         let title = (chapter.title ?? heading.map(String.init) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -161,7 +169,15 @@ nonisolated struct Renderer {
             append(title + "\n", attributes(font: font(size: set.size * 1.35, weight: .semibold), color: set.palette.ink, paragraph: paragraph(before: 0, after: set.size * 0.9, lineHeight: 1.25)))
         }
         for block in document.children { self.block(block, indent: 0) }
-        if let next { nextLine(next, chapter: index + 1) }
+        if let next { nextLine(next, chapter: index + 1) } else { doneLine() }
+    }
+
+    /// "Done" after the last chapter, centred in the UI face like "Next: …": it archives the item.
+    private mutating func doneLine() {
+        let style = paragraph(align: .center, before: set.size * 2.2, after: set.size * 3.6, lineHeight: 1.5)
+        var label = attributes(font: interface(size: max(13, set.size * 0.7), weight: .semibold), color: set.palette.ink, paragraph: style)
+        label[.link] = Self.done
+        append("Done\n", label)
     }
 
     /// "Next: …" at a chapter's end, centred in the UI face: the way on, and the break between

@@ -159,7 +159,7 @@ pub fn cover(bytes: &[u8]) -> Option<Cover> {
     Some(Cover { bytes, extension })
 }
 
-fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn image_extension(bytes: &[u8]) -> Option<&'static str> {
     match bytes {
         [0xff, 0xd8, 0xff, ..] => Some("jpg"),
         [0x89, b'P', b'N', b'G', ..] => Some("png"),

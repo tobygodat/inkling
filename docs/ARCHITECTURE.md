@@ -69,28 +69,49 @@ draws every screen; every read and write goes through `InklingCore`.
 - `Shelf` (`@Observable`) holds the `Library`, `Looks`, `DocumentStore`, `AiEngine` and `Account`
   for the data folder (`INKLING_DATA_DIR`, else
   the GPUI app's folder on the Mac and the app's own Application Support on iPhone) and the items.
-  Queue, Inbox, Library and Archive are filters over `items`. `Account` drives background sync at
+  The Inbox (every article still to read, filtered to All, Saved, Newsletters or Feeds by
+  `Entry::inbox` and `Entry::newsletter`), the Library (books only) and the Archive are filters over
+  `items`. `Account` drives background sync at
   launch, on app activation, 3 s after local edits settle, and every 5 minutes, as well as Google
   sign-in/out, RSS/Atom feeds and Readwise settings. Calls that parse or fetch run off the main
   thread. Saving a link fetches the page with URLSession and hands the HTML to `save_article`, whose
   pictures `PictureFetcher` fetches over http(s) only. The reader's place is noted at once and
   written 0.6 s after scrolling stops, and when the reader closes or the app leaves the foreground.
-- `RootView` is a three-column `NavigationSplitView` on the Mac (sections, list, reader) with the
-  menu bar's commands and a Settings window, and a Liquid Glass `TabView` on iPhone of Queue, Inbox,
-  Library, Notebook and Search, one `NavigationStack` each, with swipe actions and sheets. On
-  iPhone the Archive is a step inside Queue and Library; the Mac's sidebar keeps it.
-- `ItemRow` draws an item as a card: its site or author, its title, the article's excerpt
-  (`Entry::excerpt`, the page's own summary), how long it takes, the progress, and the article's
-  first picture (`Entry::picture`) or the book's cover, decoded once at row size. A missing part
-  leaves no gap.
+- `RootView` is a three-column `NavigationSplitView` on the Mac (Inbox, Library and Writing, the
+  list, the reader or the page) with the menu bar's commands and a Settings window whose first tab
+  is Profile, and a Liquid Glass `TabView` on iPhone of Inbox, Library, Writing and Profile, one
+  `NavigationStack` each, with swipe actions and sheets. Search is a field at the top of the Inbox
+  and the Library. Archive is a swipe on a row and "Done" at the end of an item; the Archive and
+  Highlights live in Profile.
+- `Asker` (`Shelf.asker`) is the Ask bar's state and its one conversation (TOB-559). Each screen
+  sets its `AskPlace` as it appears: a section, the open reader (its title, chapter, the selection
+  and the passage at the place) or the open page. A question goes to `AiEngine.start_question`
+  with the passages `Library.sources` finds: the paragraphs of each book the question names by
+  title (`core::question::named`), or that the + sheet attached, holding most of the question's
+  words (`inkling_books::search::passages`). The answer streams back with the passages it cites
+  (`core::question::cited`), each kept as its chapter's Markdown bytes so it opens where it is. In
+  Writing, an instruction to change the draft (`core::question::is_edit`) starts the page's inline
+  review instead. Every turn is kept in `conversation.json` through `core::conversation`. On
+  iPhone the bar is the tab bar's bottom accessory, so it folds away with the tab bar on a scroll
+  down and hides with it in the immersive reader, and opens the composer as a sheet; on the Mac it
+  floats at the foot of the detail column and grows upward into the composer.
+- `ItemRow` draws an item as a two-line card by default (Compact), or a roomier card with a larger
+  cover and one-line excerpt (`Entry::excerpt`) when `ReadingLook::density` (`settings.json`) is
+  set to Comfortable in Profile's Appearance settings (or Mac Settings → Reading):
+  its title in Source Serif 4, its site/author next to the reading length and progress, and a cover
+  on every row — an article's first picture (`Entry::picture`, or `og:image`/`twitter:image`), its
+  site icon (`Entry::icon`, from `apple-touch-icon`, `rel="icon"`, or `/favicon.ico`) when it has
+  no lead picture, or a book's cover (`Entry::cover`), decoded once at row size, with a serif
+  monogram tile when none is stored.
 - The reader draws an item's chapters, one after another, as one attributed text in a TextKit 2
   `UITextView` or `NSTextView` in a centred column. `Renderer` walks each chapter's Markdown with
   swift-markdown and keeps every run of text with the bytes of the Markdown it came from, so a
   selection becomes a `Passage` in bytes (ADR 0006) and a stored one is drawn where it was made, in
   this app or the GPUI one. The place is the first character on screen as a chapter and a share of
   that chapter's characters. A picture is a `FittedAttachment`, no wider than the line it lands
-  on. A hairline across the top shows how far through. On iPhone the bars, with Highlights, Archive
-  and Appearance at the foot, hide as the reader scrolls on and come back on a scroll back or a tap.
+  on. A hairline across the top shows how far through. On iPhone the bars, with Contents,
+  Appearance and Highlights at the top, hide as the reader scrolls on and come back on a scroll
+  back or a tap; the tab bar and the Ask bar go with them.
 - Colours come from `Looks.colors`. The app's own screens follow the system's Light or Dark, or
   the one chosen in Appearance (kept in `UserDefaults`, not `settings.json`). The reader does too
   while reading's tone is Light or Dark (Auto), and takes a paper tone's colours as they are; on
