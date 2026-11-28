@@ -246,7 +246,7 @@ nonisolated final class PhoneSnapshots: XCTestCase {
         let screen = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let low = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
         let high = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
-        let opened = inkRows()
+        let opened = settledInkRows()
         low.press(forDuration: 0.05, thenDragTo: high, withVelocity: .slow, thenHoldForDuration: 0.5)
         high.press(forDuration: 0.05, thenDragTo: low, withVelocity: .slow, thenHoldForDuration: 0.5)
         sleep(1)
@@ -307,6 +307,19 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             let paper = light((y * width + 6) * 4)
             return stride(from: 0, to: width, by: 2).contains { abs(light((y * width + $0) * 4) - paper) > 60 }
         }
+    }
+
+    /// The lines once the page has stopped changing: a long book is laid out down to its place
+    /// before it shows, which takes longer on a slow machine.
+    @MainActor private func settledInkRows() -> [Bool] {
+        var rows = inkRows()
+        for _ in 0..<20 {
+            sleep(1)
+            let now = inkRows()
+            if now.contains(true), mismatch(rows, now) == 0 { return now }
+            rows = now
+        }
+        return rows
     }
 
     private func mismatch(_ a: [Bool], _ b: [Bool]) -> Int {
