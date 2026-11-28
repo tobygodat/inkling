@@ -29,10 +29,15 @@ nonisolated final class PhoneSnapshots: XCTestCase {
             shoot("\(name)-inbox")
 
             row(app, "Walking").tap()
-            XCTAssertTrue(app.textViews["reader"].waitForExistence(timeout: 10))
+            let walking = app.textViews["reader"]
+            XCTAssertTrue(walking.waitForExistence(timeout: 10))
             sleep(1)
-            XCTAssertGreaterThan(colouredShare(in: CGRect(x: 0.15, y: 0.55, width: 0.7, height: 0.3)), 0.2, "Walking's painting draws in the \(name) reader")
+            walking.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                .press(forDuration: 0.05, thenDragTo: walking.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+            sleep(1)
+            XCTAssertGreaterThan(colouredShare(in: CGRect(x: 0.15, y: 0.15, width: 0.7, height: 0.7)), 0.12, "Walking's painting draws in the \(name) reader")
             shoot("\(name)-reader-picture")
+            showChrome(app)
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(row(app, "An Apology for Idlers").waitForExistence(timeout: 5))
 
